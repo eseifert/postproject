@@ -17,3 +17,7 @@ All mutation occurs inside an explicit transaction. Commit is atomic. Dropping
 or rolling back an open transaction makes none of its changes durable, and a
 closed transaction rejects further operations.
 
+Filesystem inspection produces an `OriginalMediaImport` aggregate before
+persistence. Its constructor guarantees that the original representation belongs
+to the asset and the location belongs to that representation. A storage
+transaction persists the whole aggregate or none of it.

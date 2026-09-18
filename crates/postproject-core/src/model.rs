@@ -332,6 +332,72 @@ impl Representation {
     }
 }
 
+/// A validated aggregate representing an imported original media file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OriginalMediaImport {
+    asset: Asset,
+    representation: Representation,
+    location: Location,
+}
+
+impl OriginalMediaImport {
+    /// Creates an import aggregate whose ownership relationships are consistent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] if the representation is not an
+    /// original, does not belong to `asset`, or does not own `location`.
+    pub fn new(asset: Asset, representation: Representation, location: Location) -> Result<Self> {
+        if representation.asset_id() != asset.id() {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "import representation does not belong to its asset",
+            ));
+        }
+        if representation.kind() != RepresentationKind::Original {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "initial import representation must be original media",
+            ));
+        }
+        if location.representation_id() != representation.id() {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "import location does not belong to its representation",
+            ));
+        }
+        Ok(Self {
+            asset,
+            representation,
+            location,
+        })
+    }
+
+    /// Returns the logical asset.
+    #[must_use]
+    pub const fn asset(&self) -> &Asset {
+        &self.asset
+    }
+
+    /// Returns the original representation.
+    #[must_use]
+    pub const fn representation(&self) -> &Representation {
+        &self.representation
+    }
+
+    /// Returns the original physical location.
+    #[must_use]
+    pub const fn location(&self) -> &Location {
+        &self.location
+    }
+
+    /// Splits the aggregate into persistable domain values.
+    #[must_use]
+    pub fn into_parts(self) -> (Asset, Representation, Location) {
+        (self.asset, self.representation, self.location)
+    }
+}
+
 /// The last observed availability of a physical location.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
@@ -523,5 +589,32 @@ mod tests {
 
         assert!(Fingerprint::new("contains spaces", 1, vec![1]).is_err());
         assert!(Fingerprint::new("valid", 1, Vec::new()).is_err());
+    }
+
+    #[test]
+    fn import_aggregate_enforces_ownership() {
+        let asset = Asset::new(AssetId::new(), Timestamp::from_unix_micros(0), None, None);
+        let representation = Representation::new(
+            RepresentationId::new(),
+            AssetId::new(),
+            RepresentationKind::Original,
+            None,
+            None,
+        );
+        let location = Location::new(
+            LocationId::new(),
+            representation.id(),
+            "file:///media.mov",
+            None,
+            LocationAvailability::Online,
+        )
+        .expect("valid location");
+
+        assert_eq!(
+            OriginalMediaImport::new(asset, representation, location)
+                .expect_err("mismatched ownership must fail")
+                .kind(),
+            ErrorKind::InvalidArgument
+        );
     }
 }

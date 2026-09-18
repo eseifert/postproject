@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod migrations;
+mod transaction;
 
 use std::{
     fs::OpenOptions,
@@ -13,10 +14,15 @@ use std::{
     time::Duration,
 };
 
-use postproject_core::{Error, ErrorKind, Project, ProjectId, Result, Timestamp};
+use postproject_core::{
+    Asset, AssetId, Error, ErrorKind, FileFacts, Fingerprint, Location, LocationAvailability,
+    MediaRoot, MediaRootId, Project, ProjectId, Representation, RepresentationId,
+    RepresentationKind, Result, Timestamp,
+};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
 pub use migrations::CURRENT_SCHEMA_VERSION;
+pub use transaction::SqliteTransaction;
 
 /// A project backed by one SQLite project file.
 #[derive(Debug)]
@@ -91,6 +97,139 @@ impl SqliteProject {
     #[must_use]
     pub const fn project(&self) -> &Project {
         &self.project
+    }
+
+    /// Begins an explicit domain transaction for project mutations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Storage`] if SQLite cannot start the transaction.
+    pub fn begin_transaction(&mut self) -> Result<SqliteTransaction<'_>> {
+        let (connection, project) = (&mut self.connection, &mut self.project);
+        SqliteTransaction::begin(connection, project)
+    }
+
+    /// Loads all assets in deterministic creation/identity order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Storage`] for query failures or invalid stored data.
+    pub fn assets(&self) -> Result<Vec<Asset>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, created_at_micros, display_name, import_source
+                 FROM assets ORDER BY created_at_micros, id",
+            )
+            .map_err(sqlite_error("prepare asset query"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })
+            .map_err(sqlite_error("query assets"))?;
+
+        rows.map(|row| {
+            let (id, created_at, display_name, import_source) =
+                row.map_err(sqlite_error("read asset row"))?;
+            Ok(Asset::new(
+                AssetId::from_bytes(id_bytes(id, "asset")?),
+                Timestamp::from_unix_micros(created_at),
+                display_name,
+                import_source,
+            ))
+        })
+        .collect()
+    }
+
+    /// Loads representations belonging to `asset_id` in stable identity order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Storage`] for query failures or invalid stored data.
+    pub fn representations(&self, asset_id: AssetId) -> Result<Vec<Representation>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT r.id, r.kind, r.file_size_bytes, r.modified_at_micros,
+                        f.algorithm, f.algorithm_version, f.value
+                 FROM representations r
+                 LEFT JOIN fingerprints f ON f.representation_id = r.id
+                 WHERE r.asset_id = ?1 ORDER BY r.id",
+            )
+            .map_err(sqlite_error("prepare representation query"))?;
+        let rows = statement
+            .query_map(params![asset_id.as_bytes().as_slice()], |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<u16>>(5)?,
+                    row.get::<_, Option<Vec<u8>>>(6)?,
+                ))
+            })
+            .map_err(sqlite_error("query representations"))?;
+
+        rows.map(|row| {
+            let (id, kind, size, modified_at, algorithm, version, value) =
+                row.map_err(sqlite_error("read representation row"))?;
+            let kind = decode_representation_kind(kind)?;
+            let file_facts = decode_file_facts(size, modified_at)?;
+            let fingerprint = decode_fingerprint(algorithm, version, value)?;
+            Ok(Representation::new(
+                RepresentationId::from_bytes(id_bytes(id, "representation")?),
+                asset_id,
+                kind,
+                fingerprint,
+                file_facts,
+            ))
+        })
+        .collect()
+    }
+
+    /// Loads known locations for `representation_id` in stable identity order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Storage`] for query failures or invalid stored data.
+    pub fn locations(&self, representation_id: RepresentationId) -> Result<Vec<Location>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, uri, last_seen_micros, availability FROM locations
+                 WHERE representation_id = ?1 ORDER BY id",
+            )
+            .map_err(sqlite_error("prepare location query"))?;
+        let rows = statement
+            .query_map(params![representation_id.as_bytes().as_slice()], |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(sqlite_error("query locations"))?;
+
+        rows.map(|row| {
+            let (id, uri, last_seen, availability) =
+                row.map_err(sqlite_error("read location row"))?;
+            Location::new(
+                postproject_core::LocationId::from_bytes(id_bytes(id, "location")?),
+                representation_id,
+                uri,
+                last_seen.map(Timestamp::from_unix_micros),
+                decode_availability(availability)?,
+            )
+            .map_err(stored_domain_error("location"))
+        })
+        .collect()
     }
 
     /// Reports whether SQLite foreign-key enforcement is active on this connection.
@@ -193,15 +332,113 @@ fn load_project(connection: &Connection) -> Result<Project> {
         ));
     }
 
-    Ok(Project::new(
+    let mut project = Project::new(
         id,
         stored.1,
         Timestamp::from_unix_micros(stored.2),
         stored.3,
-    ))
+    );
+    project.set_media_roots(load_media_roots(connection)?);
+    Ok(project)
 }
 
-fn id_bytes(value: Vec<u8>, label: &str) -> Result<[u8; 16]> {
+fn load_media_roots(connection: &Connection) -> Result<Vec<MediaRoot>> {
+    let mut statement = connection
+        .prepare("SELECT id, uri, label, priority, enabled FROM media_roots ORDER BY priority, id")
+        .map_err(sqlite_error("prepare media-root query"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, i32>(3)?,
+                row.get::<_, bool>(4)?,
+            ))
+        })
+        .map_err(sqlite_error("query media roots"))?;
+    rows.map(|row| {
+        let (id, uri, label, priority, enabled) =
+            row.map_err(sqlite_error("read media-root row"))?;
+        MediaRoot::new(
+            MediaRootId::from_bytes(id_bytes(id, "media root")?),
+            uri,
+            label,
+            priority,
+            enabled,
+        )
+        .map_err(stored_domain_error("media root"))
+    })
+    .collect()
+}
+
+fn decode_representation_kind(value: i64) -> Result<RepresentationKind> {
+    match value {
+        0 => Ok(RepresentationKind::Original),
+        1 => Ok(RepresentationKind::Proxy),
+        2 => Ok(RepresentationKind::Optimized),
+        3 => Ok(RepresentationKind::Derived),
+        _ => Err(Error::new(
+            ErrorKind::Storage,
+            format!("stored representation kind {value} is invalid"),
+        )),
+    }
+}
+
+fn decode_availability(value: i64) -> Result<LocationAvailability> {
+    match value {
+        0 => Ok(LocationAvailability::Unknown),
+        1 => Ok(LocationAvailability::Online),
+        2 => Ok(LocationAvailability::Offline),
+        _ => Err(Error::new(
+            ErrorKind::Storage,
+            format!("stored location availability {value} is invalid"),
+        )),
+    }
+}
+
+fn decode_file_facts(size: Option<i64>, modified_at: Option<i64>) -> Result<Option<FileFacts>> {
+    match (size, modified_at) {
+        (None, None) => Ok(None),
+        (Some(size), modified_at) => {
+            let size = u64::try_from(size).map_err(|error| {
+                Error::new(
+                    ErrorKind::Storage,
+                    format!("stored file size is invalid: {error}"),
+                )
+            })?;
+            Ok(Some(FileFacts::new(
+                size,
+                modified_at.map(Timestamp::from_unix_micros),
+            )))
+        }
+        (None, Some(_)) => Err(Error::new(
+            ErrorKind::Storage,
+            "stored modification time has no corresponding file size",
+        )),
+    }
+}
+
+fn decode_fingerprint(
+    algorithm: Option<String>,
+    version: Option<u16>,
+    value: Option<Vec<u8>>,
+) -> Result<Option<Fingerprint>> {
+    match (algorithm, version, value) {
+        (None, None, None) => Ok(None),
+        (Some(algorithm), Some(version), Some(value)) => {
+            Fingerprint::new(algorithm, version, value)
+                .map(Some)
+                .map_err(stored_domain_error("fingerprint"))
+        }
+        _ => Err(Error::new(
+            ErrorKind::Storage,
+            "stored fingerprint fields are incomplete",
+        )),
+    }
+}
+
+pub(crate) fn id_bytes(value: Vec<u8>, label: &str) -> Result<[u8; 16]> {
     value.try_into().map_err(|value: Vec<u8>| {
         Error::new(
             ErrorKind::Storage,
@@ -210,6 +447,15 @@ fn id_bytes(value: Vec<u8>, label: &str) -> Result<[u8; 16]> {
     })
 }
 
-fn sqlite_error(context: &'static str) -> impl FnOnce(rusqlite::Error) -> Error {
+pub(crate) fn sqlite_error(context: &'static str) -> impl FnOnce(rusqlite::Error) -> Error {
     move |error| Error::new(ErrorKind::Storage, format!("{context}: {error}"))
+}
+
+fn stored_domain_error(label: &'static str) -> impl FnOnce(Error) -> Error {
+    move |error| {
+        Error::new(
+            ErrorKind::Storage,
+            format!("stored {label} is invalid: {error}"),
+        )
+    }
 }

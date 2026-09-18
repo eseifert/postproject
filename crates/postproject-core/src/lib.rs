@@ -15,8 +15,8 @@ mod uri;
 pub use error::{Error, ErrorKind, Result};
 pub use id::{AssetId, LocationId, MediaRootId, ProjectId, RepresentationId, TransactionId};
 pub use model::{
-    Asset, FileFacts, Fingerprint, Location, LocationAvailability, MediaRoot, Project,
-    Representation, RepresentationKind, Timestamp,
+    Asset, FileFacts, Fingerprint, Location, LocationAvailability, MediaRoot, OriginalMediaImport,
+    Project, Representation, RepresentationKind, Timestamp,
 };
 pub use resolution::{
     Confidence, EvidenceKind, Resolution, ResolutionCandidate, ResolutionEvidence, ResolutionState,

@@ -17,3 +17,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - SQLite-backed project creation/opening with durable stable identity.
 - Automated advisory, source, duplicate-dependency, and license policy checks.
 - Versioned full and sampled BLAKE3 fingerprints with explicit coverage evidence.
+- Atomic original-media imports and media-root persistence through explicit transactions.

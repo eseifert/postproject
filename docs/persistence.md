@@ -30,3 +30,12 @@ file while a project is open may omit WAL state.
 The backend currently builds a bundled SQLite for reproducible developer and CI
 builds. SQLite errors are wrapped as domain storage or migration errors rather than
 becoming part of the public contract.
+
+## Domain transactions
+
+Media imports insert the asset, original representation, optional fingerprint,
+and initial location inside one explicit deferred SQLite transaction. Media roots
+participate in the same transaction boundary. Commit and rollback close the
+transaction; repeated close attempts return a conflict. Dropping an open
+transaction uses SQLite rollback semantics, so partially staged imports never
+become visible.
