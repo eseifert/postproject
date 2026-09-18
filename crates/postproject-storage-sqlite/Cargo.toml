@@ -10,12 +10,11 @@ license.workspace = true
 publish = false
 
 [dependencies]
-postproject-core = { path = "../postproject-core" }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+postproject-core = { version = "0.1.0-alpha.1", path = "../postproject-core" }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = "3"
 
 [lints]
 workspace = true
-

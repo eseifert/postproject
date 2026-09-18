@@ -15,3 +15,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - Backend-neutral transaction lifecycle semantics.
 - SQLite schema version 1 with transactional numbered migrations.
 - SQLite-backed project creation/opening with durable stable identity.
+- Automated advisory, source, duplicate-dependency, and license policy checks.
