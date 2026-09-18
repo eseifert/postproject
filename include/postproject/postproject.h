@@ -1,0 +1,74 @@
+#ifndef POSTPROJECT_POSTPROJECT_H
+#define POSTPROJECT_POSTPROJECT_H
+
+#include <stdint.h>
+
+#if defined(_WIN32) && defined(POSTPROJECT_SHARED)
+#  if defined(POSTPROJECT_BUILDING_LIBRARY)
+#    define PP_API __declspec(dllexport)
+#  else
+#    define PP_API __declspec(dllimport)
+#  endif
+#elif defined(__GNUC__) && defined(POSTPROJECT_SHARED)
+#  define PP_API __attribute__((visibility("default")))
+#else
+#  define PP_API
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct pp_project pp_project_t;
+typedef struct pp_error pp_error_t;
+
+typedef struct pp_uuid {
+    uint8_t bytes[16];
+} pp_uuid_t;
+
+typedef uint32_t pp_error_code_t;
+
+#define PP_OK UINT32_C(0)
+#define PP_ERROR_INVALID_ARGUMENT UINT32_C(1)
+#define PP_ERROR_NOT_FOUND UINT32_C(2)
+#define PP_ERROR_ALREADY_EXISTS UINT32_C(3)
+#define PP_ERROR_IO UINT32_C(4)
+#define PP_ERROR_STORAGE UINT32_C(5)
+#define PP_ERROR_MIGRATION UINT32_C(6)
+#define PP_ERROR_CONFLICT UINT32_C(7)
+#define PP_ERROR_AMBIGUOUS_RESOLUTION UINT32_C(8)
+#define PP_ERROR_FINGERPRINT UINT32_C(9)
+#define PP_ERROR_UNSUPPORTED UINT32_C(10)
+#define PP_ERROR_INTERNAL UINT32_C(255)
+
+/* Inputs are borrowed UTF-8 without embedded NUL. A NULL display name is absent.
+ * On success, *out_project is caller-owned and *out_error is NULL. On failure,
+ * *out_project is NULL and a non-NULL *out_error is caller-owned. out_error may
+ * itself be NULL when diagnostic text is not required. */
+PP_API uint32_t pp_abi_version(void);
+PP_API pp_error_code_t pp_project_create(
+    const char *path,
+    const char *display_name,
+    pp_project_t **out_project,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_project_open(
+    const char *path,
+    pp_project_t **out_project,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_project_id(
+    const pp_project_t *project,
+    pp_uuid_t *out_id,
+    pp_error_t **out_error);
+PP_API void pp_project_release(pp_project_t *project);
+
+PP_API pp_error_code_t pp_error_code(const pp_error_t *error);
+/* The returned string is borrowed and valid until pp_error_release(error). */
+PP_API const char *pp_error_message(const pp_error_t *error);
+PP_API void pp_error_release(pp_error_t *error);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+

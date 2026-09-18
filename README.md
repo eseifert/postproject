@@ -40,7 +40,30 @@ cargo build --workspace
 cargo test --workspace --all-features
 ```
 
-Native-library build and installation instructions will be added with the C ABI.
+The initial C ABI can be built with:
+
+```sh
+cargo build --release -p postproject-ffi
+```
+
+Minimal C usage:
+
+```c
+#include <postproject/postproject.h>
+
+pp_project_t *project = NULL;
+pp_error_t *error = NULL;
+pp_error_code_t status =
+    pp_project_open("production.pproj", &project, &error);
+if (status != PP_OK) {
+    /* pp_error_message(error) is valid until release. */
+    pp_error_release(error);
+    return 1;
+}
+pp_project_release(project);
+```
+
+The C++ wrapper and conventional install/package metadata are not implemented yet.
 
 ## License
 

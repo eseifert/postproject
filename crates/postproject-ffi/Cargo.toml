@@ -1,0 +1,30 @@
+[package]
+name = "postproject-ffi"
+description = "Stable C ABI for libpostproject"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "postproject"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+postproject-core = { version = "0.1.0-alpha.1", path = "../postproject-core" }
+postproject-storage-sqlite = { version = "0.1.0-alpha.1", path = "../postproject-storage-sqlite" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+missing_docs = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+

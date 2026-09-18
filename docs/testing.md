@@ -18,3 +18,7 @@ coverage. Tests must not require network access, user locale, or wall-clock timi
 licenses outside the repository's explicit permissive allowlist. Duplicate crate
 versions are reported for review because platform support and MSRV constraints can
 make them temporarily unavoidable.
+
+The C ABI job builds the optimized shared library, compiles a standalone C11
+consumer using only the public header, runs create/open/error operations, and
+compares the exported dynamic symbols against `tests/abi/expected-symbols.txt`.
