@@ -40,6 +40,22 @@ cargo build --workspace
 cargo test --workspace --all-features
 ```
 
+The demonstrator CLI exercises the same storage, media, and resolver services as
+the library:
+
+```sh
+cargo run -p postproject-cli -- init production.pproj --name "Documentary"
+cargo run -p postproject-cli -- media add production.pproj rushes/A001.mov
+cargo run -p postproject-cli -- root add production.pproj /mnt/relocated-rushes
+cargo run -p postproject-cli -- media list production.pproj
+cargo run -p postproject-cli -- media resolve production.pproj ASSET_ID
+```
+
+Pass `--json` before or after a subcommand for structured output. An ambiguous
+candidate returned by `media resolve` can be persisted explicitly with
+`media resolve PROJECT ASSET_ID --confirm URI`; the URI must be one of that
+resolution's candidates.
+
 The initial C ABI can be built with:
 
 ```sh

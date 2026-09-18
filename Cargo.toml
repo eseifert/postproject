@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/postproject-cli",
   "crates/postproject-core",
   "crates/postproject-ffi",
   "crates/postproject-media",

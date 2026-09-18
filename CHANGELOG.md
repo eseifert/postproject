@@ -22,3 +22,5 @@ All notable changes to libpostproject will be documented here. The project uses
 - C ABI version 1 foundation with opaque project/error handles and panic containment.
 - Header-only C++17 RAII wrapper with typed exceptions and move-only project ownership.
 - Installable CMake and `pkg-config` metadata with a standalone native consumer test.
+- CLI project, media, root, inspection, resolution, and explicit confirmation workflows.
+- Machine-readable CLI JSON output and an end-to-end ambiguous relinking test.
