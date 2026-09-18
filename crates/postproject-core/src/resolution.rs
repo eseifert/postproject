@@ -56,6 +56,8 @@ pub enum EvidenceKind {
     MediaRootRelation,
     /// Another candidate has equivalent credible evidence.
     ConflictingCandidate,
+    /// Candidate discovery or verification could not complete safely.
+    DiscoveryError,
 }
 
 /// Structured evidence with optional human-readable context.

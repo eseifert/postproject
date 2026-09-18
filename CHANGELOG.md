@@ -18,3 +18,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - Automated advisory, source, duplicate-dependency, and license policy checks.
 - Versioned full and sampled BLAKE3 fingerprints with explicit coverage evidence.
 - Atomic original-media imports and media-root persistence through explicit transactions.
+- Deterministic bounded media resolution with explicit ambiguity and confirmed relinks.

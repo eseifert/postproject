@@ -19,7 +19,18 @@ result when the file appears to change during calculation.
 
 ## Resolution policy
 
-Resolution will check known locations first and scan configured roots only when
-necessary. Discovery, cheap file-fact filtering, and fingerprint verification
-will be separate stages. Results expose evidence and candidates; equally credible
-candidates produce `Ambiguous` and require explicit confirmation.
+Resolution checks known locations first and scans configured roots only when
+necessary. Traversal is deterministic, does not follow symlinks, defaults to a
+depth limit of 64 and an entry limit of 100,000, and reports a structured error
+result when a bound or filesystem operation prevents a safe answer.
+
+Discovery, cheap file-size filtering, and fingerprint verification are separate
+stages. Full hashes produce exact resolution; sampled fingerprints produce
+probable resolution. If no fingerprint exists, a matching filename is required
+and file size strengthens the evidence. Equally credible candidates produce
+`Ambiguous` and require explicit confirmation. Confirmation adds a new location
+inside a project transaction; the resolver itself never mutates project state.
+
+Current scans are intentionally uncached. Overlapping roots are de-duplicated by
+canonical file URI, but each resolve operation walks enabled roots afresh. A later
+filesystem index can replace discovery without changing result semantics.

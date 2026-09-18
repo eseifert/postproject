@@ -15,8 +15,11 @@ pub const FULL_HASH_LIMIT_BYTES: u64 = 1024 * 1024;
 /// Number of bytes read from each selected region of a larger file.
 pub const REGION_SIZE_BYTES: usize = 64 * 1024;
 
-const FULL_ALGORITHM: &str = "pp-blake3-full-file";
-const SAMPLED_ALGORITHM: &str = "pp-blake3-sampled-regions";
+/// Algorithm identifier for complete BLAKE3 file hashes.
+pub const FULL_FINGERPRINT_ALGORITHM: &str = "pp-blake3-full-file";
+
+/// Algorithm identifier for deterministic three-region BLAKE3 fingerprints.
+pub const SAMPLED_FINGERPRINT_ALGORITHM: &str = "pp-blake3-sampled-regions";
 const ALGORITHM_VERSION: u16 = 1;
 const SAMPLED_CONTEXT: &[u8] = b"libpostproject sampled file fingerprint v1\0";
 
@@ -98,13 +101,13 @@ pub fn fingerprint_file(path: impl AsRef<Path>) -> Result<FingerprintReport> {
         (
             hash_full(&mut file, path)?,
             FingerprintCoverage::Full,
-            FULL_ALGORITHM,
+            FULL_FINGERPRINT_ALGORITHM,
         )
     } else {
         (
             hash_sampled(&mut file, path, size)?,
             FingerprintCoverage::Sampled,
-            SAMPLED_ALGORITHM,
+            SAMPLED_FINGERPRINT_ALGORITHM,
         )
     };
 
@@ -199,7 +202,7 @@ mod tests {
 
         assert_eq!(report.coverage(), FingerprintCoverage::Full);
         assert_eq!(report.facts().size_bytes(), 0);
-        assert_eq!(report.fingerprint().algorithm(), FULL_ALGORITHM);
+        assert_eq!(report.fingerprint().algorithm(), FULL_FINGERPRINT_ALGORITHM);
         assert_eq!(report.fingerprint().value(), blake3::hash(&[]).as_bytes());
     }
 

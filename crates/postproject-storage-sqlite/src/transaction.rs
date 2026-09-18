@@ -117,23 +117,20 @@ impl<'project> SqliteTransaction<'project> {
                 )
                 .map_err(mutation_error("persist original fingerprint"))?;
         }
-        transaction
-            .execute(
-                "INSERT INTO locations (
-                    id, representation_id, uri, last_seen_micros, availability
-                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    location.id().as_bytes().as_slice(),
-                    representation.id().as_bytes().as_slice(),
-                    location.uri(),
-                    location
-                        .last_seen()
-                        .map(postproject_core::Timestamp::as_unix_micros),
-                    availability,
-                ],
-            )
-            .map_err(mutation_error("persist original location"))?;
+        persist_location(transaction, location, availability)?;
         Ok(())
+    }
+
+    /// Stages an additional confirmed location for a representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Conflict`] if the transaction is closed,
+    /// [`ErrorKind::AlreadyExists`] for a duplicate location or missing owning
+    /// representation, or [`ErrorKind::Storage`] for other persistence failures.
+    pub fn add_location(&mut self, location: &postproject_core::Location) -> Result<()> {
+        let availability = encode_availability(location.availability())?;
+        persist_location(self.open_transaction()?, location, availability)
     }
 
     /// Stages a configured media root.
@@ -229,6 +226,30 @@ fn encode_availability(value: LocationAvailability) -> Result<i64> {
             "location availability is not supported by this schema",
         )),
     }
+}
+
+fn persist_location(
+    transaction: &Transaction<'_>,
+    location: &postproject_core::Location,
+    availability: i64,
+) -> Result<()> {
+    transaction
+        .execute(
+            "INSERT INTO locations (
+                id, representation_id, uri, last_seen_micros, availability
+             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                location.id().as_bytes().as_slice(),
+                location.representation_id().as_bytes().as_slice(),
+                location.uri(),
+                location
+                    .last_seen()
+                    .map(postproject_core::Timestamp::as_unix_micros),
+                availability,
+            ],
+        )
+        .map(|_| ())
+        .map_err(mutation_error("persist representation location"))
 }
 
 fn mutation_error(context: &'static str) -> impl FnOnce(rusqlite::Error) -> Error {

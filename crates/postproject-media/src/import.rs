@@ -85,6 +85,29 @@ pub fn prepare_media_root(
     )
 }
 
+/// Prepares a confirmed online location for transactional persistence.
+///
+/// The URI is normalized by the domain constructor. This function does not
+/// require the URI to use the `file` scheme because future storage transports may
+/// confirm other locator types.
+///
+/// # Errors
+///
+/// Returns errors from time capture or URI validation.
+pub fn prepare_confirmed_location(
+    representation_id: RepresentationId,
+    uri: impl Into<String>,
+) -> Result<Location> {
+    let now = Timestamp::now()?;
+    Location::new(
+        LocationId::new(),
+        representation_id,
+        uri,
+        Some(now),
+        LocationAvailability::Online,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
