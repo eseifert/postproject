@@ -568,6 +568,7 @@ name = "postproject-ffi"
 version = "0.1.0-alpha.1"
 dependencies = [
  "postproject-core",
+ "postproject-media",
  "postproject-storage-sqlite",
  "tempfile",
 ]

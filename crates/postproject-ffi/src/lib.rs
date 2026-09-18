@@ -6,13 +6,18 @@
 
 use std::{
     any::Any,
+    cell::{Cell, RefCell},
     ffi::{CStr, CString, c_char},
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
     ptr,
+    rc::Rc,
 };
 
-use postproject_core::{Error, ErrorKind, ProjectId};
+use postproject_core::{
+    AssetId, Error, ErrorKind, MediaRoot, OriginalMediaImport, ProjectId, TransactionLifecycle,
+};
+use postproject_media::{prepare_media_root, prepare_original_media};
 use postproject_storage_sqlite::SqliteProject;
 
 const PP_OK: u32 = 0;
@@ -41,7 +46,24 @@ pub struct PpUuid {
 
 /// Opaque project handle owned by the C caller.
 pub struct PpProject {
-    inner: SqliteProject,
+    state: Rc<ProjectState>,
+}
+
+struct ProjectState {
+    inner: RefCell<SqliteProject>,
+    transaction_open: Cell<bool>,
+}
+
+/// Opaque transaction handle owned by the C caller.
+pub struct PpTransaction {
+    state: Rc<ProjectState>,
+    lifecycle: TransactionLifecycle,
+    mutations: Vec<StagedMutation>,
+}
+
+enum StagedMutation {
+    Import(OriginalMediaImport),
+    MediaRoot(MediaRoot),
 }
 
 /// Opaque error object owned by the C caller.
@@ -85,7 +107,7 @@ pub unsafe extern "C" fn pp_project_create(
             }
             let display_name = optional_utf8(display_name, "display_name")?.map(str::to_owned);
             let project = SqliteProject::create(Path::new(path), display_name)?;
-            out_project.write(Box::into_raw(Box::new(PpProject { inner: project })));
+            out_project.write(Box::into_raw(Box::new(project_handle(project))));
             Ok(())
         })
     }
@@ -117,7 +139,7 @@ pub unsafe extern "C" fn pp_project_open(
                 return Err(invalid_argument("path must not be empty"));
             }
             let project = SqliteProject::open(Path::new(path))?;
-            out_project.write(Box::into_raw(Box::new(PpProject { inner: project })));
+            out_project.write(Box::into_raw(Box::new(project_handle(project))));
             Ok(())
         })
     }
@@ -146,10 +168,249 @@ pub unsafe extern "C" fn pp_project_id(
             if out_id.is_null() {
                 return Err(invalid_argument("out_id must not be null"));
             }
-            out_id.write(uuid(project.inner.project().id()));
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            out_id.write(uuid(inner.project().id()));
             Ok(())
         })
     }
+}
+
+/// Reports whether a stable asset identity exists in a project.
+///
+/// # Safety
+///
+/// `project` must be a live handle returned by this library. `asset_id` must be
+/// readable and `out_exists` writable. `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_asset_exists(
+    project: *const PpProject,
+    asset_id: *const PpUuid,
+    out_exists: *mut u8,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Null pointers are rejected before dereference; non-null pointer
+    // validity and synchronization are guaranteed by the caller contract.
+    unsafe {
+        if !out_exists.is_null() {
+            out_exists.write(0);
+        }
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            let asset_id = asset_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("asset_id must not be null"))?;
+            if out_exists.is_null() {
+                return Err(invalid_argument("out_exists must not be null"));
+            }
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let expected = AssetId::from_bytes(asset_id.bytes);
+            let exists = inner.assets()?.iter().any(|asset| asset.id() == expected);
+            out_exists.write(u8::from(exists));
+            Ok(())
+        })
+    }
+}
+
+/// Begins an explicit transaction that stages mutations until commit.
+///
+/// At most one transaction may be open for a project state. The returned handle
+/// keeps that state alive even if the original project handle is released.
+///
+/// # Safety
+///
+/// `project` must be a live handle returned by this library. `out_transaction`
+/// must be writable. `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_begin_transaction(
+    project: *mut PpProject,
+    out_transaction: *mut *mut PpTransaction,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The caller contract for each pointer is documented above. Outputs
+    // are initialized before validation and the project is borrowed only here.
+    unsafe {
+        initialize_output(out_transaction);
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            if out_transaction.is_null() {
+                return Err(invalid_argument("out_transaction must not be null"));
+            }
+            if project.state.transaction_open.replace(true) {
+                return Err(Error::new(
+                    ErrorKind::Conflict,
+                    "project already has an open transaction",
+                ));
+            }
+            out_transaction.write(Box::into_raw(Box::new(PpTransaction {
+                state: Rc::clone(&project.state),
+                lifecycle: TransactionLifecycle::new(),
+                mutations: Vec::new(),
+            })));
+            Ok(())
+        })
+    }
+}
+
+/// Stages an original-media import and returns its stable asset identity.
+///
+/// # Safety
+///
+/// `transaction` must be a live transaction handle. `path` must be a borrowed
+/// NUL-terminated UTF-8 string; `display_name` may be null or satisfy the same
+/// rule. `out_asset_id` must be writable. `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_import_media(
+    transaction: *mut PpTransaction,
+    path: *const c_char,
+    display_name: *const c_char,
+    out_asset_id: *mut PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Null pointers are rejected before dereference and string inputs
+    // follow the documented borrowed NUL-terminated contract.
+    unsafe {
+        initialize_uuid(out_asset_id);
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            if out_asset_id.is_null() {
+                return Err(invalid_argument("out_asset_id must not be null"));
+            }
+            let path = required_utf8(path, "path")?;
+            if path.is_empty() {
+                return Err(invalid_argument("path must not be empty"));
+            }
+            let display_name = optional_utf8(display_name, "display_name")?.map(str::to_owned);
+            let import = prepare_original_media(Path::new(path), display_name, None)?;
+            out_asset_id.write(PpUuid {
+                bytes: import.asset().id().into_bytes(),
+            });
+            transaction.mutations.push(StagedMutation::Import(import));
+            Ok(())
+        })
+    }
+}
+
+/// Stages a filesystem media root and returns its stable identity.
+///
+/// # Safety
+///
+/// `transaction` must be a live transaction handle. `path` must be a borrowed
+/// NUL-terminated UTF-8 string; `label` may be null or satisfy the same rule.
+/// `out_root_id` must be writable. `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_add_media_root(
+    transaction: *mut PpTransaction,
+    path: *const c_char,
+    label: *const c_char,
+    priority: i32,
+    out_root_id: *mut PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Null pointers are rejected before dereference and string inputs
+    // follow the documented borrowed NUL-terminated contract.
+    unsafe {
+        initialize_uuid(out_root_id);
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            if out_root_id.is_null() {
+                return Err(invalid_argument("out_root_id must not be null"));
+            }
+            let path = required_utf8(path, "path")?;
+            if path.is_empty() {
+                return Err(invalid_argument("path must not be empty"));
+            }
+            let label = optional_utf8(label, "label")?.map(str::to_owned);
+            let root = prepare_media_root(Path::new(path), label, priority)?;
+            out_root_id.write(PpUuid {
+                bytes: root.id().into_bytes(),
+            });
+            transaction.mutations.push(StagedMutation::MediaRoot(root));
+            Ok(())
+        })
+    }
+}
+
+/// Atomically commits all staged transaction mutations.
+///
+/// # Safety
+///
+/// `transaction` must be a live transaction handle and `out_error` may be null
+/// or writable. A closed transaction remains valid only for release.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_commit(
+    transaction: *mut PpTransaction,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The non-null transaction is required to be live and exclusively
+    // accessed by the caller for this operation.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.commit()
+        })
+    }
+}
+
+/// Discards all staged transaction mutations.
+///
+/// # Safety
+///
+/// `transaction` must be a live transaction handle and `out_error` may be null
+/// or writable. A closed transaction remains valid only for release.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_rollback(
+    transaction: *mut PpTransaction,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The non-null transaction is required to be live and exclusively
+    // accessed by the caller for this operation.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.rollback()
+        })
+    }
+}
+
+/// Releases a transaction, implicitly discarding staged work when still open.
+/// Passing null is a no-op.
+///
+/// # Safety
+///
+/// A non-null pointer must have been returned by this library and not previously
+/// released. No other thread may use it during or after this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_release(transaction: *mut PpTransaction) {
+    if transaction.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership of a live allocation is required by this function's
+        // contract and is reconstructed exactly once here.
+        drop(unsafe { Box::from_raw(transaction) });
+    }));
 }
 
 /// Releases a project handle. Passing null is a no-op.
@@ -252,6 +513,14 @@ unsafe fn initialize_output<T>(output: *mut *mut T) {
     }
 }
 
+unsafe fn initialize_uuid(output: *mut PpUuid) {
+    if !output.is_null() {
+        // SAFETY: Non-null UUID output pointers are required to be writable by
+        // every exported caller contract using this helper.
+        unsafe { output.write(PpUuid { bytes: [0; 16] }) };
+    }
+}
+
 unsafe fn write_error(output: *mut *mut PpError, code: u32, message: &str) {
     if output.is_null() {
         return;
@@ -306,6 +575,59 @@ const fn error_code(kind: ErrorKind) -> u32 {
 fn uuid(id: ProjectId) -> PpUuid {
     PpUuid {
         bytes: id.into_bytes(),
+    }
+}
+
+fn project_handle(project: SqliteProject) -> PpProject {
+    PpProject {
+        state: Rc::new(ProjectState {
+            inner: RefCell::new(project),
+            transaction_open: Cell::new(false),
+        }),
+    }
+}
+
+impl PpTransaction {
+    fn commit(&mut self) -> Result<(), Error> {
+        self.lifecycle.ensure_open()?;
+        let result = (|| {
+            let mut project = self
+                .state
+                .inner
+                .try_borrow_mut()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let mut transaction = project.begin_transaction()?;
+            for mutation in &self.mutations {
+                match mutation {
+                    StagedMutation::Import(import) => transaction.import_original(import)?,
+                    StagedMutation::MediaRoot(root) => transaction.add_media_root(root.clone())?,
+                }
+            }
+            transaction.commit()
+        })();
+
+        self.state.transaction_open.set(false);
+        if result.is_ok() {
+            self.lifecycle.mark_committed()?;
+            self.mutations.clear();
+        } else {
+            let state_result = self.lifecycle.mark_rolled_back();
+            debug_assert!(state_result.is_ok());
+        }
+        result
+    }
+
+    fn rollback(&mut self) -> Result<(), Error> {
+        self.lifecycle.mark_rolled_back()?;
+        self.mutations.clear();
+        self.state.transaction_open.set(false);
+        Ok(())
+    }
+}
+
+impl Drop for PpTransaction {
+    fn drop(&mut self) {
+        self.state.transaction_open.set(false);
     }
 }
 
@@ -374,5 +696,71 @@ mod tests {
         assert!(!unsafe { pp_error_message(error) }.is_null());
         // SAFETY: The live error is released exactly once.
         unsafe { pp_error_release(error) };
+    }
+
+    #[test]
+    fn transaction_retains_project_state_and_commits_import() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let project_path = directory.path().join("project.pproj");
+        let media_path = directory.path().join("clip.mov");
+        std::fs::write(&media_path, b"FFI transaction media").expect("write media");
+        let project_path = CString::new(project_path.to_string_lossy().as_bytes())
+            .expect("project path has no NUL");
+        let media_path =
+            CString::new(media_path.to_string_lossy().as_bytes()).expect("media path has no NUL");
+        let mut project = ptr::null_mut();
+        let mut transaction = ptr::null_mut();
+        let mut error = ptr::null_mut();
+
+        // SAFETY: Test inputs and outputs follow the documented ABI contract.
+        assert_eq!(
+            unsafe {
+                pp_project_create(
+                    project_path.as_ptr(),
+                    ptr::null(),
+                    &raw mut project,
+                    &raw mut error,
+                )
+            },
+            PP_OK
+        );
+        // SAFETY: `project` is live and the transaction output is writable.
+        assert_eq!(
+            unsafe { pp_project_begin_transaction(project, &raw mut transaction, &raw mut error,) },
+            PP_OK
+        );
+        // SAFETY: The transaction retains shared ownership of the state.
+        unsafe { pp_project_release(project) };
+
+        let mut asset_id = PpUuid { bytes: [0; 16] };
+        // SAFETY: `transaction` is live and inputs/outputs satisfy the contract.
+        assert_eq!(
+            unsafe {
+                pp_transaction_import_media(
+                    transaction,
+                    media_path.as_ptr(),
+                    ptr::null(),
+                    &raw mut asset_id,
+                    &raw mut error,
+                )
+            },
+            PP_OK
+        );
+        // SAFETY: `transaction` remains live and exclusively accessed.
+        assert_eq!(
+            unsafe { pp_transaction_commit(transaction, &raw mut error) },
+            PP_OK
+        );
+        // SAFETY: The live transaction is released exactly once.
+        unsafe { pp_transaction_release(transaction) };
+
+        let reopened = SqliteProject::open(Path::new(
+            project_path.to_str().expect("project path is UTF-8"),
+        ))
+        .expect("reopen project");
+        let assets = reopened.assets().expect("load committed assets");
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].id().into_bytes(), asset_id.bytes);
+        assert!(error.is_null());
     }
 }

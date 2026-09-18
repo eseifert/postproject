@@ -79,6 +79,19 @@ if (status != PP_OK) {
 pp_project_release(project);
 ```
 
+Native mutations use explicit transactions. Imports return their stable logical
+identity before commit; rollback or releasing an open transaction discards them:
+
+```c
+pp_transaction_t *tx = NULL;
+pp_uuid_t asset_id = {{0}};
+if (pp_project_begin_transaction(project, &tx, &error) == PP_OK &&
+    pp_transaction_import_media(tx, "A001.mov", NULL, &asset_id, &error) == PP_OK) {
+    pp_transaction_commit(tx, &error);
+}
+pp_transaction_release(tx);
+```
+
 The header-only C++17 wrapper maps C failures to `postproject::Error` exceptions
 and manages opaque handles with RAII:
 

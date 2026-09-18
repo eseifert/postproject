@@ -2,7 +2,14 @@ pp_abi_version
 pp_error_code
 pp_error_message
 pp_error_release
+pp_project_asset_exists
+pp_project_begin_transaction
 pp_project_create
 pp_project_id
 pp_project_open
 pp_project_release
+pp_transaction_add_media_root
+pp_transaction_commit
+pp_transaction_import_media
+pp_transaction_release
+pp_transaction_rollback

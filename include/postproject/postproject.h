@@ -4,15 +4,15 @@
 #include <stdint.h>
 
 #if defined(_WIN32) && defined(POSTPROJECT_SHARED)
-#  if defined(POSTPROJECT_BUILDING_LIBRARY)
-#    define PP_API __declspec(dllexport)
-#  else
-#    define PP_API __declspec(dllimport)
-#  endif
-#elif defined(__GNUC__) && defined(POSTPROJECT_SHARED)
-#  define PP_API __attribute__((visibility("default")))
+#if defined(POSTPROJECT_BUILDING_LIBRARY)
+#define PP_API __declspec(dllexport)
 #else
-#  define PP_API
+#define PP_API __declspec(dllimport)
+#endif
+#elif defined(__GNUC__) && defined(POSTPROJECT_SHARED)
+#define PP_API __attribute__((visibility("default")))
+#else
+#define PP_API
 #endif
 
 #ifdef __cplusplus
@@ -20,10 +20,11 @@ extern "C" {
 #endif
 
 typedef struct pp_project pp_project_t;
+typedef struct pp_transaction pp_transaction_t;
 typedef struct pp_error pp_error_t;
 
 typedef struct pp_uuid {
-    uint8_t bytes[16];
+  uint8_t bytes[16];
 } pp_uuid_t;
 
 typedef uint32_t pp_error_code_t;
@@ -41,25 +42,45 @@ typedef uint32_t pp_error_code_t;
 #define PP_ERROR_UNSUPPORTED UINT32_C(10)
 #define PP_ERROR_INTERNAL UINT32_C(255)
 
-/* Inputs are borrowed UTF-8 without embedded NUL. A NULL display name is absent.
- * On success, *out_project is caller-owned and *out_error is NULL. On failure,
- * *out_project is NULL and a non-NULL *out_error is caller-owned. out_error may
- * itself be NULL when diagnostic text is not required. */
+/* Inputs are borrowed UTF-8 without embedded NUL. A NULL display name is
+ * absent. On success, *out_project is caller-owned and *out_error is NULL. On
+ * failure, *out_project is NULL and a non-NULL *out_error is caller-owned.
+ * out_error may itself be NULL when diagnostic text is not required. */
 PP_API uint32_t pp_abi_version(void);
-PP_API pp_error_code_t pp_project_create(
-    const char *path,
-    const char *display_name,
-    pp_project_t **out_project,
-    pp_error_t **out_error);
-PP_API pp_error_code_t pp_project_open(
-    const char *path,
-    pp_project_t **out_project,
-    pp_error_t **out_error);
-PP_API pp_error_code_t pp_project_id(
-    const pp_project_t *project,
-    pp_uuid_t *out_id,
+PP_API pp_error_code_t pp_project_create(const char *path,
+                                         const char *display_name,
+                                         pp_project_t **out_project,
+                                         pp_error_t **out_error);
+PP_API pp_error_code_t pp_project_open(const char *path,
+                                       pp_project_t **out_project,
+                                       pp_error_t **out_error);
+PP_API pp_error_code_t pp_project_id(const pp_project_t *project,
+                                     pp_uuid_t *out_id, pp_error_t **out_error);
+PP_API pp_error_code_t pp_project_asset_exists(const pp_project_t *project,
+                                               const pp_uuid_t *asset_id,
+                                               uint8_t *out_exists,
+                                               pp_error_t **out_error);
+/* Only one transaction may be open for a project state. The transaction keeps
+ * that state alive independently of the project handle. */
+PP_API pp_error_code_t pp_project_begin_transaction(
+    pp_project_t *project, pp_transaction_t **out_transaction,
     pp_error_t **out_error);
 PP_API void pp_project_release(pp_project_t *project);
+
+/* Mutations remain in memory until commit. Input strings are borrowed UTF-8
+ * without embedded NUL. Nullable names/labels represent absent values. */
+PP_API pp_error_code_t pp_transaction_import_media(
+    pp_transaction_t *transaction, const char *path, const char *display_name,
+    pp_uuid_t *out_asset_id, pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_add_media_root(
+    pp_transaction_t *transaction, const char *path, const char *label,
+    int32_t priority, pp_uuid_t *out_root_id, pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_commit(pp_transaction_t *transaction,
+                                             pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_rollback(pp_transaction_t *transaction,
+                                               pp_error_t **out_error);
+/* Releasing an open transaction discards all staged work. Null is a no-op. */
+PP_API void pp_transaction_release(pp_transaction_t *transaction);
 
 PP_API pp_error_code_t pp_error_code(const pp_error_t *error);
 /* The returned string is borrowed and valid until pp_error_release(error). */
@@ -71,4 +92,3 @@ PP_API void pp_error_release(pp_error_t *error);
 #endif
 
 #endif
-

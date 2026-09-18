@@ -7,11 +7,18 @@ release, but removals or signature changes require an explicit ABI-version bump.
 
 ## Types and ownership
 
-Projects and errors are opaque handles. A successful creation/open call transfers
-one project ownership reference to the caller, which releases it exactly once with
-`pp_project_release`. Failed calls optionally transfer an error object, released
-exactly once with `pp_error_release`. Release functions accept null as a no-op;
-releasing the same non-null pointer twice is invalid.
+Projects, transactions, and errors are opaque handles. A successful creation/open
+call transfers one project ownership reference to the caller, which releases it
+exactly once with `pp_project_release`. Failed calls optionally transfer an error
+object, released exactly once with `pp_error_release`. Release functions accept
+null as a no-op; releasing the same non-null pointer twice is invalid.
+
+A project permits one open transaction at a time. Import and media-root mutations
+are prepared and staged in memory, then persisted together by
+`pp_transaction_commit`. Rollback or release of an open transaction discards all
+staged work. A transaction retains the underlying project state, so its handle
+remains valid if the originating project handle is released. Closed transaction
+handles may only be released.
 
 `pp_uuid_t` is the only public layout-bearing domain type and contains exactly 16
 network-order UUID bytes. Numeric errors are fixed-width values defined in the C
@@ -27,9 +34,10 @@ codes are the contract; message wording is diagnostic and may evolve.
 ## Panics and threading
 
 Every exported operation contains Rust unwinding with `catch_unwind`. Panics are
-translated to `PP_ERROR_INTERNAL`; no panic may cross the C boundary. Project
-handles are not currently safe for concurrent access. Callers must externally
-serialize use and must not release a handle while another thread uses it.
+translated to `PP_ERROR_INTERNAL`; no panic may cross the C boundary. Project and
+transaction handles are not currently safe for concurrent access. Callers must
+externally serialize use and must not release a handle while another thread uses
+it.
 
 ## Header compatibility
 

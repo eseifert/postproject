@@ -24,3 +24,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - Installable CMake and `pkg-config` metadata with a standalone native consumer test.
 - CLI project, media, root, inspection, resolution, and explicit confirmation workflows.
 - Machine-readable CLI JSON output and an end-to-end ambiguous relinking test.
+- Additive C ABI transaction, media-import, media-root, and asset-identity operations.
