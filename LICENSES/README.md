@@ -1,8 +1,6 @@
-# Licensing status
+# Licensing
 
-No redistribution license has been selected yet. All rights are reserved until
-the maintainers add an explicit license file and matching package metadata.
+libpostproject is available under your choice of the MIT License or the Apache
+License, Version 2.0.
 
-This placeholder prevents an accidental or implied licensing choice during the
-initial scaffold. It must be replaced before any public release.
-
+SPDX-License-Identifier: MIT OR Apache-2.0

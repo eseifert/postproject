@@ -8,6 +8,7 @@ edition = "2024"
 rust-version = "1.85"
 authors = ["libpostproject contributors"]
 repository = "https://github.com/libpostproject/libpostproject"
+license = "MIT OR Apache-2.0"
 
 [workspace.lints.rust]
 missing_docs = "warn"
@@ -21,4 +22,3 @@ pedantic = { level = "deny", priority = -1 }
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
-

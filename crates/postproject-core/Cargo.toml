@@ -6,8 +6,14 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 repository.workspace = true
+license.workspace = true
 publish = false
+
+[dependencies]
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+proptest = "1"
 
 [lints]
 workspace = true
-
