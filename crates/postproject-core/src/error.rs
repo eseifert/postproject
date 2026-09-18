@@ -1,7 +1,5 @@
 //! Domain-level errors that do not expose backend implementation details.
 
-use std::fmt;
-
 /// Stable categories shared by core services and external adapters.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
@@ -31,7 +29,8 @@ pub enum ErrorKind {
 }
 
 /// An application-neutral error with a stable category and useful context.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+#[error("{message}")]
 pub struct Error {
     kind: ErrorKind,
     message: String,
@@ -59,14 +58,6 @@ impl Error {
         &self.message
     }
 }
-
-impl fmt::Display for Error {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for Error {}
 
 /// The result type returned by core domain operations.
 pub type Result<T> = std::result::Result<T, Error>;

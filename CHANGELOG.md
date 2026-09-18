@@ -13,3 +13,5 @@ All notable changes to libpostproject will be documented here. The project uses
 - Validated domain values for projects, media identity, fingerprints, and locations.
 - Structured, deterministically ordered resolver results and evidence.
 - Backend-neutral transaction lifecycle semantics.
+- SQLite schema version 1 with transactional numbered migrations.
+- SQLite-backed project creation/opening with durable stable identity.

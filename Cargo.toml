@@ -1,5 +1,8 @@
 [workspace]
-members = ["crates/postproject-core"]
+members = [
+  "crates/postproject-core",
+  "crates/postproject-storage-sqlite",
+]
 resolver = "3"
 
 [workspace.package]

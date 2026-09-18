@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     AssetId, Error, ErrorKind, LocationId, MediaRootId, ProjectId, RepresentationId, Result,
+    uri::normalize_uri,
 };
 
 /// A UTC instant represented as microseconds since the Unix epoch.
@@ -354,11 +355,11 @@ pub struct Location {
 }
 
 impl Location {
-    /// Creates a location with a non-empty URI.
+    /// Creates a location with a syntactically valid absolute URI.
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::InvalidArgument`] when `uri` is empty.
+    /// Returns [`ErrorKind::InvalidArgument`] when `uri` is invalid or relative.
     pub fn new(
         id: LocationId,
         representation_id: RepresentationId,
@@ -366,13 +367,7 @@ impl Location {
         last_seen: Option<Timestamp>,
         availability: LocationAvailability,
     ) -> Result<Self> {
-        let uri = uri.into();
-        if uri.is_empty() {
-            return Err(Error::new(
-                ErrorKind::InvalidArgument,
-                "location URI must not be empty",
-            ));
-        }
+        let uri = normalize_uri(uri, "location")?;
         Ok(Self {
             id,
             representation_id,
@@ -424,11 +419,11 @@ pub struct MediaRoot {
 }
 
 impl MediaRoot {
-    /// Creates a configured media root with a non-empty URI.
+    /// Creates a configured media root with a syntactically valid absolute URI.
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::InvalidArgument`] when `uri` is empty.
+    /// Returns [`ErrorKind::InvalidArgument`] when `uri` is invalid or relative.
     pub fn new(
         id: MediaRootId,
         uri: impl Into<String>,
@@ -436,13 +431,7 @@ impl MediaRoot {
         priority: i32,
         enabled: bool,
     ) -> Result<Self> {
-        let uri = uri.into();
-        if uri.is_empty() {
-            return Err(Error::new(
-                ErrorKind::InvalidArgument,
-                "media-root URI must not be empty",
-            ));
-        }
+        let uri = normalize_uri(uri, "media-root")?;
         Ok(Self {
             id,
             uri,

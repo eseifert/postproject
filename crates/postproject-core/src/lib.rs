@@ -10,6 +10,7 @@ mod id;
 mod model;
 mod resolution;
 mod transaction;
+mod uri;
 
 pub use error::{Error, ErrorKind, Result};
 pub use id::{AssetId, LocationId, MediaRootId, ProjectId, RepresentationId, TransactionId};

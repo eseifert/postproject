@@ -2,7 +2,7 @@
 
 use std::cmp::Reverse;
 
-use crate::{Error, ErrorKind, RepresentationId, Result};
+use crate::{Error, ErrorKind, RepresentationId, Result, uri::normalize_uri};
 
 /// A deterministic confidence value in basis points from 0 through 10,000.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -94,23 +94,18 @@ pub struct ResolutionCandidate {
 }
 
 impl ResolutionCandidate {
-    /// Creates a candidate with a non-empty URI and at least one evidence item.
+    /// Creates a candidate with an absolute URI and at least one evidence item.
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::InvalidArgument`] when `uri` or `evidence` is empty.
+    /// Returns [`ErrorKind::InvalidArgument`] when `uri` is invalid or relative,
+    /// or when `evidence` is empty.
     pub fn new(
         uri: impl Into<String>,
         confidence: Confidence,
         evidence: Vec<ResolutionEvidence>,
     ) -> Result<Self> {
-        let uri = uri.into();
-        if uri.is_empty() {
-            return Err(Error::new(
-                ErrorKind::InvalidArgument,
-                "resolution candidate URI must not be empty",
-            ));
-        }
+        let uri = normalize_uri(uri, "resolution candidate")?;
         if evidence.is_empty() {
             return Err(Error::new(
                 ErrorKind::InvalidArgument,
