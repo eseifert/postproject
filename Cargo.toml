@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/postproject-core",
+  "crates/postproject-media",
   "crates/postproject-storage-sqlite",
 ]
 resolver = "3"
