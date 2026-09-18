@@ -1,0 +1,21 @@
+@PACKAGE_INIT@
+
+find_library(
+    PostProject_LIBRARY
+    NAMES postproject libpostproject
+    PATHS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@"
+    NO_DEFAULT_PATH
+    REQUIRED
+)
+
+if(NOT TARGET PostProject::postproject)
+    add_library(PostProject::postproject UNKNOWN IMPORTED)
+    set_target_properties(
+        PostProject::postproject
+        PROPERTIES
+            IMPORTED_LOCATION "${PostProject_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@"
+    )
+endif()
+
+check_required_components(PostProject)

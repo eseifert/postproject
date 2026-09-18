@@ -10,9 +10,10 @@ cargo doc --workspace --all-features --no-deps
 cargo deny check
 ```
 
-Later phases add real temporary SQLite/filesystem integration tests, installed C
-and C++ consumer tests, migration fixtures, fuzz targets, and relocation E2E
-coverage. Tests must not require network access, user locale, or wall-clock timing.
+Tests use real temporary SQLite databases and filesystems and include relocation
+integration coverage. Future phases add migration fixtures, fuzz targets, and the
+complete multi-asset relocation E2E scenario. Tests must not require network
+access, user locale, or wall-clock timing.
 
 `cargo-deny` rejects wildcard dependencies, unknown sources, known advisories, and
 licenses outside the repository's explicit permissive allowlist. Duplicate crate
@@ -22,3 +23,9 @@ make them temporarily unavoidable.
 The C ABI job builds the optimized shared library, compiles a standalone C11
 consumer using only the public header, runs create/open/error operations, and
 compares the exported dynamic symbols against `tests/abi/expected-symbols.txt`.
+
+The C++ package job installs the native library, C and C++ headers, CMake package
+files, and `pkg-config` metadata into a temporary prefix. It then configures a
+separate C++17 CMake project against that prefix, builds with warnings denied,
+and runs lifecycle, identity, move-ownership, and error-propagation checks. The
+consumer configuration and build never invoke Cargo.

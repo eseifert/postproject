@@ -66,3 +66,27 @@ jobs:
           diff -u tests/abi/expected-symbols.txt
           <(nm -D --defined-only target/release/libpostproject.so |
           awk '{print $3}' | sort)
+
+  cpp-package:
+    name: Installed C++17 consumer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p postproject-ffi
+      - name: Install native package
+        run: >-
+          cmake -S . -B target/cmake-package
+          -DPOSTPROJECT_LIBRARY="$GITHUB_WORKSPACE/target/release/libpostproject.so"
+          -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/target/install"
+          -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --install target/cmake-package
+      - run: pkg-config --validate target/install/lib/pkgconfig/postproject.pc
+      - name: Configure consumer without Cargo
+        run: >-
+          cmake -S tests/abi -B target/cpp-consumer
+          -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/target/install"
+          -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build target/cpp-consumer --config Release --parallel
+      - run: ctest --test-dir target/cpp-consumer --build-config Release --output-on-failure

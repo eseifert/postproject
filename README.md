@@ -63,7 +63,30 @@ if (status != PP_OK) {
 pp_project_release(project);
 ```
 
-The C++ wrapper and conventional install/package metadata are not implemented yet.
+The header-only C++17 wrapper maps C failures to `postproject::Error` exceptions
+and manages opaque handles with RAII:
+
+```cpp
+#include <postproject/postproject.hpp>
+
+auto project = postproject::Project::open("production.pproj");
+auto stable_id = project.id();
+```
+
+To stage a conventional native package after building the library:
+
+```sh
+cargo build --release --locked -p postproject-ffi
+cmake -S . -B target/package \
+  -DPOSTPROJECT_LIBRARY="$PWD/target/release/libpostproject.so" \
+  -DCMAKE_INSTALL_PREFIX="$PWD/target/install"
+cmake --install target/package
+```
+
+The installed package supplies `PostProject::postproject` for CMake consumers
+and `postproject` for `pkg-config`. Consumers use only the installed native
+library and headers; they do not invoke Cargo. Library filenames differ by
+platform, so pass the appropriate `.dylib` or `.dll` path outside Linux.
 
 ## License
 

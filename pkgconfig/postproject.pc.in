@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: libpostproject
+Description: Application-neutral post-production project and media infrastructure
+Version: @POSTPROJECT_PACKAGE_VERSION@
+Libs: -L${libdir} -lpostproject
+Cflags: -I${includedir}
