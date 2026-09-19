@@ -30,9 +30,12 @@ ABI gives downstream C, C++, Qt, Python, and GObject consumers a conventional,
 toolchain-neutral integration boundary. Rust types, layouts, panics, and ownership
 conventions must not cross it.
 
-## Deferred concerns
+## Current direction and deferred concerns
 
-Timelines, collaboration, networking, media decoding, and editor adapters are
-excluded from iteration one. Explicit transactions and backend-independent IDs
-provide extension points for revision journals and remote storage later without
-introducing those concerns prematurely.
+The current iteration adds external identifiers, structured metadata,
+activity-based provenance, rational time, and a semantic revision journal in
+that domain-first order. Each capability reaches persistence before the public C
+ABI and language wrappers are expanded around it.
+
+Timelines, collaboration, networking, media decoding, job execution, full
+standards adapters, and editor-specific models remain outside the architecture.

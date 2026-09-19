@@ -7,8 +7,23 @@ deterministic relinking, a C ABI, C++ wrapper, CLI, packaging, and comprehensive
 tests. The delivered scope and remaining constraints are recorded in the
 [acceptance report](iteration-one-report.md).
 
+## Iteration 2 — in progress
+
+Establish standards-aware internal/external identity, structured and repeated
+metadata, activity-based provenance, rational time, a durable semantic revision
+journal, and a Python binding over the public C ABI. Documentation is organized
+for application users, integrators, and contributors.
+
 ## Explicitly later
 
-Typed metadata, lineage, jobs, revision history, event feeds, Python/GObject
-bindings, filesystem indexing, PostgreSQL/server operation, and collaboration are
-deferred until the first iteration is stable.
+- full IPTC VMH and EBUCorePlus mapping packages;
+- W3C PROV and MovieLabs OMC import/export adapters;
+- C2PA assertion, signing, and verification integration;
+- MXF, AAF, and IMF adapters;
+- OTIO adapters beyond a possible media-linker proof;
+- collections, asset groups, and package models;
+- persistent filesystem indexing and background job execution;
+- PostgreSQL, a network daemon, collaboration, locking, and conflict handling;
+- timeline/editorial models, GObject/Qt adapters, extraction, transcription, and
+  semantic search;
+- remote object storage, undo/redo, and distributed revision merging.

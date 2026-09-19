@@ -1,0 +1,8 @@
+[default.extend-words]
+EBUCore = "EBUCore"
+FIMS = "FIMS"
+ISAN = "ISAN"
+MovieLabs = "MovieLabs"
+OTIO = "OTIO"
+PostProject = "PostProject"
+UMID = "UMID"

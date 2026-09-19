@@ -50,6 +50,18 @@ jobs:
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all -- --check
       - run: cargo clippy --manifest-path fuzz/Cargo.toml --bins --locked -- -D warnings
 
+  documentation:
+    name: Documentation book and links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook,lychee,typos-cli
+      - run: mdbook build docs
+      - run: lychee --offline --no-progress target/book README.md
+      - run: typos README.md docs/src docs/adr
+
   dependencies:
     name: Dependency policy
     runs-on: ubuntu-latest
@@ -159,7 +171,7 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: libpostproject-${{ matrix.artifact }}
+          name: postproject-${{ matrix.artifact }}
           path: target/install
           if-no-files-found: error
 
