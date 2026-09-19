@@ -1,4 +1,4 @@
-# ADR 0005: Rational time
+# ADR 0006: Rational time
 
 - Status: Proposed
 - Date: 2026-09-19

@@ -1,4 +1,4 @@
-# ADR 0008: Explicit SQL without an ORM
+# ADR 0009: Explicit SQL without an ORM
 
 - Status: Accepted
 - Date: 2026-09-19

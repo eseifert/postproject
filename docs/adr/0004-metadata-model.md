@@ -1,4 +1,4 @@
-# ADR 0003: Standards-aware metadata
+# ADR 0004: Standards-aware metadata
 
 - Status: Accepted
 - Date: 2026-09-19

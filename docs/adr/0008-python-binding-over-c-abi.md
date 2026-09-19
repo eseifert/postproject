@@ -1,4 +1,4 @@
-# ADR 0007: Python binding over the C ABI
+# ADR 0008: Python binding over the C ABI
 
 - Status: Proposed
 - Date: 2026-09-19

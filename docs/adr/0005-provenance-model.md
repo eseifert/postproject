@@ -1,4 +1,4 @@
-# ADR 0004: Activity-based provenance
+# ADR 0005: Activity-based provenance
 
 - Status: Proposed
 - Date: 2026-09-19

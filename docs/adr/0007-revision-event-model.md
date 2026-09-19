@@ -1,4 +1,4 @@
-# ADR 0006: Revision and event model
+# ADR 0007: Revision and event model
 
 - Status: Proposed
 - Date: 2026-09-19
