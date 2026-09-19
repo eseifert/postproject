@@ -4,6 +4,12 @@
 //! numeric codes plus owned error objects. Native consumers should include the
 //! shipped `postproject.h` rather than depending on Rust declarations.
 
+#[allow(
+    dead_code,
+    reason = "metadata projection is exposed by the following focused ABI changes"
+)]
+mod metadata;
+
 use std::{
     any::Any,
     cell::{Cell, RefCell},
@@ -23,6 +29,8 @@ use postproject_media::{
     MediaResolver, prepare_confirmed_location, prepare_media_root, prepare_original_media,
 };
 use postproject_storage_sqlite::SqliteProject;
+
+pub use metadata::{PpMetadataSet, PpMetadataValue};
 
 const PP_OK: u32 = 0;
 const PP_ERROR_INVALID_ARGUMENT: u32 = 1;
@@ -1308,7 +1316,7 @@ fn object_ref_from_abi(value: PpObjectRef) -> Result<ObjectRef, Error> {
     }
 }
 
-fn object_ref_to_abi(value: ObjectRef) -> Result<PpObjectRef, Error> {
+pub(crate) fn object_ref_to_abi(value: ObjectRef) -> Result<PpObjectRef, Error> {
     let (kind, bytes) = match value {
         ObjectRef::Project(id) => (PP_OBJECT_PROJECT, id.into_bytes()),
         ObjectRef::Asset(id) => (PP_OBJECT_ASSET, id.into_bytes()),
@@ -1422,7 +1430,7 @@ fn sanitized_cstring(value: &str) -> CString {
     CString::new(value.replace('\0', "�")).unwrap_or_default()
 }
 
-fn exact_cstring(value: &str, label: &str) -> Result<CString, Error> {
+pub(crate) fn exact_cstring(value: &str, label: &str) -> Result<CString, Error> {
     CString::new(value).map_err(|_| {
         Error::new(
             ErrorKind::Internal,
