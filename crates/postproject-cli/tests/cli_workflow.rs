@@ -14,6 +14,37 @@ fn run_json(arguments: &[&str]) -> Value {
     serde_json::from_slice(&assertion.get_output().stdout).expect("command emits valid JSON")
 }
 
+fn exercise_identifiers(project: &str, asset_id: &str) {
+    let identifier = run_json(&[
+        "identifier",
+        "add",
+        project,
+        "asset",
+        asset_id,
+        "com.example.asset",
+        "asset-42",
+        "--qualifier",
+        "primary",
+    ]);
+    assert_eq!(identifier["scheme"], "com.example.asset");
+    assert_eq!(identifier["value"], "asset-42");
+
+    let identifiers = run_json(&["identifier", "list", project, "asset", asset_id]);
+    assert_eq!(identifiers.as_array().expect("identifier array").len(), 1);
+    assert_eq!(identifiers[0]["qualifier"], "primary");
+
+    let found = run_json(&[
+        "identifier",
+        "find",
+        project,
+        "com.example.asset",
+        "asset-42",
+    ]);
+    assert_eq!(found.as_array().expect("object array").len(), 1);
+    assert_eq!(found[0]["kind"], "asset");
+    assert_eq!(found[0]["id"], asset_id);
+}
+
 #[test]
 fn lifecycle_and_explicit_ambiguous_confirmation() {
     let directory = tempfile::tempdir().expect("create test directory");
@@ -48,6 +79,8 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
     ]);
     assert_eq!(listed.as_array().expect("asset array").len(), 1);
     assert_eq!(listed[0]["id"], asset_id);
+
+    exercise_identifiers(project.to_str().expect("UTF-8 project path"), asset_id);
 
     let candidates = directory.path().join("candidates");
     fs::create_dir(&candidates).expect("create candidates root");

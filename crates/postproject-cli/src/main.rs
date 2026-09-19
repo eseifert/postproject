@@ -1,14 +1,15 @@
-//! Command-line demonstrator for libpostproject domain services.
+//! Command-line demonstrator for `PostProject` domain services.
 
 #![forbid(unsafe_code)]
 
 use std::{path::PathBuf, process::ExitCode, str::FromStr};
 
 use anyhow::{Context, Result, bail};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
-    Asset, AssetId, EvidenceKind, Location, LocationAvailability, Representation,
-    RepresentationKind, Resolution, ResolutionEvidence, ResolutionState,
+    Asset, AssetId, EvidenceKind, ExternalIdentifier, IdentifierScheme, Location,
+    LocationAvailability, ObjectRef, Representation, RepresentationId, RepresentationKind,
+    Resolution, ResolutionEvidence, ResolutionState,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_location, prepare_media_root, prepare_original_media,
@@ -35,6 +36,8 @@ enum Command {
     Media(MediaArgs),
     /// Manage resolver search roots.
     Root(RootArgs),
+    /// Manage external industry, vendor, and application identifiers.
+    Identifier(IdentifierArgs),
 }
 
 #[derive(Debug, Args)]
@@ -114,6 +117,55 @@ struct RootAddArgs {
     /// Lower priorities are searched first.
     #[arg(long, default_value_t = 0)]
     priority: i32,
+}
+
+#[derive(Debug, Args)]
+struct IdentifierArgs {
+    #[command(subcommand)]
+    command: IdentifierCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum IdentifierCommand {
+    /// Attach an external identifier to an asset or representation.
+    Add(IdentifierMutationArgs),
+    /// Remove one exact external identifier attachment.
+    Remove(IdentifierMutationArgs),
+    /// List external identifiers attached to an object.
+    List(IdentifierTargetArgs),
+    /// Find objects carrying an exact scheme and value.
+    Find(IdentifierFindArgs),
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum IdentifierTargetKind {
+    Asset,
+    Representation,
+}
+
+#[derive(Debug, Args)]
+struct IdentifierTargetArgs {
+    project: PathBuf,
+    #[arg(value_enum)]
+    target_kind: IdentifierTargetKind,
+    target_id: String,
+}
+
+#[derive(Debug, Args)]
+struct IdentifierMutationArgs {
+    #[command(flatten)]
+    target: IdentifierTargetArgs,
+    scheme: String,
+    value: String,
+    #[arg(long)]
+    qualifier: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct IdentifierFindArgs {
+    project: PathBuf,
+    scheme: String,
+    value: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -210,6 +262,21 @@ struct EvidenceView {
     detail: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct ExternalIdentifierView {
+    target_kind: &'static str,
+    target_id: String,
+    scheme: String,
+    value: String,
+    qualifier: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ObjectRefView {
+    kind: &'static str,
+    id: String,
+}
+
 fn main() -> ExitCode {
     match execute(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -231,6 +298,12 @@ fn execute(cli: Cli) -> Result<()> {
         },
         Command::Root(args) => match args.command {
             RootCommand::Add(args) => root_add(args, cli.json),
+        },
+        Command::Identifier(args) => match args.command {
+            IdentifierCommand::Add(args) => identifier_mutate(args, false, cli.json),
+            IdentifierCommand::Remove(args) => identifier_mutate(args, true, cli.json),
+            IdentifierCommand::List(args) => identifier_list(&args, cli.json),
+            IdentifierCommand::Find(args) => identifier_find(args, cli.json),
         },
     }
 }
@@ -365,6 +438,89 @@ fn root_add(args: RootAddArgs, json: bool) -> Result<()> {
     }
 }
 
+fn identifier_mutate(args: IdentifierMutationArgs, remove: bool, json: bool) -> Result<()> {
+    let target = parse_identifier_target(args.target.target_kind, &args.target.target_id)?;
+    let scheme = IdentifierScheme::new(args.scheme).context("validate identifier scheme")?;
+    let identifier = ExternalIdentifier::new(scheme, args.value, args.qualifier)
+        .context("validate external identifier")?;
+    let view = external_identifier_view(target, &identifier);
+    let mut project = SqliteProject::open(&args.target.project).context("open project")?;
+    let mut transaction = project
+        .begin_transaction()
+        .context("begin identifier transaction")?;
+    if remove {
+        transaction
+            .remove_external_identifier(target, &identifier)
+            .context("stage external identifier removal")?;
+    } else {
+        transaction
+            .add_external_identifier(target, &identifier)
+            .context("stage external identifier attachment")?;
+    }
+    transaction
+        .commit()
+        .context("commit external identifier mutation")?;
+
+    if json {
+        print_json(&view)
+    } else {
+        println!(
+            "{} {}:{} on {} {}",
+            if remove { "removed" } else { "attached" },
+            view.scheme,
+            view.value,
+            view.target_kind,
+            view.target_id
+        );
+        Ok(())
+    }
+}
+
+fn identifier_list(args: &IdentifierTargetArgs, json: bool) -> Result<()> {
+    let target = parse_identifier_target(args.target_kind, &args.target_id)?;
+    let project = SqliteProject::open(&args.project).context("open project")?;
+    let views: Vec<_> = project
+        .external_identifiers(target)
+        .context("load external identifiers")?
+        .iter()
+        .map(|identifier| external_identifier_view(target, identifier))
+        .collect();
+
+    if json {
+        print_json(&views)
+    } else {
+        for view in views {
+            println!(
+                "{}\t{}\t{}",
+                view.scheme,
+                view.value,
+                view.qualifier.as_deref().unwrap_or("-")
+            );
+        }
+        Ok(())
+    }
+}
+
+fn identifier_find(args: IdentifierFindArgs, json: bool) -> Result<()> {
+    let scheme = IdentifierScheme::new(args.scheme).context("validate identifier scheme")?;
+    let project = SqliteProject::open(&args.project).context("open project")?;
+    let views: Vec<_> = project
+        .find_by_external_identifier(&scheme, &args.value)
+        .context("find external identifier")?
+        .into_iter()
+        .map(object_ref_view)
+        .collect::<Result<_>>()?;
+
+    if json {
+        print_json(&views)
+    } else {
+        for view in views {
+            println!("{}\t{}", view.kind, view.id);
+        }
+        Ok(())
+    }
+}
+
 fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
     let mut project = SqliteProject::open(&args.project).context("open project")?;
     let asset_id = parse_asset_id(&args.asset_id)?;
@@ -436,6 +592,53 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
 
 fn parse_asset_id(value: &str) -> Result<AssetId> {
     AssetId::from_str(value).context("parse asset ID")
+}
+
+fn parse_identifier_target(kind: IdentifierTargetKind, value: &str) -> Result<ObjectRef> {
+    match kind {
+        IdentifierTargetKind::Asset => AssetId::from_str(value)
+            .map(ObjectRef::Asset)
+            .context("parse asset ID"),
+        IdentifierTargetKind::Representation => RepresentationId::from_str(value)
+            .map(ObjectRef::Representation)
+            .context("parse representation ID"),
+    }
+}
+
+fn external_identifier_view(
+    target: ObjectRef,
+    identifier: &ExternalIdentifier,
+) -> ExternalIdentifierView {
+    let target = object_ref_view(target).expect("supported CLI target");
+    ExternalIdentifierView {
+        target_kind: target.kind,
+        target_id: target.id,
+        scheme: identifier.scheme().as_str().to_owned(),
+        value: identifier.value().to_owned(),
+        qualifier: identifier.qualifier().map(str::to_owned),
+    }
+}
+
+fn object_ref_view(target: ObjectRef) -> Result<ObjectRefView> {
+    match target {
+        ObjectRef::Project(id) => Ok(ObjectRefView {
+            kind: "project",
+            id: id.to_string(),
+        }),
+        ObjectRef::Asset(id) => Ok(ObjectRefView {
+            kind: "asset",
+            id: id.to_string(),
+        }),
+        ObjectRef::Representation(id) => Ok(ObjectRefView {
+            kind: "representation",
+            id: id.to_string(),
+        }),
+        ObjectRef::Activity(id) => Ok(ObjectRefView {
+            kind: "activity",
+            id: id.to_string(),
+        }),
+        _ => bail!("object kind is not supported by this CLI"),
+    }
 }
 
 fn find_asset(project: &SqliteProject, asset_id: AssetId) -> Result<Asset> {
