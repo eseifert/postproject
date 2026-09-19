@@ -82,7 +82,7 @@ impl<'project> SqliteTransaction<'project> {
                 params![
                     representation.id().as_bytes().as_slice(),
                     asset.id().as_bytes().as_slice(),
-                    encode_structure_kind(representation.content_structure().kind()),
+                    encode_structure_kind(representation.content_structure().kind())?,
                 ],
             )
             .map_err(mutation_error("persist original representation"))?;
@@ -450,13 +450,16 @@ impl ProjectStoreTransaction for SqliteTransaction<'_> {
     }
 }
 
-const fn encode_structure_kind(value: ContentStructureKind) -> i64 {
+fn encode_structure_kind(value: ContentStructureKind) -> Result<i64> {
     match value {
-        ContentStructureKind::SingleResource => 0,
-        ContentStructureKind::ImageSequence => 1,
-        ContentStructureKind::OrderedParts => 2,
-        ContentStructureKind::Package => 3,
-        _ => 3,
+        ContentStructureKind::SingleResource => Ok(0),
+        ContentStructureKind::ImageSequence => Ok(1),
+        ContentStructureKind::OrderedParts => Ok(2),
+        ContentStructureKind::Package => Ok(3),
+        _ => Err(Error::new(
+            ErrorKind::Unsupported,
+            "content structure is not supported by this schema",
+        )),
     }
 }
 

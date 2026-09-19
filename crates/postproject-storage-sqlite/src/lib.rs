@@ -16,10 +16,12 @@ use std::{
 };
 
 use postproject_core::{
-    Asset, AssetId, Error, ErrorKind, ExternalIdentifier, FileFacts, Fingerprint, IdentifierScheme,
-    Location, LocationAvailability, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
-    MetadataProperty, MetadataValue, ObjectRef, Project, ProjectId, ProjectRead, ProjectStore,
-    PropertyId, Representation, RepresentationId, RepresentationKind, Result, Timestamp,
+    Asset, AssetId, ContentStructure, Error, ErrorKind, ExternalIdentifier, FileFacts, FrameRange,
+    IdentifierScheme, ImageSequenceDescriptor, ImageSequencePattern, Locator, LocatorAvailability,
+    LocatorId, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch, MetadataProperty,
+    MetadataValue, ObjectRef, Project, ProjectId, ProjectRead, ProjectStore, PropertyId,
+    RationalRate, Representation, RepresentationFingerprint, RepresentationId, RepresentationKind,
+    Resource, ResourceFingerprint, ResourceId, ResourceMember, ResourceRole, Result, Timestamp,
     VocabularyId,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
@@ -160,11 +162,8 @@ impl SqliteProject {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT r.id, r.kind, r.file_size_bytes, r.modified_at_micros,
-                        f.algorithm, f.algorithm_version, f.value
-                 FROM representations r
-                 LEFT JOIN fingerprints f ON f.representation_id = r.id
-                 WHERE r.asset_id = ?1 ORDER BY r.id",
+                "SELECT id, kind, structure_kind FROM representations
+                 WHERE asset_id = ?1 ORDER BY id",
             )
             .map_err(sqlite_error("prepare representation query"))?;
         let rows = statement
@@ -172,47 +171,81 @@ impl SqliteProject {
                 Ok((
                     row.get::<_, Vec<u8>>(0)?,
                     row.get::<_, i64>(1)?,
-                    row.get::<_, Option<i64>>(2)?,
-                    row.get::<_, Option<i64>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                    row.get::<_, Option<u16>>(5)?,
-                    row.get::<_, Option<Vec<u8>>>(6)?,
+                    row.get::<_, i64>(2)?,
                 ))
             })
             .map_err(sqlite_error("query representations"))?;
 
         rows.map(|row| {
-            let (id, kind, size, modified_at, algorithm, version, value) =
+            let (id, kind, structure_kind) =
                 row.map_err(sqlite_error("read representation row"))?;
+            let id = RepresentationId::from_bytes(id_bytes(id, "representation")?);
             let kind = decode_representation_kind(kind)?;
-            let file_facts = decode_file_facts(size, modified_at)?;
-            let fingerprint = decode_fingerprint(algorithm, version, value)?;
+            let content_structure = self.load_content_structure(id, structure_kind)?;
+            let fingerprints = self.load_representation_fingerprints(id)?;
             Ok(Representation::new(
-                RepresentationId::from_bytes(id_bytes(id, "representation")?),
+                id,
                 asset_id,
                 kind,
-                fingerprint,
-                file_facts,
+                content_structure,
+                fingerprints,
             ))
         })
         .collect()
     }
 
-    /// Loads known locations for `representation_id` in stable identity order.
+    /// Loads resources for `representation_id` in structural order.
     ///
     /// # Errors
     ///
     /// Returns [`ErrorKind::Storage`] for query failures or invalid stored data.
-    pub fn locations(&self, representation_id: RepresentationId) -> Result<Vec<Location>> {
+    pub fn resources(&self, representation_id: RepresentationId) -> Result<Vec<Resource>> {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, uri, last_seen_micros, availability FROM locations
-                 WHERE representation_id = ?1 ORDER BY id",
+                "SELECT r.id, r.file_size_bytes, r.modified_at_micros
+                 FROM representation_resources rr
+                 JOIN resources r ON r.id = rr.resource_id
+                 WHERE rr.representation_id = ?1 ORDER BY rr.position",
             )
-            .map_err(sqlite_error("prepare location query"))?;
+            .map_err(sqlite_error("prepare resource query"))?;
         let rows = statement
             .query_map(params![representation_id.as_bytes().as_slice()], |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            })
+            .map_err(sqlite_error("query resources"))?;
+
+        rows.map(|row| {
+            let (id, size, modified_at) = row.map_err(sqlite_error("read resource row"))?;
+            let id = ResourceId::from_bytes(id_bytes(id, "resource")?);
+            Ok(Resource::new(
+                id,
+                self.load_resource_fingerprints(id)?,
+                decode_file_facts(size, modified_at)?,
+            ))
+        })
+        .collect()
+    }
+
+    /// Loads known locators for `resource_id` in stable identity order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Storage`] for query failures or invalid stored data.
+    pub fn locators(&self, resource_id: ResourceId) -> Result<Vec<Locator>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, uri, last_seen_micros, availability FROM locators
+                 WHERE resource_id = ?1 ORDER BY id",
+            )
+            .map_err(sqlite_error("prepare locator query"))?;
+        let rows = statement
+            .query_map(params![resource_id.as_bytes().as_slice()], |row| {
                 Ok((
                     row.get::<_, Vec<u8>>(0)?,
                     row.get::<_, String>(1)?,
@@ -220,19 +253,209 @@ impl SqliteProject {
                     row.get::<_, i64>(3)?,
                 ))
             })
-            .map_err(sqlite_error("query locations"))?;
+            .map_err(sqlite_error("query locators"))?;
 
         rows.map(|row| {
             let (id, uri, last_seen, availability) =
-                row.map_err(sqlite_error("read location row"))?;
-            Location::new(
-                postproject_core::LocationId::from_bytes(id_bytes(id, "location")?),
-                representation_id,
+                row.map_err(sqlite_error("read locator row"))?;
+            Locator::new(
+                LocatorId::from_bytes(id_bytes(id, "locator")?),
+                resource_id,
                 uri,
                 last_seen.map(Timestamp::from_unix_micros),
                 decode_availability(availability)?,
             )
-            .map_err(stored_domain_error("location"))
+            .map_err(stored_domain_error("locator"))
+        })
+        .collect()
+    }
+
+    fn load_content_structure(
+        &self,
+        representation_id: RepresentationId,
+        structure_kind: i64,
+    ) -> Result<ContentStructure> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT resource_id, role, required
+                 FROM representation_resources
+                 WHERE representation_id = ?1 ORDER BY position",
+            )
+            .map_err(sqlite_error("prepare content-membership query"))?;
+        let rows = statement
+            .query_map(params![representation_id.as_bytes().as_slice()], |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, bool>(2)?,
+                ))
+            })
+            .map_err(sqlite_error("query content memberships"))?;
+        let rows: Vec<_> = rows
+            .map(|row| {
+                let (id, role, required) =
+                    row.map_err(sqlite_error("read content-membership row"))?;
+                Ok((
+                    ResourceId::from_bytes(id_bytes(id, "resource")?),
+                    role,
+                    required,
+                ))
+            })
+            .collect::<Result<_>>()?;
+
+        match structure_kind {
+            0 => match rows.as_slice() {
+                [(resource_id, None, true)] => Ok(ContentStructure::single_resource(*resource_id)),
+                _ => Err(stored_invariant("invalid single-resource membership")),
+            },
+            1 => {
+                let resource_id = match rows.as_slice() {
+                    [(resource_id, None, true)] => *resource_id,
+                    _ => return Err(stored_invariant("invalid image-sequence membership")),
+                };
+                self.load_image_sequence(representation_id, resource_id)
+                    .map(ContentStructure::image_sequence)
+            }
+            2 | 3 => {
+                let members = rows
+                    .into_iter()
+                    .map(|(resource_id, role, required)| {
+                        let role = role.ok_or_else(|| {
+                            stored_invariant("compound resource membership has no role")
+                        })?;
+                        let role = ResourceRole::new(role)
+                            .map_err(stored_domain_error("resource role"))?;
+                        Ok(ResourceMember::new(resource_id, role, required))
+                    })
+                    .collect::<Result<_>>()?;
+                if structure_kind == 2 {
+                    ContentStructure::ordered_parts(members)
+                } else {
+                    ContentStructure::package(members)
+                }
+                .map_err(stored_domain_error("content structure"))
+            }
+            _ => Err(stored_invariant("invalid content-structure kind")),
+        }
+    }
+
+    fn load_image_sequence(
+        &self,
+        representation_id: RepresentationId,
+        resource_id: ResourceId,
+    ) -> Result<ImageSequenceDescriptor> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT resource_id, prefix, suffix, padding, start_frame, end_frame,
+                        frame_step, rate_numerator, rate_denominator
+                 FROM image_sequences WHERE representation_id = ?1",
+                params![representation_id.as_bytes().as_slice()],
+                |row| {
+                    Ok((
+                        row.get::<_, Vec<u8>>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, i64>(7)?,
+                        row.get::<_, i64>(8)?,
+                    ))
+                },
+            )
+            .map_err(sqlite_error("load image-sequence descriptor"))?;
+        let stored_resource = ResourceId::from_bytes(id_bytes(row.0, "sequence resource")?);
+        if stored_resource != resource_id {
+            return Err(stored_invariant(
+                "image-sequence resource does not match membership",
+            ));
+        }
+        let pattern = ImageSequencePattern::new(row.1, row.2, stored_u8(row.3, "padding")?)
+            .map_err(stored_domain_error("image-sequence pattern"))?;
+        let frames = FrameRange::new(row.4, row.5, stored_u32(row.6, "frame step")?)
+            .map_err(stored_domain_error("image-sequence frame range"))?;
+        let rate = RationalRate::new(
+            stored_u32(row.7, "rate numerator")?,
+            stored_u32(row.8, "rate denominator")?,
+        )
+        .map_err(stored_domain_error("image-sequence rate"))?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT frame FROM image_sequence_missing_frames
+                 WHERE representation_id = ?1 ORDER BY frame",
+            )
+            .map_err(sqlite_error("prepare missing-frame query"))?;
+        let missing = statement
+            .query_map(params![representation_id.as_bytes().as_slice()], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(sqlite_error("query missing frames"))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sqlite_error("read missing-frame row"))?;
+        ImageSequenceDescriptor::new(resource_id, pattern, frames, rate, missing)
+            .map_err(stored_domain_error("image-sequence descriptor"))
+    }
+
+    fn load_resource_fingerprints(
+        &self,
+        resource_id: ResourceId,
+    ) -> Result<Vec<ResourceFingerprint>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT algorithm, algorithm_version, value
+                 FROM resource_fingerprints
+                 WHERE resource_id = ?1 ORDER BY algorithm, algorithm_version",
+            )
+            .map_err(sqlite_error("prepare resource-fingerprint query"))?;
+        let rows = statement
+            .query_map(params![resource_id.as_bytes().as_slice()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, u16>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .map_err(sqlite_error("query resource fingerprints"))?;
+        rows.map(|row| {
+            let (algorithm, version, value) =
+                row.map_err(sqlite_error("read resource-fingerprint row"))?;
+            ResourceFingerprint::new(algorithm, version, value)
+                .map_err(stored_domain_error("resource fingerprint"))
+        })
+        .collect()
+    }
+
+    fn load_representation_fingerprints(
+        &self,
+        representation_id: RepresentationId,
+    ) -> Result<Vec<RepresentationFingerprint>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT algorithm, algorithm_version, value
+                 FROM representation_fingerprints
+                 WHERE representation_id = ?1 ORDER BY algorithm, algorithm_version",
+            )
+            .map_err(sqlite_error("prepare representation-fingerprint query"))?;
+        let rows = statement
+            .query_map(params![representation_id.as_bytes().as_slice()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, u16>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .map_err(sqlite_error("query representation fingerprints"))?;
+        rows.map(|row| {
+            let (algorithm, version, value) =
+                row.map_err(sqlite_error("read representation-fingerprint row"))?;
+            RepresentationFingerprint::new(algorithm, version, value)
+                .map_err(stored_domain_error("representation fingerprint"))
         })
         .collect()
     }
@@ -455,8 +678,12 @@ impl ProjectRead for SqliteProject {
         SqliteProject::representations(self, asset_id)
     }
 
-    fn locations(&self, representation_id: RepresentationId) -> Result<Vec<Location>> {
-        SqliteProject::locations(self, representation_id)
+    fn resources(&self, representation_id: RepresentationId) -> Result<Vec<Resource>> {
+        SqliteProject::resources(self, representation_id)
+    }
+
+    fn locators(&self, resource_id: ResourceId) -> Result<Vec<Locator>> {
+        SqliteProject::locators(self, resource_id)
     }
 
     fn external_identifiers(&self, target: ObjectRef) -> Result<Vec<ExternalIdentifier>> {
@@ -646,14 +873,14 @@ fn decode_representation_kind(value: i64) -> Result<RepresentationKind> {
     }
 }
 
-fn decode_availability(value: i64) -> Result<LocationAvailability> {
+fn decode_availability(value: i64) -> Result<LocatorAvailability> {
     match value {
-        0 => Ok(LocationAvailability::Unknown),
-        1 => Ok(LocationAvailability::Online),
-        2 => Ok(LocationAvailability::Offline),
+        0 => Ok(LocatorAvailability::Unknown),
+        1 => Ok(LocatorAvailability::Online),
+        2 => Ok(LocatorAvailability::Offline),
         _ => Err(Error::new(
             ErrorKind::Storage,
-            format!("stored location availability {value} is invalid"),
+            format!("stored locator availability {value} is invalid"),
         )),
     }
 }
@@ -676,25 +903,6 @@ fn decode_file_facts(size: Option<i64>, modified_at: Option<i64>) -> Result<Opti
         (None, Some(_)) => Err(Error::new(
             ErrorKind::Storage,
             "stored modification time has no corresponding file size",
-        )),
-    }
-}
-
-fn decode_fingerprint(
-    algorithm: Option<String>,
-    version: Option<u16>,
-    value: Option<Vec<u8>>,
-) -> Result<Option<Fingerprint>> {
-    match (algorithm, version, value) {
-        (None, None, None) => Ok(None),
-        (Some(algorithm), Some(version), Some(value)) => {
-            Fingerprint::new(algorithm, version, value)
-                .map(Some)
-                .map_err(stored_domain_error("fingerprint"))
-        }
-        _ => Err(Error::new(
-            ErrorKind::Storage,
-            "stored fingerprint fields are incomplete",
         )),
     }
 }
@@ -787,6 +995,28 @@ pub(crate) fn id_bytes(value: Vec<u8>, label: &str) -> Result<[u8; 16]> {
             format!("stored {label} ID has {} bytes; expected 16", value.len()),
         )
     })
+}
+
+fn stored_u32(value: i64, label: &str) -> Result<u32> {
+    u32::try_from(value).map_err(|error| {
+        Error::new(
+            ErrorKind::Storage,
+            format!("stored {label} is invalid: {error}"),
+        )
+    })
+}
+
+fn stored_u8(value: i64, label: &str) -> Result<u8> {
+    u8::try_from(value).map_err(|error| {
+        Error::new(
+            ErrorKind::Storage,
+            format!("stored {label} is invalid: {error}"),
+        )
+    })
+}
+
+fn stored_invariant(message: &'static str) -> Error {
+    Error::new(ErrorKind::Storage, message)
 }
 
 pub(crate) fn sqlite_error(context: &'static str) -> impl FnOnce(rusqlite::Error) -> Error {
