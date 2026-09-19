@@ -1,0 +1,90 @@
+//! Persistence coverage for compact and multi-resource content structures.
+
+use postproject_core::{
+    Asset, AssetId, ContentStructure, FrameRange, ImageSequenceDescriptor, ImageSequencePattern,
+    Locator, LocatorAvailability, LocatorId, OriginalMediaImport, RationalRate, Representation,
+    RepresentationId, RepresentationKind, Resource, ResourceId, Timestamp,
+};
+use postproject_storage_sqlite::SqliteProject;
+use rusqlite::Connection;
+
+#[test]
+fn sparse_image_sequence_reopens_without_per_frame_resources() {
+    let directory = tempfile::tempdir().expect("create temporary directory");
+    let project_path = directory.path().join("sequence.pproj");
+    let now = Timestamp::from_unix_micros(1_000);
+    let asset = Asset::new(AssetId::new(), now, Some("VFX plate".to_owned()), None);
+    let resource_id = ResourceId::new();
+    let frames = FrameRange::new(1_001, 1_100, 1).expect("valid frame range");
+    let pattern = ImageSequencePattern::new("plate.", ".exr", 4).expect("valid pattern");
+    let rate = RationalRate::new(24_000, 1_001).expect("valid rate");
+    let sequence =
+        ImageSequenceDescriptor::new(resource_id, pattern, frames, rate, vec![1_027, 1_042])
+            .expect("valid sequence");
+    let representation = Representation::new(
+        RepresentationId::new(),
+        asset.id(),
+        RepresentationKind::Original,
+        ContentStructure::image_sequence(sequence.clone()),
+        Vec::new(),
+    );
+    let resource = Resource::new(resource_id, Vec::new(), None);
+    let locator = Locator::new(
+        LocatorId::new(),
+        resource_id,
+        "file:///production/plates/shot-a/",
+        Some(now),
+        LocatorAvailability::Online,
+    )
+    .expect("valid locator");
+    let import = OriginalMediaImport::new(
+        asset,
+        representation.clone(),
+        vec![resource],
+        vec![locator.clone()],
+    )
+    .expect("valid compound import");
+
+    let mut project = SqliteProject::create(&project_path, None).expect("create project");
+    let mut transaction = project.begin_transaction().expect("begin transaction");
+    transaction.import_original(&import).expect("stage import");
+    transaction.commit().expect("commit import");
+    drop(transaction);
+    drop(project);
+
+    let reopened = SqliteProject::open(&project_path).expect("reopen project");
+    let stored = reopened
+        .representations(import.asset().id())
+        .expect("load representations");
+    assert_eq!(stored, [representation]);
+    assert_eq!(
+        stored[0].content_structure().image_sequence_descriptor(),
+        Some(&sequence)
+    );
+    assert_eq!(
+        reopened
+            .resources(stored[0].id())
+            .expect("load sequence resources")
+            .len(),
+        1
+    );
+    assert_eq!(
+        reopened.locators(resource_id).expect("load locators"),
+        [locator]
+    );
+    drop(reopened);
+
+    let connection = Connection::open(&project_path).expect("inspect database");
+    let resource_rows: u32 = connection
+        .query_row("SELECT count(*) FROM resources", [], |row| row.get(0))
+        .expect("count resources");
+    let exception_rows: u32 = connection
+        .query_row(
+            "SELECT count(*) FROM image_sequence_missing_frames",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count sparse exceptions");
+    assert_eq!(resource_rows, 1);
+    assert_eq!(exception_rows, 2);
+}
