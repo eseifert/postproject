@@ -108,6 +108,15 @@ int main(int argc, char **argv) {
     pp_error_release(error);
     return 23;
   }
+  status = pp_transaction_add_metadata_text(
+      transaction, &asset_ref, "com.example.metadata", "title", "C title",
+      "en-US", &error);
+  if (status != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 26;
+  }
   status = pp_transaction_add_media_root(transaction, argv[2], "fixture root",
                                          0, &root_id, &error);
   if (status != PP_OK || uuid_is_zero(&root_id)) {
@@ -176,6 +185,44 @@ int main(int argc, char **argv) {
     return 25;
   }
   pp_object_ref_set_release(objects);
+
+  pp_metadata_set_t *metadata = NULL;
+  status = pp_project_metadata(project, &asset_ref, &metadata, &error);
+  pp_object_ref_t metadata_target = {0, {{0}}};
+  const char *vocabulary = NULL;
+  const char *property = NULL;
+  const pp_metadata_value_t *metadata_value = NULL;
+  const char *metadata_text = NULL;
+  const char *metadata_language = NULL;
+  if (status != PP_OK || metadata == NULL ||
+      pp_metadata_set_count(metadata) != UINT64_C(1) ||
+      pp_metadata_set_get(metadata, 0, &metadata_target, &vocabulary, &property,
+                          &metadata_value, &error) != PP_OK ||
+      metadata_target.kind != PP_OBJECT_ASSET ||
+      strcmp(vocabulary, "com.example.metadata") != 0 ||
+      strcmp(property, "title") != 0 ||
+      pp_metadata_value_kind(metadata_value) != PP_METADATA_LANG_STRING ||
+      pp_metadata_value_get_string(metadata_value, &metadata_text,
+                                   &metadata_language, &error) != PP_OK ||
+      strcmp(metadata_text, "C title") != 0 ||
+      strcmp(metadata_language, "en-US") != 0) {
+    pp_metadata_set_release(metadata);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 27;
+  }
+  pp_metadata_set_release(metadata);
+  metadata = NULL;
+  status = pp_project_find_metadata(project, "com.example.metadata", "title",
+                                    &metadata, &error);
+  if (status != PP_OK || metadata == NULL ||
+      pp_metadata_set_count(metadata) != UINT64_C(1)) {
+    pp_metadata_set_release(metadata);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 28;
+  }
+  pp_metadata_set_release(metadata);
 
   int moved_path_length =
       snprintf(moved_media_path, sizeof(moved_media_path), "%s.moved", argv[1]);
