@@ -22,14 +22,16 @@ use std::{
 
 use postproject_core::{
     AssetId, Error, ErrorKind, EvidenceKind, ExternalIdentifier, IdentifierScheme, Location,
-    MediaRoot, ObjectRef, OriginalMediaImport, ProjectId, RepresentationId, Resolution,
-    ResolutionEvidence, ResolutionState, TransactionLifecycle,
+    MediaRoot, MetadataProperty, ObjectRef, OriginalMediaImport, ProjectId,
+    PropertyId, RepresentationId, Resolution, ResolutionEvidence, ResolutionState,
+    TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_location, prepare_media_root, prepare_original_media,
 };
 use postproject_storage_sqlite::SqliteProject;
 
+use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
 
 const PP_OK: u32 = 0;
@@ -69,7 +71,7 @@ const PP_OBJECT_REPRESENTATION: u32 = 3;
 const PP_OBJECT_ACTIVITY: u32 = 4;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -535,6 +537,200 @@ pub unsafe extern "C" fn pp_object_ref_set_release(objects: *mut PpObjectRefSet)
         // SAFETY: Ownership is transferred back exactly once by contract.
         drop(unsafe { Box::from_raw(objects) });
     }));
+}
+
+/// Loads typed metadata assertions attached to one object.
+///
+/// Returned strings and value pointers are borrowed until the result set is
+/// released.
+///
+/// # Safety
+///
+/// `project` and `target` must be readable live values. `out_metadata` must be
+/// writable and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_metadata(
+    project: *const PpProject,
+    target: *const PpObjectRef,
+    out_metadata: *mut *mut PpMetadataSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before use and output ownership is explicit.
+    unsafe {
+        initialize_output(out_metadata);
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            let target = target
+                .as_ref()
+                .ok_or_else(|| invalid_argument("target must not be null"))?;
+            require_output(out_metadata, "out_metadata")?;
+            let target = object_ref_from_abi(*target)?;
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let metadata = PpMetadataSet::from_assertions(target, &inner.metadata(target)?)?;
+            out_metadata.write(Box::into_raw(Box::new(metadata)));
+            Ok(())
+        })
+    }
+}
+
+/// Finds every assertion using one exact vocabulary and property.
+///
+/// # Safety
+///
+/// `project` must be live, strings must be borrowed NUL-terminated UTF-8,
+/// `out_metadata` must be writable, and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_find_metadata(
+    project: *const PpProject,
+    vocabulary: *const c_char,
+    property: *const c_char,
+    out_metadata: *mut *mut PpMetadataSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before use and output ownership is explicit.
+    unsafe {
+        initialize_output(out_metadata);
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            require_output(out_metadata, "out_metadata")?;
+            let property = metadata_property_from_abi(vocabulary, property)?;
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let metadata =
+                PpMetadataSet::from_matches(&inner.query_by_metadata_property(&property)?)?;
+            out_metadata.write(Box::into_raw(Box::new(metadata)));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the number of assertions in a metadata result set. Null returns zero.
+///
+/// # Safety
+///
+/// `metadata` must be null or a live result-set handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_set_count(metadata: *const PpMetadataSet) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null handle is live by the caller contract.
+        unsafe { metadata.as_ref() }.map_or(0, |set| {
+            u64::try_from(set.assertions.len()).unwrap_or(u64::MAX)
+        })
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one assertion and a borrowed pointer to its recursive value.
+///
+/// # Safety
+///
+/// `metadata` must be live. Every output must be writable and `out_error` may
+/// be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_set_get(
+    metadata: *const PpMetadataSet,
+    index: u64,
+    out_target: *mut PpObjectRef,
+    out_vocabulary: *mut *const c_char,
+    out_property: *mut *const c_char,
+    out_value: *mut *const PpMetadataValue,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_object_ref(out_target);
+        initialize_const_output(out_vocabulary);
+        initialize_const_output(out_property);
+        initialize_const_output(out_value);
+        ffi_call(out_error, || {
+            require_output(out_target, "out_target")?;
+            require_output(out_vocabulary, "out_vocabulary")?;
+            require_output(out_property, "out_property")?;
+            require_output(out_value, "out_value")?;
+            let metadata = metadata
+                .as_ref()
+                .ok_or_else(|| invalid_argument("metadata must not be null"))?;
+            let assertion = item_at(&metadata.assertions, index, "metadata assertion")?;
+            out_target.write(assertion.target);
+            out_vocabulary.write(assertion.vocabulary.as_ptr());
+            out_property.write(assertion.property.as_ptr());
+            out_value.write(ptr::from_ref(&assertion.value));
+            Ok(())
+        })
+    }
+}
+
+/// Releases a metadata result set. Null is a no-op.
+///
+/// # Safety
+///
+/// A non-null pointer must be live and released exactly once. No borrowed value
+/// or string from the set may be used after this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_set_release(metadata: *mut PpMetadataSet) {
+    if metadata.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership is transferred back exactly once by contract.
+        drop(unsafe { Box::from_raw(metadata) });
+    }));
+}
+
+/// Returns the `PP_METADATA_*` kind of a borrowed value. Null returns zero.
+///
+/// # Safety
+///
+/// `value` must be null or borrowed from a live metadata result set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_kind(value: *const PpMetadataValue) -> u32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null value is live by the caller contract.
+        unsafe { value.as_ref() }.map_or(0, PpMetadataValue::kind)
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads plain or language-tagged text. Language is null for plain text.
+///
+/// # Safety
+///
+/// `value` must be borrowed and live. Outputs must be writable and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_get_string(
+    value: *const PpMetadataValue,
+    out_text: *mut *const c_char,
+    out_language: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_const_output(out_text);
+        initialize_const_output(out_language);
+        ffi_call(out_error, || {
+            require_output(out_text, "out_text")?;
+            require_output(out_language, "out_language")?;
+            match &metadata_value(value)?.inner {
+                AbiMetadataValue::String { value, language } => {
+                    out_text.write(value.as_ptr());
+                    out_language.write(language.as_ref().map_or(ptr::null(), |tag| tag.as_ptr()));
+                    Ok(())
+                }
+                _ => Err(metadata_type_error("string")),
+            }
+        })
+    }
 }
 
 /// Resolves every representation belonging to an asset without mutating the project.
@@ -1300,6 +1496,17 @@ unsafe fn external_identifier_from_abi(
     ExternalIdentifier::new(scheme, value, qualifier)
 }
 
+unsafe fn metadata_property_from_abi(
+    vocabulary: *const c_char,
+    property: *const c_char,
+) -> Result<MetadataProperty, Error> {
+    // SAFETY: Exported callers guarantee live NUL-terminated strings.
+    let vocabulary = VocabularyId::new(unsafe { required_utf8(vocabulary, "vocabulary") }?)?;
+    // SAFETY: Same contract as above.
+    let property = PropertyId::new(unsafe { required_utf8(property, "property") }?)?;
+    Ok(MetadataProperty::new(vocabulary, property))
+}
+
 fn object_ref_from_abi(value: PpObjectRef) -> Result<ObjectRef, Error> {
     match value.kind {
         PP_OBJECT_PROJECT => Ok(ObjectRef::Project(ProjectId::from_bytes(value.id.bytes))),
@@ -1387,6 +1594,16 @@ fn item_at<'a, T>(items: &'a [T], index: u64, label: &str) -> Result<&'a T, Erro
 
 fn length_as_u64(length: usize) -> Result<u64, Error> {
     u64::try_from(length).map_err(|_| Error::new(ErrorKind::Internal, "result is too large"))
+}
+
+unsafe fn metadata_value<'a>(value: *const PpMetadataValue) -> Result<&'a PpMetadataValue, Error> {
+    // SAFETY: The exported caller guarantees the pointer is borrowed from a
+    // live result set for the duration of the call.
+    unsafe { value.as_ref() }.ok_or_else(|| invalid_argument("value must not be null"))
+}
+
+fn metadata_type_error(expected: &str) -> Error {
+    invalid_argument(format!("metadata value is not {expected}"))
 }
 
 impl PpResolutionSet {

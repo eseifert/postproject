@@ -24,6 +24,8 @@ typedef struct pp_transaction pp_transaction_t;
 typedef struct pp_resolution_set pp_resolution_set_t;
 typedef struct pp_external_identifier_set pp_external_identifier_set_t;
 typedef struct pp_object_ref_set pp_object_ref_set_t;
+typedef struct pp_metadata_set pp_metadata_set_t;
+typedef struct pp_metadata_value pp_metadata_value_t;
 typedef struct pp_error pp_error_t;
 
 typedef struct pp_uuid {
@@ -36,6 +38,22 @@ typedef uint32_t pp_object_kind_t;
 #define PP_OBJECT_ASSET UINT32_C(2)
 #define PP_OBJECT_REPRESENTATION UINT32_C(3)
 #define PP_OBJECT_ACTIVITY UINT32_C(4)
+
+typedef uint32_t pp_metadata_value_kind_t;
+
+#define PP_METADATA_STRING UINT32_C(1)
+#define PP_METADATA_LANG_STRING UINT32_C(2)
+#define PP_METADATA_I64 UINT32_C(3)
+#define PP_METADATA_U64 UINT32_C(4)
+#define PP_METADATA_DECIMAL UINT32_C(5)
+#define PP_METADATA_BOOL UINT32_C(6)
+#define PP_METADATA_TIMESTAMP UINT32_C(7)
+#define PP_METADATA_URI UINT32_C(8)
+#define PP_METADATA_BYTES UINT32_C(9)
+#define PP_METADATA_RATIONAL UINT32_C(10)
+#define PP_METADATA_LIST UINT32_C(11)
+#define PP_METADATA_STRUCT UINT32_C(12)
+#define PP_METADATA_REFERENCE UINT32_C(13)
 
 typedef struct pp_object_ref {
   pp_object_kind_t kind;
@@ -118,6 +136,26 @@ PP_API pp_error_code_t pp_object_ref_set_get(
     const pp_object_ref_set_t *objects, uint64_t index,
     pp_object_ref_t *out_object, pp_error_t **out_error);
 PP_API void pp_object_ref_set_release(pp_object_ref_set_t *objects);
+/* Metadata result sets own every returned string and recursively typed value.
+ * All pointers borrowed from a set become invalid when that set is released. */
+PP_API pp_error_code_t pp_project_metadata(
+    const pp_project_t *project, const pp_object_ref_t *target,
+    pp_metadata_set_t **out_metadata, pp_error_t **out_error);
+PP_API pp_error_code_t pp_project_find_metadata(
+    const pp_project_t *project, const char *vocabulary, const char *property,
+    pp_metadata_set_t **out_metadata, pp_error_t **out_error);
+PP_API uint64_t pp_metadata_set_count(const pp_metadata_set_t *metadata);
+PP_API pp_error_code_t pp_metadata_set_get(
+    const pp_metadata_set_t *metadata, uint64_t index,
+    pp_object_ref_t *out_target, const char **out_vocabulary,
+    const char **out_property, const pp_metadata_value_t **out_value,
+    pp_error_t **out_error);
+PP_API void pp_metadata_set_release(pp_metadata_set_t *metadata);
+PP_API pp_metadata_value_kind_t
+pp_metadata_value_kind(const pp_metadata_value_t *value);
+PP_API pp_error_code_t pp_metadata_value_get_string(
+    const pp_metadata_value_t *value, const char **out_text,
+    const char **out_language, pp_error_t **out_error);
 /* Resolution is read-only. Borrowed candidate URI and evidence-detail strings
  * remain valid until pp_resolution_set_release(). */
 PP_API pp_error_code_t pp_project_resolve_asset(

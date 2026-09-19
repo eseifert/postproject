@@ -5,6 +5,11 @@ pp_error_release
 pp_external_identifier_set_count
 pp_external_identifier_set_get
 pp_external_identifier_set_release
+pp_metadata_set_count
+pp_metadata_set_get
+pp_metadata_set_release
+pp_metadata_value_get_string
+pp_metadata_value_kind
 pp_object_ref_set_count
 pp_object_ref_set_get
 pp_object_ref_set_release
@@ -13,7 +18,9 @@ pp_project_begin_transaction
 pp_project_create
 pp_project_external_identifiers
 pp_project_find_by_external_identifier
+pp_project_find_metadata
 pp_project_id
+pp_project_metadata
 pp_project_open
 pp_project_release
 pp_project_resolve_asset
