@@ -1,4 +1,4 @@
-//! Filesystem-facing media operations for libpostproject.
+//! Filesystem-facing media operations for `PostProject`.
 //!
 //! Candidate discovery and resolution will build on the deterministic,
 //! versioned fingerprint implementation introduced here.

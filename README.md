@@ -1,41 +1,41 @@
-# libpostproject
+# PostProject
 
-`libpostproject` is application-neutral infrastructure for managing stable media
-identity, physical representations, locations, and relinking in professional
-post-production software.
+PostProject is application-neutral infrastructure for durable media identity,
+representations, locations, metadata, provenance, and project-local change
+tracking in professional post-production software.
 
-The first iteration is deliberately narrow: create a project, import media,
-persist stable IDs and fingerprints, and find that media again after files move.
-It does not yet provide timelines, collaboration, networking, decoding, proxy
-generation, or application-specific adapters.
+> **Status:** early `0.2.0-alpha.1` development. No API, ABI, schema, CLI, or
+> binding compatibility is promised before an explicit stability milestone.
+> Experimental consumers should pin an exact release or commit.
 
-> **Status:** early pre-release development. No API, ABI, or schema is stable yet.
+PostProject is standards-aware infrastructure, not a new media ontology. It
+preserves external identifiers and vocabulary terms and is designed to map to
+industry exchange models without claiming normative compliance.
+
+Current capabilities include stable logical asset IDs, concrete
+representations, multiple file locations, versioned fingerprints, deterministic
+relinking with explicit ambiguity, SQLite persistence, a public C ABI, a C++17
+RAII wrapper, and a demonstrator CLI. Work on external identifiers and the
+second-iteration model is underway.
+
+PostProject deliberately does not provide a timeline editor, decoder/encoder,
+job runner, collaboration server, MAM service, or automatic registry/network
+lookup.
 
 ## Architecture
 
-The implementation is split by dependency direction:
-
 ```text
-postproject-cli / postproject-ffi
-             |             |
-             v             v
-postproject-storage-sqlite  postproject-media
-             \             /
-              v           v
-              postproject-core
+CLI / C ABI / C++ wrapper
+          |
+SQLite storage + filesystem media services
+          |
+backend-neutral PostProject domain model
 ```
 
-Rust is an implementation detail. Native consumers will use an intentionally
-designed C ABI, with a thin C++17 RAII wrapper layered on top.
+Rust is an implementation detail. Native applications consume the installed C
+ABI, with the C++ wrapper layered only over that ABI.
 
-See [the architecture](docs/architecture.md), [domain model](docs/domain-model.md),
-[benchmark methodology](docs/benchmarks.md), [fuzzing guide](docs/fuzzing.md), and
-[acceptance report](docs/iteration-one-report.md) for the current design and
-delivery status. See the [release checklist](docs/releasing.md) for publication
-policy.
-See the [roadmap](docs/roadmap.md) for explicitly deferred work.
-
-## Build
+## Build and test
 
 Rust 1.85 or newer is required.
 
@@ -44,77 +44,22 @@ cargo build --workspace
 cargo test --workspace --all-features
 ```
 
-The demonstrator CLI exercises the same storage, media, and resolver services as
-the library:
+The demonstrator CLI exercises the same storage and media services as the
+library:
 
 ```sh
 cargo run -p postproject-cli -- init production.pproj --name "Documentary"
 cargo run -p postproject-cli -- media add production.pproj rushes/A001.mov
-cargo run -p postproject-cli -- root add production.pproj /mnt/relocated-rushes
 cargo run -p postproject-cli -- media list production.pproj
-cargo run -p postproject-cli -- media resolve production.pproj ASSET_ID
 ```
 
 Pass `--json` before or after a subcommand for structured output. An ambiguous
-candidate returned by `media resolve` can be persisted explicitly with
-`media resolve PROJECT ASSET_ID --confirm URI`; the URI must be one of that
-resolution's candidates.
+resolution is never selected silently; applications must present candidates and
+confirm one explicitly.
 
-The initial C ABI can be built with:
+## Native integration
 
-```sh
-cargo build --release -p postproject-ffi
-```
-
-Minimal C usage:
-
-```c
-#include <postproject/postproject.h>
-
-pp_project_t *project = NULL;
-pp_error_t *error = NULL;
-pp_error_code_t status =
-    pp_project_open("production.pproj", &project, &error);
-if (status != PP_OK) {
-    /* pp_error_message(error) is valid until release. */
-    pp_error_release(error);
-    return 1;
-}
-pp_project_release(project);
-```
-
-Native mutations use explicit transactions. Imports return their stable logical
-identity before commit; rollback or releasing an open transaction discards them:
-
-```c
-pp_transaction_t *tx = NULL;
-pp_uuid_t asset_id = {{0}};
-if (pp_project_begin_transaction(project, &tx, &error) == PP_OK &&
-    pp_transaction_import_media(tx, "A001.mov", NULL, &asset_id, &error) == PP_OK) {
-    pp_transaction_commit(tx, &error);
-}
-pp_transaction_release(tx);
-```
-
-The header-only C++17 wrapper maps C failures to `postproject::Error` exceptions
-and manages opaque handles with RAII:
-
-```cpp
-#include <postproject/postproject.hpp>
-
-auto project = postproject::Project::open("production.pproj");
-auto tx = project.beginTransaction();
-auto asset_id = tx.importMedia("rushes/A001.mov", "Camera A");
-tx.commit();
-
-for (const auto &resolution : project.resolveAsset(asset_id)) {
-    if (resolution.state == postproject::ResolutionState::ambiguous) {
-        // Present resolution.candidates to the user; never choose silently.
-    }
-}
-```
-
-To stage a conventional native package after building the library:
+Build and stage the native package:
 
 ```sh
 cargo build --release --locked -p postproject-ffi
@@ -125,16 +70,39 @@ cmake -S . -B target/package \
 cmake --install target/package
 ```
 
-The installed package supplies `PostProject::postproject` for CMake consumers
-and `postproject` for `pkg-config`. Consumers use only the installed native
-library and headers; they do not invoke Cargo. On macOS, pass the `.dylib` as
-`POSTPROJECT_LIBRARY`. On Windows, pass the Cargo-produced import library as
-`POSTPROJECT_LIBRARY` and its matching DLL as `POSTPROJECT_RUNTIME_LIBRARY`;
-the installer places them in the conventional `lib` and `bin` directories.
-Standalone installed-package consumers are available under `examples/c` and
-`examples/cpp`.
+The package exports `PostProject::postproject` for CMake and `postproject` for
+`pkg-config`. Installed consumers do not invoke Cargo. Use `.dylib` on macOS;
+on Windows, supply the import library and matching `postproject.dll`.
+
+Minimal C usage:
+
+```c
+#include <postproject/postproject.h>
+
+pp_project_t *project = NULL;
+pp_error_t *error = NULL;
+if (pp_project_open("production.pproj", &project, &error) != PP_OK) {
+    pp_error_release(error);
+    return 1;
+}
+pp_project_release(project);
+```
+
+Standalone installed-package examples live in [`examples/c`](examples/c) and
+[`examples/cpp`](examples/cpp).
+
+## Documentation
+
+- [User guide](docs/src/users/README.md)
+- [Integrator guide](docs/src/integrators/README.md)
+- [Contributor guide](docs/src/contributors/README.md)
+- [Standards boundaries](docs/src/concepts/standards-boundaries.md)
+- [Roadmap](docs/roadmap.md)
+- [Iteration-one acceptance report](docs/iteration-one-report.md)
+
+Build the documentation book with `mdbook build docs`.
 
 ## License
 
-Licensed under either the MIT License or the Apache License, Version 2.0, at your
-option: `MIT OR Apache-2.0`.
+Licensed under either the MIT License or the Apache License, Version 2.0, at
+your option: `MIT OR Apache-2.0`.

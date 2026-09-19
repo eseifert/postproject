@@ -1,6 +1,6 @@
 [package]
 name = "postproject-storage-sqlite"
-description = "SQLite persistence backend for libpostproject"
+description = "SQLite persistence backend for PostProject"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,12 +10,12 @@ license.workspace = true
 publish = false
 
 [dependencies]
-postproject-core = { version = "0.1.0-alpha.1", path = "../postproject-core" }
+postproject-core = { version = "0.2.0-alpha.1", path = "../postproject-core" }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "limits"] }
 
 [dev-dependencies]
 criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
-postproject-media = { version = "0.1.0-alpha.1", path = "../postproject-media" }
+postproject-media = { version = "0.2.0-alpha.1", path = "../postproject-media" }
 tempfile = "3"
 
 [[bench]]

@@ -1,6 +1,6 @@
 [package]
 name = "postproject-core"
-description = "Application-neutral domain model for libpostproject"
+description = "Application-neutral domain model for PostProject"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

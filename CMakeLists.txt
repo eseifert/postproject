@@ -1,14 +1,14 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(libpostproject VERSION 0.1.0 LANGUAGES NONE)
+project(PostProject VERSION 0.2.0 LANGUAGES NONE)
 
-set(POSTPROJECT_PACKAGE_VERSION "0.1.0-alpha.1")
+set(POSTPROJECT_PACKAGE_VERSION "0.2.0-alpha.1")
 
 include(CMakePackageConfigHelpers)
 set(CMAKE_INSTALL_LIBDIR "lib" CACHE PATH "Object code libraries")
 include(GNUInstallDirs)
 
-set(POSTPROJECT_LIBRARY "" CACHE FILEPATH "Path to the prebuilt libpostproject native library")
+set(POSTPROJECT_LIBRARY "" CACHE FILEPATH "Path to the prebuilt PostProject native library")
 set(POSTPROJECT_STATIC_LIBRARY "" CACHE FILEPATH "Optional path to the prebuilt static library")
 set(POSTPROJECT_RUNTIME_LIBRARY "" CACHE FILEPATH "Windows DLL paired with POSTPROJECT_LIBRARY")
 if(NOT POSTPROJECT_LIBRARY)
@@ -19,7 +19,7 @@ if(NOT EXISTS "${POSTPROJECT_LIBRARY}")
 endif()
 if(WIN32)
     if(NOT POSTPROJECT_RUNTIME_LIBRARY)
-        message(FATAL_ERROR "POSTPROJECT_RUNTIME_LIBRARY must name the libpostproject DLL on Windows")
+        message(FATAL_ERROR "POSTPROJECT_RUNTIME_LIBRARY must name the PostProject DLL on Windows")
     endif()
     if(NOT EXISTS "${POSTPROJECT_RUNTIME_LIBRARY}")
         message(FATAL_ERROR "POSTPROJECT_RUNTIME_LIBRARY does not exist: ${POSTPROJECT_RUNTIME_LIBRARY}")
@@ -49,7 +49,7 @@ if(POSTPROJECT_STATIC_LIBRARY)
 endif()
 install(
     FILES LICENSE LICENSES/Apache-2.0.txt LICENSES/MIT.txt README.md CHANGELOG.md
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/libpostproject"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/postproject"
 )
 
 configure_package_config_file(

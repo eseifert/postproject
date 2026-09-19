@@ -21,7 +21,7 @@ pub const FULL_FINGERPRINT_ALGORITHM: &str = "pp-blake3-full-file";
 /// Algorithm identifier for deterministic three-region BLAKE3 fingerprints.
 pub const SAMPLED_FINGERPRINT_ALGORITHM: &str = "pp-blake3-sampled-regions";
 const ALGORITHM_VERSION: u16 = 1;
-const SAMPLED_CONTEXT: &[u8] = b"libpostproject sampled file fingerprint v1\0";
+const SAMPLED_CONTEXT: &[u8] = b"PostProject sampled file fingerprint v1\0";
 
 /// How much of a file contributed to a fingerprint.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

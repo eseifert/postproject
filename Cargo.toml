@@ -10,11 +10,11 @@ resolver = "3"
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.1.0-alpha.1"
+version = "0.2.0-alpha.1"
 edition = "2024"
 rust-version = "1.85"
-authors = ["libpostproject contributors"]
-repository = "https://github.com/eseifert/libpostproject"
+authors = ["PostProject contributors"]
+repository = "https://github.com/eseifert/postproject"
 license = "MIT OR Apache-2.0"
 
 [workspace.lints.rust]
