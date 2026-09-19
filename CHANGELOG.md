@@ -36,3 +36,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - Unambiguous cross-platform CMake metadata with explicit Windows DLL packaging.
 - Backend-neutral, domain-shaped project read and transaction contracts.
 - Iteration-one acceptance report with verification and benchmark summaries.
+- Locked the compatible `yoke-derive` patch release to preserve Rust 1.85 support.
