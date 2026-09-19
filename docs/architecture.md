@@ -8,8 +8,10 @@ or any editor. Every other component may depend on core; core never depends on a
 adapter.
 
 `postproject-storage-sqlite` owns project-file migrations and transactional
-persistence. Its interfaces will describe domain operations rather than generic
-row CRUD, leaving room for a later PostgreSQL backend.
+persistence. It implements the core `ProjectRead`, `ProjectStore`, and
+`ProjectStoreTransaction` contracts, which describe domain operations rather
+than generic row CRUD. A later backend can implement the same boundary without
+exposing its connection or query model.
 
 `postproject-media` owns filesystem candidate discovery, fingerprinting, and
 resolution policy. Candidate discovery, cheap filtering, and expensive

@@ -1,8 +1,8 @@
 //! Explicit SQLite-backed domain transactions.
 
 use postproject_core::{
-    Error, ErrorKind, LocationAvailability, MediaRoot, OriginalMediaImport, Project, Result,
-    TransactionId, TransactionLifecycle, TransactionState,
+    Error, ErrorKind, Location, LocationAvailability, MediaRoot, OriginalMediaImport, Project,
+    ProjectStoreTransaction, Result, TransactionId, TransactionLifecycle, TransactionState,
 };
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 
@@ -213,6 +213,36 @@ impl<'project> SqliteTransaction<'project> {
                 "open transaction has no SQLite transaction",
             )
         })
+    }
+}
+
+impl ProjectStoreTransaction for SqliteTransaction<'_> {
+    fn id(&self) -> TransactionId {
+        SqliteTransaction::id(self)
+    }
+
+    fn state(&self) -> TransactionState {
+        SqliteTransaction::state(self)
+    }
+
+    fn import_original(&mut self, import: &OriginalMediaImport) -> Result<()> {
+        SqliteTransaction::import_original(self, import)
+    }
+
+    fn add_location(&mut self, location: &Location) -> Result<()> {
+        SqliteTransaction::add_location(self, location)
+    }
+
+    fn add_media_root(&mut self, root: MediaRoot) -> Result<()> {
+        SqliteTransaction::add_media_root(self, root)
+    }
+
+    fn commit(&mut self) -> Result<()> {
+        SqliteTransaction::commit(self)
+    }
+
+    fn rollback(&mut self) -> Result<()> {
+        SqliteTransaction::rollback(self)
     }
 }
 

@@ -127,6 +127,7 @@ jobs:
       - if: matrix.os == 'ubuntu-latest'
         run: pkg-config --validate target/install/lib/pkgconfig/postproject.pc
       - name: Configure consumer without Cargo
+        shell: bash
         run: >-
           cmake -S tests/abi -B target/cpp-consumer
           -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/target/install"

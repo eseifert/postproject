@@ -16,8 +16,8 @@ use std::{
 
 use postproject_core::{
     Asset, AssetId, Error, ErrorKind, FileFacts, Fingerprint, Location, LocationAvailability,
-    MediaRoot, MediaRootId, Project, ProjectId, Representation, RepresentationId,
-    RepresentationKind, Result, Timestamp,
+    MediaRoot, MediaRootId, Project, ProjectId, ProjectRead, ProjectStore, Representation,
+    RepresentationId, RepresentationKind, Result, Timestamp,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
 
@@ -245,6 +245,32 @@ impl SqliteProject {
         self.connection
             .query_row("PRAGMA foreign_keys", [], |row| row.get::<_, bool>(0))
             .map_err(sqlite_error("query foreign-key enforcement"))
+    }
+}
+
+impl ProjectRead for SqliteProject {
+    fn project(&self) -> &Project {
+        SqliteProject::project(self)
+    }
+
+    fn assets(&self) -> Result<Vec<Asset>> {
+        SqliteProject::assets(self)
+    }
+
+    fn representations(&self, asset_id: AssetId) -> Result<Vec<Representation>> {
+        SqliteProject::representations(self, asset_id)
+    }
+
+    fn locations(&self, representation_id: RepresentationId) -> Result<Vec<Location>> {
+        SqliteProject::locations(self, representation_id)
+    }
+}
+
+impl ProjectStore for SqliteProject {
+    type Transaction<'project> = SqliteTransaction<'project>;
+
+    fn begin_transaction(&mut self) -> Result<Self::Transaction<'_>> {
+        SqliteProject::begin_transaction(self)
     }
 }
 

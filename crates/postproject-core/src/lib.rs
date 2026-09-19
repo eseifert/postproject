@@ -9,6 +9,7 @@ mod error;
 mod id;
 mod model;
 mod resolution;
+mod storage;
 mod transaction;
 mod uri;
 
@@ -21,4 +22,5 @@ pub use model::{
 pub use resolution::{
     Confidence, EvidenceKind, Resolution, ResolutionCandidate, ResolutionEvidence, ResolutionState,
 };
+pub use storage::{ProjectRead, ProjectStore, ProjectStoreTransaction};
 pub use transaction::{TransactionLifecycle, TransactionState};
