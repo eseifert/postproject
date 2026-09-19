@@ -13,6 +13,7 @@ mod model;
 mod resolution;
 mod resource;
 mod storage;
+mod time;
 mod transaction;
 mod uri;
 
@@ -43,4 +44,5 @@ pub use resource::{
     Locator, LocatorAvailability, RepresentationFingerprint, Resource, ResourceFingerprint,
 };
 pub use storage::{ProjectRead, ProjectStore, ProjectStoreTransaction};
+pub use time::{RationalRate, RationalTime, TimeRange};
 pub use transaction::{TransactionLifecycle, TransactionState};
