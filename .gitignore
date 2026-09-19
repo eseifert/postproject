@@ -5,4 +5,6 @@ Thumbs.db
 *.pproj
 *.db-shm
 *.db-wal
-
+/fuzz/artifacts/
+/fuzz/corpus/
+/fuzz/target/

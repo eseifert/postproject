@@ -38,6 +38,8 @@ jobs:
       - run: cargo doc --workspace --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: -D warnings
+      - run: cargo fmt --manifest-path fuzz/Cargo.toml --all -- --check
+      - run: cargo clippy --manifest-path fuzz/Cargo.toml --bins --locked -- -D warnings
 
   dependencies:
     name: Dependency policy
@@ -47,6 +49,11 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features --config fuzz/deny.toml
+          manifest-path: fuzz/Cargo.toml
 
   c-abi:
     name: C ABI smoke test

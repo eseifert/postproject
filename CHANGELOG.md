@@ -28,3 +28,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - C++17 RAII transaction wrapper for atomic imports, media roots, and rollback.
 - Criterion baselines for bulk import, large-project open, resolver scans, and commits.
 - Schema-0 migration fixture and full multi-asset relocation/ambiguity E2E coverage.
+- `cargo-fuzz` targets for project files, fingerprints, C strings, and strong IDs.

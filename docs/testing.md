@@ -17,9 +17,10 @@ to write the same PDB file. CI runs both invocations sequentially, so no test
 coverage is omitted.
 
 Tests use real temporary SQLite databases and filesystems, a checked-in schema-0
-migration fixture, and the complete multi-asset relocation scenario. Future work
-adds fuzz targets. Tests must not require network access, user locale, or
-wall-clock timing.
+migration fixture, and the complete multi-asset relocation scenario. Dedicated
+fuzz targets cover project opening, fingerprint input, C strings/errors, and ID
+parsing outside standard CI. Tests must not require network access, user locale,
+or wall-clock timing.
 
 `cargo-deny` rejects wildcard dependencies, unknown sources, known advisories, and
 licenses outside the repository's explicit permissive allowlist. Duplicate crate

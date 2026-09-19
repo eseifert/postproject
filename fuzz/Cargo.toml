@@ -1,0 +1,48 @@
+[package]
+name = "postproject-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+postproject-core = { version = "0.1.0-alpha.1", path = "../crates/postproject-core" }
+postproject-ffi = { version = "0.1.0-alpha.1", path = "../crates/postproject-ffi" }
+postproject-storage-sqlite = { version = "0.1.0-alpha.1", path = "../crates/postproject-storage-sqlite" }
+tempfile = "3"
+
+[[bin]]
+name = "project_opening"
+path = "fuzz_targets/project_opening.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fingerprint_input"
+path = "fuzz_targets/fingerprint_input.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "c_abi_strings"
+path = "fuzz_targets/c_abi_strings.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "id_parsing"
+path = "fuzz_targets/id_parsing.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
