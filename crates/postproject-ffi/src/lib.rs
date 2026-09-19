@@ -15,9 +15,12 @@ use std::{
 };
 
 use postproject_core::{
-    AssetId, Error, ErrorKind, MediaRoot, OriginalMediaImport, ProjectId, TransactionLifecycle,
+    AssetId, Error, ErrorKind, EvidenceKind, Location, MediaRoot, OriginalMediaImport, ProjectId,
+    RepresentationId, Resolution, ResolutionEvidence, ResolutionState, TransactionLifecycle,
 };
-use postproject_media::{prepare_media_root, prepare_original_media};
+use postproject_media::{
+    MediaResolver, prepare_confirmed_location, prepare_media_root, prepare_original_media,
+};
 use postproject_storage_sqlite::SqliteProject;
 
 const PP_OK: u32 = 0;
@@ -32,6 +35,24 @@ const PP_ERROR_AMBIGUOUS_RESOLUTION: u32 = 8;
 const PP_ERROR_FINGERPRINT: u32 = 9;
 const PP_ERROR_UNSUPPORTED: u32 = 10;
 const PP_ERROR_INTERNAL: u32 = 255;
+
+const PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATION: u32 = 1;
+const PP_RESOLUTION_RESOLVED_EXACT: u32 = 2;
+const PP_RESOLUTION_RESOLVED_PROBABLE: u32 = 3;
+const PP_RESOLUTION_MISSING: u32 = 4;
+const PP_RESOLUTION_AMBIGUOUS: u32 = 5;
+const PP_RESOLUTION_ERROR: u32 = 6;
+
+const PP_EVIDENCE_KNOWN_LOCATION_EXISTS: u32 = 1;
+const PP_EVIDENCE_EXACT_FINGERPRINT_MATCH: u32 = 2;
+const PP_EVIDENCE_FULL_HASH_MATCH: u32 = 3;
+const PP_EVIDENCE_PARTIAL_FINGERPRINT_MATCH: u32 = 4;
+const PP_EVIDENCE_FILE_SIZE_MATCH: u32 = 5;
+const PP_EVIDENCE_FILE_NAME_MATCH: u32 = 6;
+const PP_EVIDENCE_RELATIVE_PATH_SIMILARITY: u32 = 7;
+const PP_EVIDENCE_MEDIA_ROOT_RELATION: u32 = 8;
+const PP_EVIDENCE_CONFLICTING_CANDIDATE: u32 = 9;
+const PP_EVIDENCE_DISCOVERY_ERROR: u32 = 10;
 
 /// Current iteration-1 ABI version.
 pub const ABI_VERSION: u32 = 1;
@@ -64,6 +85,30 @@ pub struct PpTransaction {
 enum StagedMutation {
     Import(OriginalMediaImport),
     MediaRoot(MediaRoot),
+    Location(Location),
+}
+
+/// Opaque set of immutable media-resolution results owned by the C caller.
+pub struct PpResolutionSet {
+    resolutions: Vec<AbiResolution>,
+}
+
+struct AbiResolution {
+    representation_id: RepresentationId,
+    state: u32,
+    candidates: Vec<AbiCandidate>,
+    evidence: Vec<AbiEvidence>,
+}
+
+struct AbiCandidate {
+    uri: CString,
+    confidence: u16,
+    evidence: Vec<AbiEvidence>,
+}
+
+struct AbiEvidence {
+    kind: u32,
+    detail: Option<CString>,
 }
 
 /// Opaque error object owned by the C caller.
@@ -221,6 +266,243 @@ pub unsafe extern "C" fn pp_project_asset_exists(
     }
 }
 
+/// Resolves every representation belonging to an asset without mutating the project.
+///
+/// The returned immutable result set owns all candidate URI and evidence-detail
+/// strings exposed by its accessors.
+///
+/// # Safety
+///
+/// `project` must be a live handle, `asset_id` must be readable, and
+/// `out_resolutions` must be writable. `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_resolve_asset(
+    project: *const PpProject,
+    asset_id: *const PpUuid,
+    out_resolutions: *mut *mut PpResolutionSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Null pointers are rejected before dereference; remaining pointer
+    // validity and synchronization are guaranteed by the caller contract.
+    unsafe {
+        initialize_output(out_resolutions);
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            let asset_id = asset_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("asset_id must not be null"))?;
+            if out_resolutions.is_null() {
+                return Err(invalid_argument("out_resolutions must not be null"));
+            }
+
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let asset_id = AssetId::from_bytes(asset_id.bytes);
+            if !inner.assets()?.iter().any(|asset| asset.id() == asset_id) {
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("asset {asset_id} does not exist"),
+                ));
+            }
+
+            let resolver = MediaResolver::default();
+            let mut resolutions = Vec::new();
+            for representation in inner.representations(asset_id)? {
+                let locations = inner.locations(representation.id())?;
+                resolutions.push(resolver.resolve(
+                    &representation,
+                    &locations,
+                    inner.project().media_roots(),
+                )?);
+            }
+            out_resolutions.write(Box::into_raw(Box::new(PpResolutionSet::new(resolutions))));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the number of representation results in a resolution set.
+/// Null input returns zero.
+///
+/// # Safety
+///
+/// `resolutions` must be null or a live handle returned by this library.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_set_count(resolutions: *const PpResolutionSet) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null pointer is live for the duration of this call by
+        // the caller contract and is only borrowed.
+        unsafe { resolutions.as_ref() }.map_or(0, |set| {
+            u64::try_from(set.resolutions.len()).unwrap_or(u64::MAX)
+        })
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one representation-level resolution result.
+///
+/// # Safety
+///
+/// `resolutions` must be live. All value outputs must be writable and
+/// `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_set_get(
+    resolutions: *const PpResolutionSet,
+    resolution_index: u64,
+    out_representation_id: *mut PpUuid,
+    out_state: *mut u32,
+    out_candidate_count: *mut u64,
+    out_evidence_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and validated before use; the input
+    // handle must remain live according to the caller contract.
+    unsafe {
+        initialize_uuid(out_representation_id);
+        initialize_value(out_state, 0);
+        initialize_value(out_candidate_count, 0);
+        initialize_value(out_evidence_count, 0);
+        ffi_call(out_error, || {
+            require_output(out_representation_id, "out_representation_id")?;
+            require_output(out_state, "out_state")?;
+            require_output(out_candidate_count, "out_candidate_count")?;
+            require_output(out_evidence_count, "out_evidence_count")?;
+            let resolution = resolution_at(resolutions, resolution_index)?;
+            out_representation_id.write(PpUuid {
+                bytes: resolution.representation_id.into_bytes(),
+            });
+            out_state.write(resolution.state);
+            out_candidate_count.write(length_as_u64(resolution.candidates.len())?);
+            out_evidence_count.write(length_as_u64(resolution.evidence.len())?);
+            Ok(())
+        })
+    }
+}
+
+/// Reads one candidate from a representation-level resolution result.
+///
+/// `out_uri` receives a borrowed NUL-terminated UTF-8 string that remains valid
+/// until the resolution set is released.
+///
+/// # Safety
+///
+/// `resolutions` must be live. All outputs must be writable and `out_error` may
+/// be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_candidate_get(
+    resolutions: *const PpResolutionSet,
+    resolution_index: u64,
+    candidate_index: u64,
+    out_uri: *mut *const c_char,
+    out_confidence_basis_points: *mut u16,
+    out_evidence_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and validated before use; the input
+    // handle must remain live according to the caller contract.
+    unsafe {
+        initialize_const_output(out_uri);
+        initialize_value(out_confidence_basis_points, 0);
+        initialize_value(out_evidence_count, 0);
+        ffi_call(out_error, || {
+            require_output(out_uri, "out_uri")?;
+            require_output(out_confidence_basis_points, "out_confidence_basis_points")?;
+            require_output(out_evidence_count, "out_evidence_count")?;
+            let resolution = resolution_at(resolutions, resolution_index)?;
+            let candidate = item_at(&resolution.candidates, candidate_index, "candidate")?;
+            out_uri.write(candidate.uri.as_ptr());
+            out_confidence_basis_points.write(candidate.confidence);
+            out_evidence_count.write(length_as_u64(candidate.evidence.len())?);
+            Ok(())
+        })
+    }
+}
+
+/// Reads representation-level evidence from a resolution result.
+///
+/// `out_detail` receives null or a borrowed NUL-terminated UTF-8 string valid
+/// until the resolution set is released.
+///
+/// # Safety
+///
+/// `resolutions` must be live. Outputs must be writable and `out_error` may be
+/// null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_evidence_get(
+    resolutions: *const PpResolutionSet,
+    resolution_index: u64,
+    evidence_index: u64,
+    out_kind: *mut u32,
+    out_detail: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Initializes outputs, then delegates to the shared accessor after
+    // validating the live handle.
+    unsafe {
+        initialize_value(out_kind, 0);
+        initialize_const_output(out_detail);
+        ffi_call(out_error, || {
+            let resolution = resolution_at(resolutions, resolution_index)?;
+            write_evidence(&resolution.evidence, evidence_index, out_kind, out_detail)
+        })
+    }
+}
+
+/// Reads candidate-level evidence from a resolution result.
+///
+/// `out_detail` receives null or a borrowed NUL-terminated UTF-8 string valid
+/// until the resolution set is released.
+///
+/// # Safety
+///
+/// `resolutions` must be live. Outputs must be writable and `out_error` may be
+/// null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_candidate_evidence_get(
+    resolutions: *const PpResolutionSet,
+    resolution_index: u64,
+    candidate_index: u64,
+    evidence_index: u64,
+    out_kind: *mut u32,
+    out_detail: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Initializes outputs, then delegates to the shared accessor after
+    // validating the live handle.
+    unsafe {
+        initialize_value(out_kind, 0);
+        initialize_const_output(out_detail);
+        ffi_call(out_error, || {
+            let resolution = resolution_at(resolutions, resolution_index)?;
+            let candidate = item_at(&resolution.candidates, candidate_index, "candidate")?;
+            write_evidence(&candidate.evidence, evidence_index, out_kind, out_detail)
+        })
+    }
+}
+
+/// Releases a resolution set. Passing null is a no-op.
+///
+/// # Safety
+///
+/// A non-null pointer must have been returned by this library and not previously
+/// released. No borrowed strings may be used after this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_set_release(resolutions: *mut PpResolutionSet) {
+    if resolutions.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership of a live allocation is required by this function's
+        // contract and is reconstructed exactly once here.
+        drop(unsafe { Box::from_raw(resolutions) });
+    }));
+}
+
 /// Begins an explicit transaction that stages mutations until commit.
 ///
 /// At most one transaction may be open for a project state. The returned handle
@@ -343,6 +625,50 @@ pub unsafe extern "C" fn pp_transaction_add_media_root(
                 bytes: root.id().into_bytes(),
             });
             transaction.mutations.push(StagedMutation::MediaRoot(root));
+            Ok(())
+        })
+    }
+}
+
+/// Stages an explicitly confirmed URI for a representation.
+///
+/// The URI is borrowed UTF-8 without embedded NUL and must be absolute.
+/// Confirmation is not durable until the transaction commits.
+///
+/// # Safety
+///
+/// `transaction` must be a live transaction handle, `representation_id` must be
+/// readable, `uri` must be a NUL-terminated string, and `out_error` may be null
+/// or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_confirm_location(
+    transaction: *mut PpTransaction,
+    representation_id: *const PpUuid,
+    uri: *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Null pointers are rejected before dereference and the URI follows
+    // the documented borrowed NUL-terminated contract.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let representation_id = representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+            let uri = required_utf8(uri, "uri")?;
+            if uri.is_empty() {
+                return Err(invalid_argument("uri must not be empty"));
+            }
+            let location = prepare_confirmed_location(
+                RepresentationId::from_bytes(representation_id.bytes),
+                uri.to_owned(),
+            )?;
+            transaction
+                .mutations
+                .push(StagedMutation::Location(location));
             Ok(())
         })
     }
@@ -521,6 +847,54 @@ unsafe fn initialize_uuid(output: *mut PpUuid) {
     }
 }
 
+unsafe fn initialize_value<T: Copy>(output: *mut T, value: T) {
+    if !output.is_null() {
+        // SAFETY: Non-null output pointers are required to be writable by every
+        // exported caller contract using this helper.
+        unsafe { output.write(value) };
+    }
+}
+
+unsafe fn initialize_const_output<T>(output: *mut *const T) {
+    if !output.is_null() {
+        // SAFETY: Non-null output pointers are required to be writable by every
+        // exported caller contract using this helper.
+        unsafe { output.write(ptr::null()) };
+    }
+}
+
+fn require_output<T>(output: *mut T, label: &str) -> Result<(), Error> {
+    if output.is_null() {
+        Err(invalid_argument(format!("{label} must not be null")))
+    } else {
+        Ok(())
+    }
+}
+
+unsafe fn write_evidence(
+    evidence: &[AbiEvidence],
+    evidence_index: u64,
+    out_kind: *mut u32,
+    out_detail: *mut *const c_char,
+) -> Result<(), Error> {
+    // SAFETY: Output validity is checked before either pointer is written.
+    unsafe {
+        initialize_value(out_kind, 0);
+        initialize_const_output(out_detail);
+        require_output(out_kind, "out_kind")?;
+        require_output(out_detail, "out_detail")?;
+        let evidence = item_at(evidence, evidence_index, "evidence")?;
+        out_kind.write(evidence.kind);
+        out_detail.write(
+            evidence
+                .detail
+                .as_ref()
+                .map_or(ptr::null(), |value| value.as_ptr()),
+        );
+        Ok(())
+    }
+}
+
 unsafe fn write_error(output: *mut *mut PpError, code: u32, message: &str) {
     if output.is_null() {
         return;
@@ -587,6 +961,98 @@ fn project_handle(project: SqliteProject) -> PpProject {
     }
 }
 
+unsafe fn resolution_at<'a>(
+    resolutions: *const PpResolutionSet,
+    index: u64,
+) -> Result<&'a AbiResolution, Error> {
+    // SAFETY: Exported callers guarantee a non-null handle remains live for the
+    // complete call. The reference never escapes an exported operation.
+    let resolutions = unsafe { resolutions.as_ref() }
+        .ok_or_else(|| invalid_argument("resolutions must not be null"))?;
+    item_at(&resolutions.resolutions, index, "resolution")
+}
+
+fn item_at<'a, T>(items: &'a [T], index: u64, label: &str) -> Result<&'a T, Error> {
+    let index = usize::try_from(index)
+        .map_err(|_| invalid_argument(format!("{label} index is out of range")))?;
+    items
+        .get(index)
+        .ok_or_else(|| invalid_argument(format!("{label} index {index} is out of range")))
+}
+
+fn length_as_u64(length: usize) -> Result<u64, Error> {
+    u64::try_from(length).map_err(|_| Error::new(ErrorKind::Internal, "result is too large"))
+}
+
+impl PpResolutionSet {
+    fn new(resolutions: Vec<Resolution>) -> Self {
+        Self {
+            resolutions: resolutions
+                .into_iter()
+                .map(|resolution| AbiResolution {
+                    representation_id: resolution.representation_id(),
+                    state: resolution_state(resolution.state()),
+                    candidates: resolution
+                        .candidates()
+                        .iter()
+                        .map(|candidate| AbiCandidate {
+                            uri: sanitized_cstring(candidate.uri()),
+                            confidence: candidate.confidence().basis_points(),
+                            evidence: candidate.evidence().iter().map(AbiEvidence::from).collect(),
+                        })
+                        .collect(),
+                    evidence: resolution
+                        .evidence()
+                        .iter()
+                        .map(AbiEvidence::from)
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+}
+
+impl From<&ResolutionEvidence> for AbiEvidence {
+    fn from(evidence: &ResolutionEvidence) -> Self {
+        Self {
+            kind: evidence_kind(evidence.kind()),
+            detail: evidence.detail().map(sanitized_cstring),
+        }
+    }
+}
+
+fn sanitized_cstring(value: &str) -> CString {
+    CString::new(value.replace('\0', "�")).unwrap_or_default()
+}
+
+const fn resolution_state(state: ResolutionState) -> u32 {
+    match state {
+        ResolutionState::OnlineAtKnownLocation => PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATION,
+        ResolutionState::ResolvedExact => PP_RESOLUTION_RESOLVED_EXACT,
+        ResolutionState::ResolvedProbable => PP_RESOLUTION_RESOLVED_PROBABLE,
+        ResolutionState::Missing => PP_RESOLUTION_MISSING,
+        ResolutionState::Ambiguous => PP_RESOLUTION_AMBIGUOUS,
+        ResolutionState::Error => PP_RESOLUTION_ERROR,
+        _ => 0,
+    }
+}
+
+const fn evidence_kind(kind: EvidenceKind) -> u32 {
+    match kind {
+        EvidenceKind::KnownLocationExists => PP_EVIDENCE_KNOWN_LOCATION_EXISTS,
+        EvidenceKind::ExactFingerprintMatch => PP_EVIDENCE_EXACT_FINGERPRINT_MATCH,
+        EvidenceKind::FullHashMatch => PP_EVIDENCE_FULL_HASH_MATCH,
+        EvidenceKind::PartialFingerprintMatch => PP_EVIDENCE_PARTIAL_FINGERPRINT_MATCH,
+        EvidenceKind::FileSizeMatch => PP_EVIDENCE_FILE_SIZE_MATCH,
+        EvidenceKind::FileNameMatch => PP_EVIDENCE_FILE_NAME_MATCH,
+        EvidenceKind::RelativePathSimilarity => PP_EVIDENCE_RELATIVE_PATH_SIMILARITY,
+        EvidenceKind::MediaRootRelation => PP_EVIDENCE_MEDIA_ROOT_RELATION,
+        EvidenceKind::ConflictingCandidate => PP_EVIDENCE_CONFLICTING_CANDIDATE,
+        EvidenceKind::DiscoveryError => PP_EVIDENCE_DISCOVERY_ERROR,
+        _ => 0,
+    }
+}
+
 impl PpTransaction {
     fn commit(&mut self) -> Result<(), Error> {
         self.lifecycle.ensure_open()?;
@@ -601,6 +1067,7 @@ impl PpTransaction {
                 match mutation {
                     StagedMutation::Import(import) => transaction.import_original(import)?,
                     StagedMutation::MediaRoot(root) => transaction.add_media_root(root.clone())?,
+                    StagedMutation::Location(location) => transaction.add_location(location)?,
                 }
             }
             transaction.commit()
@@ -762,5 +1229,42 @@ mod tests {
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].id().into_bytes(), asset_id.bytes);
         assert!(error.is_null());
+    }
+
+    #[test]
+    fn resolution_accessors_reject_out_of_range_indices() {
+        let resolutions = Box::into_raw(Box::new(PpResolutionSet::new(Vec::new())));
+        let mut representation_id = PpUuid { bytes: [9; 16] };
+        let mut state = 99;
+        let mut candidate_count = 99;
+        let mut evidence_count = 99;
+        let mut error = ptr::null_mut();
+
+        // SAFETY: The handle is live and every output is writable.
+        let status = unsafe {
+            pp_resolution_set_get(
+                resolutions,
+                0,
+                &raw mut representation_id,
+                &raw mut state,
+                &raw mut candidate_count,
+                &raw mut evidence_count,
+                &raw mut error,
+            )
+        };
+        assert_eq!(status, PP_ERROR_INVALID_ARGUMENT);
+        assert_eq!(representation_id.bytes, [0; 16]);
+        assert_eq!(state, 0);
+        assert_eq!(candidate_count, 0);
+        assert_eq!(evidence_count, 0);
+        assert!(!error.is_null());
+
+        // SAFETY: Both handles are live and released exactly once.
+        unsafe {
+            pp_error_release(error);
+            pp_resolution_set_release(resolutions);
+        }
+        // SAFETY: Null is explicitly accepted by the count accessor.
+        assert_eq!(unsafe { pp_resolution_set_count(ptr::null()) }, 0);
     }
 }

@@ -47,6 +47,21 @@ int main(int argc, char **argv) {
       return 9;
     }
 
+    const std::string moved_media_path = media_path + ".moved";
+    std::filesystem::rename(media_path, moved_media_path);
+    const auto resolutions = project.resolveAsset(asset_id);
+    if (resolutions.size() != 1 ||
+        resolutions[0].state != postproject::ResolutionState::resolved_exact ||
+        resolutions[0].candidates.size() != 1 ||
+        resolutions[0].candidates[0].confidence_basis_points != 10000 ||
+        resolutions[0].candidates[0].evidence.empty()) {
+      return 11;
+    }
+    auto confirmation = project.beginTransaction();
+    confirmation.confirmLocation(resolutions[0].representation_id,
+                                 resolutions[0].candidates[0].uri);
+    confirmation.commit();
+
     auto moved = std::move(project);
     if (project || !moved) {
       return 4;
@@ -55,6 +70,12 @@ int main(int argc, char **argv) {
     auto reopened = postproject::Project::open(path);
     if (reopened.id() != created_id || !reopened.containsAsset(asset_id)) {
       return 5;
+    }
+    const auto persisted = reopened.resolveAsset(asset_id);
+    if (persisted.size() != 1 ||
+        persisted[0].state !=
+            postproject::ResolutionState::online_at_known_location) {
+      return 12;
     }
 
     try {

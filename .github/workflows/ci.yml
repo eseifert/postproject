@@ -69,7 +69,7 @@ jobs:
           -Ltarget/release -lpostproject
           -Wl,-rpath,$PWD/target/release
           -o target/c-smoke
-      - run: target/c-smoke target/c-smoke.pproj
+      - run: target/c-smoke target/c-smoke.pproj target
       - name: Verify exported ABI symbols
         shell: bash
         run: >-
@@ -78,7 +78,7 @@ jobs:
           awk '{print $3}' | sort)
 
   cpp-package:
-    name: Installed C++17 consumer
+    name: Installed C and C++17 consumers
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -132,7 +132,7 @@ jobs:
           -Ltarget/release -lpostproject
           -Wl,-rpath,$PWD/target/release
           -o target/c-smoke-sanitized
-      - run: target/c-smoke-sanitized target/c-smoke-sanitized.pproj
+      - run: target/c-smoke-sanitized target/c-smoke-sanitized.pproj target
       - name: Install native package
         run: >-
           cmake -S . -B target/cmake-sanitized-package

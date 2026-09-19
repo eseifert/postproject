@@ -34,3 +34,9 @@ inside a project transaction; the resolver itself never mutates project state.
 Current scans are intentionally uncached. Overlapping roots are de-duplicated by
 canonical file URI, but each resolve operation walks enabled roots afresh. A later
 filesystem index can replace discovery without changing result semantics.
+
+Rust callers receive the domain `Resolution` values directly. Native C callers
+receive an opaque resolution set and inspect state, candidate confidence, URI,
+and both result-level and candidate-level evidence through bounded accessors.
+The C++17 wrapper copies the same information into value objects. Native
+confirmation remains a separate explicit transaction operation.

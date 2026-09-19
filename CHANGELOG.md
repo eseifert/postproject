@@ -32,3 +32,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - ASan/UBSan native-consumer CI and a standalone installed-package C example.
 - Shared/static native artifacts, installed release documentation, and release checklist.
 - Bounded SQLite value and row sizes when opening untrusted project files.
+- Structured C and C++ media-resolution results with transactional confirmation.

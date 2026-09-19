@@ -6,10 +6,12 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace postproject {
 
@@ -49,7 +51,12 @@ public:
 
   friend constexpr bool operator==(const Uuid &left,
                                    const Uuid &right) noexcept {
-    return left.bytes_ == right.bytes_;
+    for (std::size_t index = 0; index < left.bytes_.size(); ++index) {
+      if (left.bytes_[index] != right.bytes_[index]) {
+        return false;
+      }
+    }
+    return true;
   }
 
   friend constexpr bool operator!=(const Uuid &left,
@@ -61,6 +68,46 @@ private:
   Bytes bytes_;
 };
 
+enum class ResolutionState : std::uint32_t {
+  online_at_known_location = PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATION,
+  resolved_exact = PP_RESOLUTION_RESOLVED_EXACT,
+  resolved_probable = PP_RESOLUTION_RESOLVED_PROBABLE,
+  missing = PP_RESOLUTION_MISSING,
+  ambiguous = PP_RESOLUTION_AMBIGUOUS,
+  error = PP_RESOLUTION_ERROR,
+};
+
+enum class EvidenceKind : std::uint32_t {
+  known_location_exists = PP_EVIDENCE_KNOWN_LOCATION_EXISTS,
+  exact_fingerprint_match = PP_EVIDENCE_EXACT_FINGERPRINT_MATCH,
+  full_hash_match = PP_EVIDENCE_FULL_HASH_MATCH,
+  partial_fingerprint_match = PP_EVIDENCE_PARTIAL_FINGERPRINT_MATCH,
+  file_size_match = PP_EVIDENCE_FILE_SIZE_MATCH,
+  file_name_match = PP_EVIDENCE_FILE_NAME_MATCH,
+  relative_path_similarity = PP_EVIDENCE_RELATIVE_PATH_SIMILARITY,
+  media_root_relation = PP_EVIDENCE_MEDIA_ROOT_RELATION,
+  conflicting_candidate = PP_EVIDENCE_CONFLICTING_CANDIDATE,
+  discovery_error = PP_EVIDENCE_DISCOVERY_ERROR,
+};
+
+struct Evidence final {
+  EvidenceKind kind;
+  std::optional<std::string> detail;
+};
+
+struct ResolutionCandidate final {
+  std::string uri;
+  std::uint16_t confidence_basis_points;
+  std::vector<Evidence> evidence;
+};
+
+struct Resolution final {
+  Uuid representation_id;
+  ResolutionState state;
+  std::vector<ResolutionCandidate> candidates;
+  std::vector<Evidence> evidence;
+};
+
 namespace detail {
 
 struct ErrorDeleter final {
@@ -68,6 +115,15 @@ struct ErrorDeleter final {
 };
 
 using ErrorHandle = std::unique_ptr<pp_error_t, ErrorDeleter>;
+
+struct ResolutionSetDeleter final {
+  void operator()(pp_resolution_set_t *resolutions) const noexcept {
+    pp_resolution_set_release(resolutions);
+  }
+};
+
+using ResolutionSetHandle =
+    std::unique_ptr<pp_resolution_set_t, ResolutionSetDeleter>;
 
 inline void throw_if_error(pp_error_code_t status, pp_error_t *raw_error) {
   ErrorHandle error(raw_error);
@@ -88,6 +144,54 @@ inline std::string checked_string(std::string_view value,
                                 " must not contain an embedded NUL");
   }
   return std::string(value);
+}
+
+inline Uuid uuid(const pp_uuid_t &value) {
+  Uuid::Bytes bytes{};
+  for (std::size_t index = 0; index < bytes.size(); ++index) {
+    bytes[index] = value.bytes[index];
+  }
+  return Uuid(bytes);
+}
+
+inline pp_uuid_t native_uuid(const Uuid &value) {
+  pp_uuid_t native{};
+  for (std::size_t index = 0; index < value.bytes().size(); ++index) {
+    native.bytes[index] = value.bytes()[index];
+  }
+  return native;
+}
+
+inline Evidence resolution_evidence(const pp_resolution_set_t *resolutions,
+                                    std::uint64_t resolution_index,
+                                    std::uint64_t evidence_index) {
+  pp_evidence_kind_t kind = 0;
+  const char *detail = nullptr;
+  pp_error_t *error = nullptr;
+  const pp_error_code_t status = pp_resolution_evidence_get(
+      resolutions, resolution_index, evidence_index, &kind, &detail, &error);
+  throw_if_error(status, error);
+  return {static_cast<EvidenceKind>(kind),
+          detail != nullptr
+              ? std::optional<std::string>(std::string(detail))
+              : std::nullopt};
+}
+
+inline Evidence candidate_evidence(const pp_resolution_set_t *resolutions,
+                                   std::uint64_t resolution_index,
+                                   std::uint64_t candidate_index,
+                                   std::uint64_t evidence_index) {
+  pp_evidence_kind_t kind = 0;
+  const char *detail = nullptr;
+  pp_error_t *error = nullptr;
+  const pp_error_code_t status = pp_resolution_candidate_evidence_get(
+      resolutions, resolution_index, candidate_index, evidence_index, &kind,
+      &detail, &error);
+  throw_if_error(status, error);
+  return {static_cast<EvidenceKind>(kind),
+          detail != nullptr
+              ? std::optional<std::string>(std::string(detail))
+              : std::nullopt};
 }
 
 } // namespace detail
@@ -112,6 +216,15 @@ public:
                     std::int32_t priority = 0) {
     const std::string native_label = detail::checked_string(label, "label");
     return add_media_root_impl(path, native_label.c_str(), priority);
+  }
+
+  void confirmLocation(const Uuid &representation_id, std::string_view uri) {
+    const pp_uuid_t id = detail::native_uuid(representation_id);
+    const std::string native_uri = detail::checked_string(uri, "uri");
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_confirm_location(
+        transaction_, &id, native_uri.c_str(), &error);
+    detail::throw_if_error(status, error);
   }
 
   void commit() {
@@ -160,7 +273,7 @@ private:
     const pp_error_code_t status = pp_transaction_import_media(
         transaction_, native_path.c_str(), display_name, &value, &error);
     detail::throw_if_error(status, error);
-    return uuid(value);
+    return detail::uuid(value);
   }
 
   Uuid add_media_root_impl(std::string_view path, const char *label,
@@ -171,15 +284,7 @@ private:
     const pp_error_code_t status = pp_transaction_add_media_root(
         transaction_, native_path.c_str(), label, priority, &value, &error);
     detail::throw_if_error(status, error);
-    return uuid(value);
-  }
-
-  static Uuid uuid(const pp_uuid_t &value) {
-    Uuid::Bytes bytes{};
-    for (std::size_t index = 0; index < bytes.size(); ++index) {
-      bytes[index] = value.bytes[index];
-    }
-    return Uuid(bytes);
+    return detail::uuid(value);
   }
 
   pp_transaction_t *transaction_ = nullptr;
@@ -229,24 +334,78 @@ public:
     const pp_error_code_t status = pp_project_id(project_, &value, &error);
     detail::throw_if_error(status, error);
 
-    Uuid::Bytes bytes{};
-    for (std::size_t index = 0; index < bytes.size(); ++index) {
-      bytes[index] = value.bytes[index];
-    }
-    return Uuid(bytes);
+    return detail::uuid(value);
   }
 
   [[nodiscard]] bool containsAsset(const Uuid &asset_id) const {
-    pp_uuid_t value{};
-    for (std::size_t index = 0; index < asset_id.bytes().size(); ++index) {
-      value.bytes[index] = asset_id.bytes()[index];
-    }
+    const pp_uuid_t value = detail::native_uuid(asset_id);
     std::uint8_t exists = 0;
     pp_error_t *error = nullptr;
     const pp_error_code_t status =
         pp_project_asset_exists(project_, &value, &exists, &error);
     detail::throw_if_error(status, error);
     return exists != 0;
+  }
+
+  [[nodiscard]] std::vector<Resolution>
+  resolveAsset(const Uuid &asset_id) const {
+    const pp_uuid_t value = detail::native_uuid(asset_id);
+    pp_resolution_set_t *raw_resolutions = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_project_resolve_asset(
+        project_, &value, &raw_resolutions, &error);
+    detail::throw_if_error(status, error);
+    detail::ResolutionSetHandle resolutions(raw_resolutions);
+
+    std::vector<Resolution> result;
+    const std::uint64_t count = pp_resolution_set_count(resolutions.get());
+    for (std::uint64_t resolution_index = 0; resolution_index < count;
+         ++resolution_index) {
+      pp_uuid_t representation_id{};
+      pp_resolution_state_t state = 0;
+      std::uint64_t candidate_count = 0;
+      std::uint64_t evidence_count = 0;
+      pp_error_t *item_error = nullptr;
+      const pp_error_code_t item_status = pp_resolution_set_get(
+          resolutions.get(), resolution_index, &representation_id, &state,
+          &candidate_count, &evidence_count, &item_error);
+      detail::throw_if_error(item_status, item_error);
+
+      std::vector<ResolutionCandidate> candidates;
+      for (std::uint64_t candidate_index = 0;
+           candidate_index < candidate_count; ++candidate_index) {
+        const char *uri = nullptr;
+        std::uint16_t confidence = 0;
+        std::uint64_t candidate_evidence_count = 0;
+        pp_error_t *candidate_error = nullptr;
+        const pp_error_code_t candidate_status = pp_resolution_candidate_get(
+            resolutions.get(), resolution_index, candidate_index, &uri,
+            &confidence, &candidate_evidence_count, &candidate_error);
+        detail::throw_if_error(candidate_status, candidate_error);
+
+        std::vector<Evidence> evidence;
+        for (std::uint64_t evidence_index = 0;
+             evidence_index < candidate_evidence_count; ++evidence_index) {
+          evidence.push_back(detail::candidate_evidence(
+              resolutions.get(), resolution_index, candidate_index,
+              evidence_index));
+        }
+        candidates.push_back(
+            {uri != nullptr ? std::string(uri) : std::string(), confidence,
+             std::move(evidence)});
+      }
+
+      std::vector<Evidence> evidence;
+      for (std::uint64_t evidence_index = 0;
+           evidence_index < evidence_count; ++evidence_index) {
+        evidence.push_back(detail::resolution_evidence(
+            resolutions.get(), resolution_index, evidence_index));
+      }
+      result.push_back({detail::uuid(representation_id),
+                        static_cast<ResolutionState>(state),
+                        std::move(candidates), std::move(evidence)});
+    }
+    return result;
   }
 
   [[nodiscard]] Transaction beginTransaction() {

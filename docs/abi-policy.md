@@ -7,11 +7,12 @@ release, but removals or signature changes require an explicit ABI-version bump.
 
 ## Types and ownership
 
-Projects, transactions, and errors are opaque handles. A successful creation/open
-call transfers one project ownership reference to the caller, which releases it
-exactly once with `pp_project_release`. Failed calls optionally transfer an error
-object, released exactly once with `pp_error_release`. Release functions accept
-null as a no-op; releasing the same non-null pointer twice is invalid.
+Projects, transactions, resolution sets, and errors are opaque handles. A
+successful creation/open call transfers one project ownership reference to the
+caller, which releases it exactly once with `pp_project_release`. Failed calls
+optionally transfer an error object, released exactly once with
+`pp_error_release`. Release functions accept null as a no-op; releasing the same
+non-null pointer twice is invalid.
 
 A project permits one open transaction at a time. Import and media-root mutations
 are prepared and staged in memory, then persisted together by
@@ -53,6 +54,22 @@ transaction invokes the C release behavior and therefore discards staged work.
 The exception retains the stable `ErrorCode` and copies diagnostic text before
 releasing the C error object. No exception crosses the C ABI. Inputs containing
 embedded NUL bytes are rejected before calling C.
+
+## Resolution results
+
+`pp_project_resolve_asset` returns an immutable opaque set containing one result
+per representation. Fixed-width state and evidence values are read through
+index-checked accessors. Candidate URI and optional evidence-detail strings are
+borrowed from the result set and remain valid until
+`pp_resolution_set_release`. The C++ wrapper copies these into `Resolution`,
+`ResolutionCandidate`, and `Evidence` values, so their lifetime is independent
+of the C handle.
+
+Resolution never mutates a project. A caller explicitly stages a selected
+candidate using `pp_transaction_confirm_location`, and only transaction commit
+makes that location durable. The caller is responsible for passing a URI from
+the result it reviewed; the API validates the URI and representation identity at
+persistence time but does not silently choose a candidate.
 
 The wrapper adds no domain behavior and exposes no C++ standard-library type
 through exported library symbols. Its source compatibility follows the 0.x

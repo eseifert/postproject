@@ -104,6 +104,12 @@ auto project = postproject::Project::open("production.pproj");
 auto tx = project.beginTransaction();
 auto asset_id = tx.importMedia("rushes/A001.mov", "Camera A");
 tx.commit();
+
+for (const auto &resolution : project.resolveAsset(asset_id)) {
+    if (resolution.state == postproject::ResolutionState::ambiguous) {
+        // Present resolution.candidates to the user; never choose silently.
+    }
+}
 ```
 
 To stage a conventional native package after building the library:

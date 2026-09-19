@@ -8,8 +8,16 @@ pp_project_create
 pp_project_id
 pp_project_open
 pp_project_release
+pp_project_resolve_asset
+pp_resolution_candidate_evidence_get
+pp_resolution_candidate_get
+pp_resolution_evidence_get
+pp_resolution_set_count
+pp_resolution_set_get
+pp_resolution_set_release
 pp_transaction_add_media_root
 pp_transaction_commit
+pp_transaction_confirm_location
 pp_transaction_import_media
 pp_transaction_release
 pp_transaction_rollback
