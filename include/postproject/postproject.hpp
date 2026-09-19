@@ -126,6 +126,7 @@ struct ResolutionCandidate final {
 
 struct Resolution final {
   Uuid representation_id;
+  Uuid resource_id;
   ResolutionState state;
   std::vector<ResolutionCandidate> candidates;
   std::vector<Evidence> evidence;
@@ -267,11 +268,11 @@ public:
     return add_media_root_impl(path, native_label.c_str(), priority);
   }
 
-  void confirmLocation(const Uuid &representation_id, std::string_view uri) {
-    const pp_uuid_t id = detail::native_uuid(representation_id);
+  void confirmLocator(const Uuid &resource_id, std::string_view uri) {
+    const pp_uuid_t id = detail::native_uuid(resource_id);
     const std::string native_uri = detail::checked_string(uri, "uri");
     pp_error_t *error = nullptr;
-    const pp_error_code_t status = pp_transaction_confirm_location(
+    const pp_error_code_t status = pp_transaction_confirm_locator(
         transaction_, &id, native_uri.c_str(), &error);
     detail::throw_if_error(status, error);
   }
@@ -511,13 +512,14 @@ public:
     for (std::uint64_t resolution_index = 0; resolution_index < count;
          ++resolution_index) {
       pp_uuid_t representation_id{};
+      pp_uuid_t resource_id{};
       pp_resolution_state_t state = 0;
       std::uint64_t candidate_count = 0;
       std::uint64_t evidence_count = 0;
       pp_error_t *item_error = nullptr;
       const pp_error_code_t item_status = pp_resolution_set_get(
-          resolutions.get(), resolution_index, &representation_id, &state,
-          &candidate_count, &evidence_count, &item_error);
+          resolutions.get(), resolution_index, &representation_id, &resource_id,
+          &state, &candidate_count, &evidence_count, &item_error);
       detail::throw_if_error(item_status, item_error);
 
       std::vector<ResolutionCandidate> candidates;
@@ -551,6 +553,7 @@ public:
             resolutions.get(), resolution_index, evidence_index));
       }
       result.push_back({detail::uuid(representation_id),
+                        detail::uuid(resource_id),
                         static_cast<ResolutionState>(state),
                         std::move(candidates), std::move(evidence)});
     }

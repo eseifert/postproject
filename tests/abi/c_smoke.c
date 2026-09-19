@@ -18,13 +18,14 @@ int main(int argc, char **argv) {
   pp_uuid_t rolled_back_asset_id = {{0}};
   pp_uuid_t root_id = {{0}};
   pp_uuid_t representation_id = {{0}};
+  pp_uuid_t resource_id = {{0}};
   char media_path[4096];
   char moved_media_path[4096];
 
   if (argc != 3) {
     return 64;
   }
-  if (pp_abi_version() != UINT32_C(3)) {
+  if (pp_abi_version() != UINT32_C(4)) {
     return 1;
   }
   pp_error_code_t status =
@@ -245,11 +246,12 @@ int main(int argc, char **argv) {
   pp_resolution_state_t state = 0;
   uint64_t candidate_count = 0;
   uint64_t result_evidence_count = 0;
-  status = pp_resolution_set_get(resolutions, 0, &representation_id, &state,
-                                 &candidate_count, &result_evidence_count,
-                                 &error);
+  status = pp_resolution_set_get(
+      resolutions, 0, &representation_id, &resource_id, &state,
+      &candidate_count, &result_evidence_count, &error);
   if (status != PP_OK || state != PP_RESOLUTION_RESOLVED_EXACT ||
-      candidate_count != UINT64_C(1) || uuid_is_zero(&representation_id)) {
+      candidate_count != UINT64_C(1) || uuid_is_zero(&representation_id) ||
+      uuid_is_zero(&resource_id)) {
     pp_resolution_set_release(resolutions);
     pp_project_release(project);
     pp_error_release(error);
@@ -281,8 +283,8 @@ int main(int argc, char **argv) {
 
   status = pp_project_begin_transaction(project, &transaction, &error);
   if (status != PP_OK ||
-      pp_transaction_confirm_location(transaction, &representation_id,
-                                      candidate_uri, &error) != PP_OK ||
+      pp_transaction_confirm_locator(transaction, &resource_id, candidate_uri,
+                                     &error) != PP_OK ||
       pp_transaction_commit(transaction, &error) != PP_OK) {
     pp_transaction_release(transaction);
     pp_resolution_set_release(resolutions);
@@ -300,8 +302,8 @@ int main(int argc, char **argv) {
   if (status != PP_OK ||
       pp_project_resolve_asset(project, &asset_id, &resolutions, &error) !=
           PP_OK ||
-      pp_resolution_set_get(resolutions, 0, &representation_id, &state,
-                            &candidate_count, &result_evidence_count,
+      pp_resolution_set_get(resolutions, 0, &representation_id, &resource_id,
+                            &state, &candidate_count, &result_evidence_count,
                             &error) != PP_OK ||
       state != PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATION) {
     pp_resolution_set_release(resolutions);

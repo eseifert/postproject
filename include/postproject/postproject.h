@@ -203,7 +203,8 @@ PP_API uint64_t
 pp_resolution_set_count(const pp_resolution_set_t *resolutions);
 PP_API pp_error_code_t pp_resolution_set_get(
     const pp_resolution_set_t *resolutions, uint64_t resolution_index,
-    pp_uuid_t *out_representation_id, pp_resolution_state_t *out_state,
+    pp_uuid_t *out_representation_id, pp_uuid_t *out_resource_id,
+    pp_resolution_state_t *out_state,
     uint64_t *out_candidate_count, uint64_t *out_evidence_count,
     pp_error_t **out_error);
 PP_API pp_error_code_t pp_resolution_candidate_get(
@@ -236,8 +237,8 @@ PP_API pp_error_code_t pp_transaction_import_media(
 PP_API pp_error_code_t pp_transaction_add_media_root(
     pp_transaction_t *transaction, const char *path, const char *label,
     int32_t priority, pp_uuid_t *out_root_id, pp_error_t **out_error);
-PP_API pp_error_code_t pp_transaction_confirm_location(
-    pp_transaction_t *transaction, const pp_uuid_t *representation_id,
+PP_API pp_error_code_t pp_transaction_confirm_locator(
+    pp_transaction_t *transaction, const pp_uuid_t *resource_id,
     const char *uri, pp_error_t **out_error);
 /* Scheme and value are required borrowed UTF-8 without embedded NUL. Qualifier
  * may be NULL. The complete mutation is validated and persisted at commit. */

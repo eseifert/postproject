@@ -68,7 +68,7 @@ borrowed from the result set and remain valid until
 of the C handle.
 
 Resolution never mutates a project. A caller explicitly stages a selected
-candidate using `pp_transaction_confirm_location`, and only transaction commit
+candidate using `pp_transaction_confirm_locator`, and only transaction commit
 makes that location durable. The caller is responsible for passing a URI from
 the result it reviewed; the API validates the URI and representation identity at
 persistence time but does not silently choose a candidate.

@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
   std::remove(path.c_str());
 
   try {
-    if (postproject::abi_version() != 3) {
+    if (postproject::abi_version() != 4) {
       return 3;
     }
 
@@ -73,8 +73,8 @@ int main(int argc, char **argv) {
       return 11;
     }
     auto confirmation = project.beginTransaction();
-    confirmation.confirmLocation(resolutions[0].representation_id,
-                                 resolutions[0].candidates[0].uri);
+    confirmation.confirmLocator(resolutions[0].resource_id,
+                                resolutions[0].candidates[0].uri);
     confirmation.commit();
 
     auto moved = std::move(project);

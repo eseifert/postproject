@@ -17,13 +17,13 @@ use std::{
 };
 
 use postproject_core::{
-    AssetId, Error, ErrorKind, EvidenceKind, ExternalIdentifier, IdentifierScheme, Location,
+    AssetId, Error, ErrorKind, EvidenceKind, ExternalIdentifier, IdentifierScheme, Locator,
     MediaRoot, MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, ProjectId,
-    PropertyId, RepresentationId, Resolution, ResolutionEvidence, ResolutionState,
+    PropertyId, RepresentationId, Resolution, ResolutionEvidence, ResolutionState, ResourceId,
     TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
-    MediaResolver, prepare_confirmed_location, prepare_media_root, prepare_original_media,
+    MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
 };
 use postproject_storage_sqlite::SqliteProject;
 
@@ -67,7 +67,7 @@ const PP_OBJECT_REPRESENTATION: u32 = 3;
 const PP_OBJECT_ACTIVITY: u32 = 4;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 4;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -107,7 +107,7 @@ pub struct PpTransaction {
 enum StagedMutation {
     Import(OriginalMediaImport),
     MediaRoot(MediaRoot),
-    Location(Location),
+    Locator(Locator),
     AddExternalIdentifier(ObjectRef, ExternalIdentifier),
     RemoveExternalIdentifier(ObjectRef, ExternalIdentifier),
     AddMetadataValue(ObjectRef, MetadataProperty, MetadataValue),
@@ -137,6 +137,7 @@ pub struct PpResolutionSet {
 
 struct AbiResolution {
     representation_id: RepresentationId,
+    resource_id: ResourceId,
     state: u32,
     candidates: Vec<AbiCandidate>,
     evidence: Vec<AbiEvidence>,
@@ -1103,12 +1104,16 @@ pub unsafe extern "C" fn pp_project_resolve_asset(
             let resolver = MediaResolver::default();
             let mut resolutions = Vec::new();
             for representation in inner.representations(asset_id)? {
-                let locations = inner.locations(representation.id())?;
-                resolutions.push(resolver.resolve(
-                    &representation,
-                    &locations,
-                    inner.project().media_roots(),
-                )?);
+                for resource in inner.resources(representation.id())? {
+                    let locators = inner.locators(resource.id())?;
+                    let resolution = resolver.resolve(
+                        representation.id(),
+                        &resource,
+                        &locators,
+                        inner.project().media_roots(),
+                    )?;
+                    resolutions.push((resource.id(), resolution));
+                }
             }
             out_resolutions.write(Box::into_raw(Box::new(PpResolutionSet::new(resolutions))));
             Ok(())
@@ -1145,6 +1150,7 @@ pub unsafe extern "C" fn pp_resolution_set_get(
     resolutions: *const PpResolutionSet,
     resolution_index: u64,
     out_representation_id: *mut PpUuid,
+    out_resource_id: *mut PpUuid,
     out_state: *mut u32,
     out_candidate_count: *mut u64,
     out_evidence_count: *mut u64,
@@ -1154,17 +1160,22 @@ pub unsafe extern "C" fn pp_resolution_set_get(
     // handle must remain live according to the caller contract.
     unsafe {
         initialize_uuid(out_representation_id);
+        initialize_uuid(out_resource_id);
         initialize_value(out_state, 0);
         initialize_value(out_candidate_count, 0);
         initialize_value(out_evidence_count, 0);
         ffi_call(out_error, || {
             require_output(out_representation_id, "out_representation_id")?;
+            require_output(out_resource_id, "out_resource_id")?;
             require_output(out_state, "out_state")?;
             require_output(out_candidate_count, "out_candidate_count")?;
             require_output(out_evidence_count, "out_evidence_count")?;
             let resolution = resolution_at(resolutions, resolution_index)?;
             out_representation_id.write(PpUuid {
                 bytes: resolution.representation_id.into_bytes(),
+            });
+            out_resource_id.write(PpUuid {
+                bytes: resolution.resource_id.into_bytes(),
             });
             out_state.write(resolution.state);
             out_candidate_count.write(length_as_u64(resolution.candidates.len())?);
@@ -1420,20 +1431,20 @@ pub unsafe extern "C" fn pp_transaction_add_media_root(
     }
 }
 
-/// Stages an explicitly confirmed URI for a representation.
+/// Stages an explicitly confirmed URI for a resource.
 ///
 /// The URI is borrowed UTF-8 without embedded NUL and must be absolute.
 /// Confirmation is not durable until the transaction commits.
 ///
 /// # Safety
 ///
-/// `transaction` must be a live transaction handle, `representation_id` must be
+/// `transaction` must be a live transaction handle, `resource_id` must be
 /// readable, `uri` must be a NUL-terminated string, and `out_error` may be null
 /// or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_transaction_confirm_location(
+pub unsafe extern "C" fn pp_transaction_confirm_locator(
     transaction: *mut PpTransaction,
-    representation_id: *const PpUuid,
+    resource_id: *const PpUuid,
     uri: *const c_char,
     out_error: *mut *mut PpError,
 ) -> u32 {
@@ -1445,20 +1456,18 @@ pub unsafe extern "C" fn pp_transaction_confirm_location(
                 .as_mut()
                 .ok_or_else(|| invalid_argument("transaction must not be null"))?;
             transaction.lifecycle.ensure_open()?;
-            let representation_id = representation_id
+            let resource_id = resource_id
                 .as_ref()
-                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+                .ok_or_else(|| invalid_argument("resource_id must not be null"))?;
             let uri = required_utf8(uri, "uri")?;
             if uri.is_empty() {
                 return Err(invalid_argument("uri must not be empty"));
             }
-            let location = prepare_confirmed_location(
-                RepresentationId::from_bytes(representation_id.bytes),
+            let locator = prepare_confirmed_locator(
+                ResourceId::from_bytes(resource_id.bytes),
                 uri.to_owned(),
             )?;
-            transaction
-                .mutations
-                .push(StagedMutation::Location(location));
+            transaction.mutations.push(StagedMutation::Locator(locator));
             Ok(())
         })
     }
@@ -2016,12 +2025,13 @@ unsafe fn write_copy<T: Copy>(output: *mut T, value: T, label: &str) -> Result<(
 }
 
 impl PpResolutionSet {
-    fn new(resolutions: Vec<Resolution>) -> Self {
+    fn new(resolutions: Vec<(ResourceId, Resolution)>) -> Self {
         Self {
             resolutions: resolutions
                 .into_iter()
-                .map(|resolution| AbiResolution {
+                .map(|(resource_id, resolution)| AbiResolution {
                     representation_id: resolution.representation_id(),
+                    resource_id,
                     state: resolution_state(resolution.state()),
                     candidates: resolution
                         .candidates()
@@ -2122,7 +2132,7 @@ impl PpTransaction {
                 match mutation {
                     StagedMutation::Import(import) => transaction.import_original(import)?,
                     StagedMutation::MediaRoot(root) => transaction.add_media_root(root.clone())?,
-                    StagedMutation::Location(location) => transaction.add_location(location)?,
+                    StagedMutation::Locator(locator) => transaction.add_locator(locator)?,
                     StagedMutation::AddExternalIdentifier(target, identifier) => {
                         transaction.add_external_identifier(*target, identifier)?;
                     }
@@ -2305,6 +2315,7 @@ mod tests {
     fn resolution_accessors_reject_out_of_range_indices() {
         let resolutions = Box::into_raw(Box::new(PpResolutionSet::new(Vec::new())));
         let mut representation_id = PpUuid { bytes: [9; 16] };
+        let mut resource_id = PpUuid { bytes: [8; 16] };
         let mut state = 99;
         let mut candidate_count = 99;
         let mut evidence_count = 99;
@@ -2316,6 +2327,7 @@ mod tests {
                 resolutions,
                 0,
                 &raw mut representation_id,
+                &raw mut resource_id,
                 &raw mut state,
                 &raw mut candidate_count,
                 &raw mut evidence_count,
@@ -2324,6 +2336,7 @@ mod tests {
         };
         assert_eq!(status, PP_ERROR_INVALID_ARGUMENT);
         assert_eq!(representation_id.bytes, [0; 16]);
+        assert_eq!(resource_id.bytes, [0; 16]);
         assert_eq!(state, 0);
         assert_eq!(candidate_count, 0);
         assert_eq!(evidence_count, 0);
