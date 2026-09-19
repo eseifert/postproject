@@ -35,6 +35,11 @@ tx.commit();
 auto identifiers = project.externalIdentifiers(target);
 ```
 
+The [metadata guide](metadata-vocabularies.md) documents the implemented typed
+model, storage limits, and CLI inspection surface. Metadata access through the
+C ABI, C++ wrapper, and future Python binding will be documented when those
+public surfaces land.
+
 The root README contains the shortest native build and C example. Detailed
-metadata, provenance, revision-feed, and Python examples will be added with
-those public surfaces.
+provenance, revision-feed, and Python examples will be added with those public
+surfaces.
