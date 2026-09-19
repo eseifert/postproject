@@ -25,3 +25,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - CLI project, media, root, inspection, resolution, and explicit confirmation workflows.
 - Machine-readable CLI JSON output and an end-to-end ambiguous relinking test.
 - Additive C ABI transaction, media-import, media-root, and asset-identity operations.
+- C++17 RAII transaction wrapper for atomic imports, media roots, and rollback.

@@ -99,7 +99,9 @@ and manages opaque handles with RAII:
 #include <postproject/postproject.hpp>
 
 auto project = postproject::Project::open("production.pproj");
-auto stable_id = project.id();
+auto tx = project.beginTransaction();
+auto asset_id = tx.importMedia("rushes/A001.mov", "Camera A");
+tx.commit();
 ```
 
 To stage a conventional native package after building the library:

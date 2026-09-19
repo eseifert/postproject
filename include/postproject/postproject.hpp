@@ -92,6 +92,99 @@ inline std::string checked_string(std::string_view value,
 
 } // namespace detail
 
+class Transaction final {
+public:
+  Uuid importMedia(std::string_view path) {
+    return import_media_impl(path, nullptr);
+  }
+
+  Uuid importMedia(std::string_view path, std::string_view display_name) {
+    const std::string name =
+        detail::checked_string(display_name, "display_name");
+    return import_media_impl(path, name.c_str());
+  }
+
+  Uuid addMediaRoot(std::string_view path, std::int32_t priority = 0) {
+    return add_media_root_impl(path, nullptr, priority);
+  }
+
+  Uuid addMediaRoot(std::string_view path, std::string_view label,
+                    std::int32_t priority = 0) {
+    const std::string native_label = detail::checked_string(label, "label");
+    return add_media_root_impl(path, native_label.c_str(), priority);
+  }
+
+  void commit() {
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_commit(transaction_, &error);
+    detail::throw_if_error(status, error);
+  }
+
+  void rollback() {
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_transaction_rollback(transaction_, &error);
+    detail::throw_if_error(status, error);
+  }
+
+  Transaction(const Transaction &) = delete;
+  Transaction &operator=(const Transaction &) = delete;
+
+  Transaction(Transaction &&other) noexcept
+      : transaction_(std::exchange(other.transaction_, nullptr)) {}
+
+  Transaction &operator=(Transaction &&other) noexcept {
+    if (this != &other) {
+      pp_transaction_release(transaction_);
+      transaction_ = std::exchange(other.transaction_, nullptr);
+    }
+    return *this;
+  }
+
+  ~Transaction() { pp_transaction_release(transaction_); }
+
+  [[nodiscard]] explicit operator bool() const noexcept {
+    return transaction_ != nullptr;
+  }
+
+private:
+  friend class Project;
+
+  explicit Transaction(pp_transaction_t *transaction) noexcept
+      : transaction_(transaction) {}
+
+  Uuid import_media_impl(std::string_view path, const char *display_name) {
+    const std::string native_path = detail::checked_string(path, "path");
+    pp_uuid_t value{};
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_import_media(
+        transaction_, native_path.c_str(), display_name, &value, &error);
+    detail::throw_if_error(status, error);
+    return uuid(value);
+  }
+
+  Uuid add_media_root_impl(std::string_view path, const char *label,
+                           std::int32_t priority) {
+    const std::string native_path = detail::checked_string(path, "path");
+    pp_uuid_t value{};
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_add_media_root(
+        transaction_, native_path.c_str(), label, priority, &value, &error);
+    detail::throw_if_error(status, error);
+    return uuid(value);
+  }
+
+  static Uuid uuid(const pp_uuid_t &value) {
+    Uuid::Bytes bytes{};
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+      bytes[index] = value.bytes[index];
+    }
+    return Uuid(bytes);
+  }
+
+  pp_transaction_t *transaction_ = nullptr;
+};
+
 class Project final {
 public:
   static Project create(std::string_view path) {
@@ -141,6 +234,28 @@ public:
       bytes[index] = value.bytes[index];
     }
     return Uuid(bytes);
+  }
+
+  [[nodiscard]] bool containsAsset(const Uuid &asset_id) const {
+    pp_uuid_t value{};
+    for (std::size_t index = 0; index < asset_id.bytes().size(); ++index) {
+      value.bytes[index] = asset_id.bytes()[index];
+    }
+    std::uint8_t exists = 0;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_project_asset_exists(project_, &value, &exists, &error);
+    detail::throw_if_error(status, error);
+    return exists != 0;
+  }
+
+  [[nodiscard]] Transaction beginTransaction() {
+    pp_transaction_t *transaction = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_project_begin_transaction(project_, &transaction, &error);
+    detail::throw_if_error(status, error);
+    return Transaction(transaction);
   }
 
   [[nodiscard]] explicit operator bool() const noexcept {

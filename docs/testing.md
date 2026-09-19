@@ -33,8 +33,9 @@ compares the exported dynamic symbols against `tests/abi/expected-symbols.txt`.
 The C++ package job installs the native library, C and C++ headers, CMake package
 files, and `pkg-config` metadata into a temporary prefix. It then configures a
 separate C++17 CMake project against that prefix, builds with warnings denied,
-and runs lifecycle, identity, move-ownership, and error-propagation checks. The
-consumer configuration and build never invoke Cargo.
+and runs lifecycle, identity, transaction commit/rollback, move-ownership, and
+error-propagation checks. The consumer configuration and build never invokes
+Cargo.
 
 The CLI integration test creates a project, imports media, removes the known
 file, discovers two byte-identical candidates under a configured root, verifies
