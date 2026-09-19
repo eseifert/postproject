@@ -10,6 +10,12 @@ cargo doc --workspace --all-features --no-deps
 cargo deny check
 ```
 
+On Windows, test `postproject-ffi` in a separate Cargo invocation from the rest
+of the workspace. The public CLI executable and native library intentionally
+share the installed name `postproject`, and concurrent MSVC links otherwise race
+to write the same PDB file. CI runs both invocations sequentially, so no test
+coverage is omitted.
+
 Tests use real temporary SQLite databases and filesystems and include relocation
 integration coverage. Future phases add migration fixtures, fuzz targets, and the
 complete multi-asset relocation E2E scenario. Tests must not require network
