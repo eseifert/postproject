@@ -30,7 +30,9 @@ designed C ABI, with a thin C++17 RAII wrapper layered on top.
 
 See [the architecture](docs/architecture.md), [domain model](docs/domain-model.md),
 [benchmark methodology](docs/benchmarks.md), [fuzzing guide](docs/fuzzing.md), and
-[release checklist](docs/releasing.md) for the current design and delivery policy.
+[acceptance report](docs/iteration-one-report.md) for the current design and
+delivery status. See the [release checklist](docs/releasing.md) for publication
+policy.
 See the [roadmap](docs/roadmap.md) for explicitly deferred work.
 
 ## Build

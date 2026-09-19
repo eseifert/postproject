@@ -35,3 +35,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - Structured C and C++ media-resolution results with transactional confirmation.
 - Unambiguous cross-platform CMake metadata with explicit Windows DLL packaging.
 - Backend-neutral, domain-shaped project read and transaction contracts.
+- Iteration-one acceptance report with verification and benchmark summaries.

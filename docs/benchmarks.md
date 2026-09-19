@@ -24,3 +24,21 @@ Criterion reports are local artifacts under `target/criterion` and are not
 committed. Published numbers must record the commit, Rust version, operating
 system, CPU, storage device/filesystem, power policy, and full Criterion command.
 Results are not release gates yet; they exist to make regressions measurable.
+
+## Quick baseline
+
+A smoke baseline captured on 2026-09-19 with `--quick` at commit `ed56372`
+produced these Criterion intervals:
+
+| Workload | Observed interval |
+| --- | ---: |
+| Import and fingerprint 1,000 small files | 70.221–70.524 ms |
+| Open a project containing 10,000 assets | 304.48–313.36 µs |
+| Resolve beneath a root with 3,000 candidates | 10.313–10.366 ms |
+| Commit one prepared import | 247.74–252.96 µs |
+
+The run used Rust 1.98.1 on Linux 7.2.5, an AMD Ryzen 7 4800H, and a Btrfs
+filesystem. Frequency boost was enabled and no power-policy controls were
+applied. Because Criterion quick mode takes few samples and the machine was not
+isolated, these numbers verify benchmark operation and provide an order-of-
+magnitude baseline; they are not release gates or publication-quality claims.

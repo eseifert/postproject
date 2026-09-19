@@ -14,7 +14,7 @@ version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.85"
 authors = ["libpostproject contributors"]
-repository = "https://github.com/libpostproject/libpostproject"
+repository = "https://github.com/eseifert/libpostproject"
 license = "MIT OR Apache-2.0"
 
 [workspace.lints.rust]

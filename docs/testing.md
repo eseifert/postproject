@@ -16,6 +16,9 @@ share the installed name `postproject`, and concurrent MSVC links otherwise race
 to write the same PDB file. CI runs both invocations sequentially, so no test
 coverage is omitted.
 
+A separate locked all-targets compile uses Rust 1.85.0, enforcing the stated
+minimum supported Rust version independently of the stable-toolchain test matrix.
+
 Tests use real temporary SQLite databases and filesystems, a checked-in schema-0
 migration fixture, and the complete multi-asset relocation scenario. Dedicated
 fuzz targets cover project opening, fingerprint input, C strings/errors, and ID
