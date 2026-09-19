@@ -1,9 +1,10 @@
 //! Domain-shaped contracts implemented by persistence backends.
 
 use crate::{
-    Asset, AssetId, ExternalIdentifier, IdentifierScheme, Location, MediaRoot, MetadataAssertion,
+    Asset, AssetId, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot, MetadataAssertion,
     MetadataMatch, MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, Project,
-    Representation, RepresentationId, Result, TransactionId, TransactionState,
+    Representation, RepresentationId, Resource, ResourceId, Result, TransactionId,
+    TransactionState,
 };
 
 /// Read operations required from a project persistence backend.
@@ -30,13 +31,21 @@ pub trait ProjectRead {
     /// decoded safely.
     fn representations(&self, asset_id: AssetId) -> Result<Vec<Representation>>;
 
-    /// Loads every known location belonging to a representation.
+    /// Loads resources used by a representation in structural order.
     ///
     /// # Errors
     ///
     /// Returns a storage-domain error when persisted data cannot be read or
     /// decoded safely.
-    fn locations(&self, representation_id: RepresentationId) -> Result<Vec<Location>>;
+    fn resources(&self, representation_id: RepresentationId) -> Result<Vec<Resource>>;
+
+    /// Loads every known locator belonging to a resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage-domain error when persisted data cannot be read or
+    /// decoded safely.
+    fn locators(&self, resource_id: ResourceId) -> Result<Vec<Locator>>;
 
     /// Loads external identifiers attached to `target` in deterministic order.
     ///
@@ -103,13 +112,13 @@ pub trait ProjectStoreTransaction {
     /// rejects the aggregate.
     fn import_original(&mut self, import: &OriginalMediaImport) -> Result<()>;
 
-    /// Stages an explicitly confirmed representation location.
+    /// Stages an explicitly confirmed resource locator.
     ///
     /// # Errors
     ///
     /// Returns a domain error when the transaction is closed or persistence
-    /// rejects the location.
-    fn add_location(&mut self, location: &Location) -> Result<()>;
+    /// rejects the locator.
+    fn add_locator(&mut self, locator: &Locator) -> Result<()>;
 
     /// Stages a configured resolver search root.
     ///

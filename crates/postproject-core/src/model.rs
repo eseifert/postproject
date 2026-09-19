@@ -1,10 +1,13 @@
 //! Core media identity and location value types.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::BTreeSet,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use crate::{
-    AssetId, Error, ErrorKind, LocationId, MediaRootId, ProjectId, RepresentationId, Result,
-    uri::normalize_uri,
+    AssetId, ContentStructure, Error, ErrorKind, Locator, MediaRootId, ProjectId,
+    RepresentationFingerprint, RepresentationId, Resource, Result, uri::normalize_uri,
 };
 
 /// A UTC instant represented as microseconds since the Unix epoch.
@@ -278,26 +281,26 @@ pub struct Representation {
     id: RepresentationId,
     asset_id: AssetId,
     kind: RepresentationKind,
-    fingerprint: Option<Fingerprint>,
-    file_facts: Option<FileFacts>,
+    content_structure: ContentStructure,
+    fingerprints: Vec<RepresentationFingerprint>,
 }
 
 impl Representation {
     /// Creates a representation value.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         id: RepresentationId,
         asset_id: AssetId,
         kind: RepresentationKind,
-        fingerprint: Option<Fingerprint>,
-        file_facts: Option<FileFacts>,
+        content_structure: ContentStructure,
+        fingerprints: Vec<RepresentationFingerprint>,
     ) -> Self {
         Self {
             id,
             asset_id,
             kind,
-            fingerprint,
-            file_facts,
+            content_structure,
+            fingerprints,
         }
     }
 
@@ -319,16 +322,16 @@ impl Representation {
         self.kind
     }
 
-    /// Returns stored content identity evidence, when available.
+    /// Returns how storage resources realize this representation.
     #[must_use]
-    pub const fn fingerprint(&self) -> Option<&Fingerprint> {
-        self.fingerprint.as_ref()
+    pub const fn content_structure(&self) -> &ContentStructure {
+        &self.content_structure
     }
 
-    /// Returns cheap stored file facts, when available.
+    /// Returns structure-aware identity evidence for this representation.
     #[must_use]
-    pub const fn file_facts(&self) -> Option<FileFacts> {
-        self.file_facts
+    pub fn fingerprints(&self) -> &[RepresentationFingerprint] {
+        &self.fingerprints
     }
 }
 
@@ -337,7 +340,8 @@ impl Representation {
 pub struct OriginalMediaImport {
     asset: Asset,
     representation: Representation,
-    location: Location,
+    resources: Vec<Resource>,
+    locators: Vec<Locator>,
 }
 
 impl OriginalMediaImport {
@@ -345,9 +349,15 @@ impl OriginalMediaImport {
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::InvalidArgument`] if the representation is not an
-    /// original, does not belong to `asset`, or does not own `location`.
-    pub fn new(asset: Asset, representation: Representation, location: Location) -> Result<Self> {
+    /// Returns [`ErrorKind::InvalidArgument`] if ownership is inconsistent, a
+    /// referenced resource is absent or duplicated, an extra resource is
+    /// supplied, or any resource lacks a locator.
+    pub fn new(
+        asset: Asset,
+        representation: Representation,
+        resources: Vec<Resource>,
+        locators: Vec<Locator>,
+    ) -> Result<Self> {
         if representation.asset_id() != asset.id() {
             return Err(Error::new(
                 ErrorKind::InvalidArgument,
@@ -360,16 +370,37 @@ impl OriginalMediaImport {
                 "initial import representation must be original media",
             ));
         }
-        if location.representation_id() != representation.id() {
+        let expected: BTreeSet<_> = representation
+            .content_structure()
+            .resource_ids()
+            .into_iter()
+            .collect();
+        let supplied: BTreeSet<_> = resources.iter().map(Resource::id).collect();
+        if expected != supplied || supplied.len() != resources.len() {
             return Err(Error::new(
                 ErrorKind::InvalidArgument,
-                "import location does not belong to its representation",
+                "import resources do not exactly match the content structure",
+            ));
+        }
+        if locators
+            .iter()
+            .any(|locator| !supplied.contains(&locator.resource_id()))
+            || supplied.iter().any(|resource_id| {
+                !locators
+                    .iter()
+                    .any(|item| item.resource_id() == *resource_id)
+            })
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "every import resource must own at least one supplied locator",
             ));
         }
         Ok(Self {
             asset,
             representation,
-            location,
+            resources,
+            locators,
         })
     }
 
@@ -385,92 +416,27 @@ impl OriginalMediaImport {
         &self.representation
     }
 
-    /// Returns the original physical location.
+    /// Returns the storage resources realizing the representation.
     #[must_use]
-    pub const fn location(&self) -> &Location {
-        &self.location
+    pub fn resources(&self) -> &[Resource] {
+        &self.resources
+    }
+
+    /// Returns the known access routes for the imported resources.
+    #[must_use]
+    pub fn locators(&self) -> &[Locator] {
+        &self.locators
     }
 
     /// Splits the aggregate into persistable domain values.
     #[must_use]
-    pub fn into_parts(self) -> (Asset, Representation, Location) {
-        (self.asset, self.representation, self.location)
-    }
-}
-
-/// The last observed availability of a physical location.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[non_exhaustive]
-pub enum LocationAvailability {
-    /// Availability has not been checked.
-    Unknown,
-    /// The location existed when last checked.
-    Online,
-    /// The location did not exist when last checked.
-    Offline,
-}
-
-/// A URI identifying one possible physical location of a representation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Location {
-    id: LocationId,
-    representation_id: RepresentationId,
-    uri: String,
-    last_seen: Option<Timestamp>,
-    availability: LocationAvailability,
-}
-
-impl Location {
-    /// Creates a location with a syntactically valid absolute URI.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ErrorKind::InvalidArgument`] when `uri` is invalid or relative.
-    pub fn new(
-        id: LocationId,
-        representation_id: RepresentationId,
-        uri: impl Into<String>,
-        last_seen: Option<Timestamp>,
-        availability: LocationAvailability,
-    ) -> Result<Self> {
-        let uri = normalize_uri(uri, "location")?;
-        Ok(Self {
-            id,
-            representation_id,
-            uri,
-            last_seen,
-            availability,
-        })
-    }
-
-    /// Returns the location's stable identity.
-    #[must_use]
-    pub const fn id(&self) -> LocationId {
-        self.id
-    }
-
-    /// Returns the represented media identity.
-    #[must_use]
-    pub const fn representation_id(&self) -> RepresentationId {
-        self.representation_id
-    }
-
-    /// Returns the UTF-8 URI.
-    #[must_use]
-    pub fn uri(&self) -> &str {
-        &self.uri
-    }
-
-    /// Returns when the location was last observed online.
-    #[must_use]
-    pub const fn last_seen(&self) -> Option<Timestamp> {
-        self.last_seen
-    }
-
-    /// Returns its last observed availability.
-    #[must_use]
-    pub const fn availability(&self) -> LocationAvailability {
-        self.availability
+    pub fn into_parts(self) -> (Asset, Representation, Vec<Resource>, Vec<Locator>) {
+        (
+            self.asset,
+            self.representation,
+            self.resources,
+            self.locators,
+        )
     }
 }
 
@@ -541,22 +507,12 @@ impl MediaRoot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{LocatorAvailability, LocatorId, ResourceId};
 
     #[test]
-    fn rejects_empty_location_and_root_uris() {
-        let location = Location::new(
-            LocationId::new(),
-            RepresentationId::new(),
-            "",
-            None,
-            LocationAvailability::Unknown,
-        );
+    fn rejects_empty_root_uris() {
         let root = MediaRoot::new(MediaRootId::new(), "", None, 0, true);
 
-        assert_eq!(
-            location.expect_err("empty URI must fail").kind(),
-            ErrorKind::InvalidArgument
-        );
         assert_eq!(
             root.expect_err("empty URI must fail").kind(),
             ErrorKind::InvalidArgument
@@ -581,9 +537,9 @@ mod tests {
 
     #[test]
     fn fingerprint_validation_preserves_extensibility() {
-        let fingerprint = Fingerprint::new("pp-sampled-blake3", 1, vec![1, 2, 3])
-            .expect("algorithm label is valid");
-        assert_eq!(fingerprint.algorithm(), "pp-sampled-blake3");
+        let fingerprint =
+            Fingerprint::new("blake3", 1, vec![1, 2, 3]).expect("algorithm label is valid");
+        assert_eq!(fingerprint.algorithm(), "blake3");
         assert_eq!(fingerprint.version(), 1);
         assert_eq!(fingerprint.value(), [1, 2, 3]);
 
@@ -594,24 +550,26 @@ mod tests {
     #[test]
     fn import_aggregate_enforces_ownership() {
         let asset = Asset::new(AssetId::new(), Timestamp::from_unix_micros(0), None, None);
+        let resource_id = ResourceId::new();
         let representation = Representation::new(
             RepresentationId::new(),
             AssetId::new(),
             RepresentationKind::Original,
-            None,
-            None,
+            ContentStructure::single_resource(resource_id),
+            Vec::new(),
         );
-        let location = Location::new(
-            LocationId::new(),
-            representation.id(),
+        let resource = Resource::new(resource_id, Vec::new(), None);
+        let locator = Locator::new(
+            LocatorId::new(),
+            resource_id,
             "file:///media.mov",
             None,
-            LocationAvailability::Online,
+            LocatorAvailability::Online,
         )
-        .expect("valid location");
+        .expect("valid locator");
 
         assert_eq!(
-            OriginalMediaImport::new(asset, representation, location)
+            OriginalMediaImport::new(asset, representation, vec![resource], vec![locator])
                 .expect_err("mismatched ownership must fail")
                 .kind(),
             ErrorKind::InvalidArgument

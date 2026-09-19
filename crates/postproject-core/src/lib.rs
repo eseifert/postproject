@@ -25,8 +25,8 @@ pub use content::{
 };
 pub use error::{Error, ErrorKind, Result};
 pub use id::{
-    ActivityId, AssetId, LocationId, LocatorId, MediaRootId, ObjectRef, ProjectId,
-    RepresentationId, ResourceId, RevisionId, TransactionId,
+    ActivityId, AssetId, LocatorId, MediaRootId, ObjectRef, ProjectId, RepresentationId,
+    ResourceId, RevisionId, TransactionId,
 };
 pub use identifier::{
     ExternalIdentifier, IdentifierScheme, MAX_IDENTIFIER_QUALIFIER_BYTES,
@@ -40,8 +40,8 @@ pub use metadata::{
     MetadataValue, MetadataValueKind, PropertyId, RationalValue, VocabularyId,
 };
 pub use model::{
-    Asset, FileFacts, Fingerprint, Location, LocationAvailability, MediaRoot, OriginalMediaImport,
-    Project, Representation, RepresentationKind, Timestamp,
+    Asset, FileFacts, Fingerprint, MediaRoot, OriginalMediaImport, Project, Representation,
+    RepresentationKind, Timestamp,
 };
 pub use resolution::{
     Confidence, EvidenceKind, Resolution, ResolutionCandidate, ResolutionEvidence, ResolutionState,

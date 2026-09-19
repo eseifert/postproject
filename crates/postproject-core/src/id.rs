@@ -86,10 +86,6 @@ strong_id!(
     LocatorId
 );
 strong_id!(
-    /// Stable identity of a physical media location record.
-    LocationId
-);
-strong_id!(
     /// Stable identity of a configured resolver search root.
     MediaRootId
 );
