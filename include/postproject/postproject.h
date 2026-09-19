@@ -181,6 +181,19 @@ PP_API pp_error_code_t pp_metadata_value_get_bytes(
 PP_API pp_error_code_t pp_metadata_value_get_rational(
     const pp_metadata_value_t *value, int64_t *out_numerator,
     uint64_t *out_denominator, pp_error_t **out_error);
+PP_API uint64_t
+pp_metadata_value_list_count(const pp_metadata_value_t *value);
+PP_API pp_error_code_t pp_metadata_value_list_get(
+    const pp_metadata_value_t *value, uint64_t index,
+    const pp_metadata_value_t **out_item, pp_error_t **out_error);
+PP_API uint64_t
+pp_metadata_value_struct_count(const pp_metadata_value_t *value);
+PP_API pp_error_code_t pp_metadata_value_struct_get(
+    const pp_metadata_value_t *value, uint64_t index, const char **out_name,
+    const pp_metadata_value_t **out_field_value, pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_value_get_reference(
+    const pp_metadata_value_t *value, pp_object_ref_t *out_reference,
+    pp_error_t **out_error);
 /* Resolution is read-only. Borrowed candidate URI and evidence-detail strings
  * remain valid until pp_resolution_set_release(). */
 PP_API pp_error_code_t pp_project_resolve_asset(

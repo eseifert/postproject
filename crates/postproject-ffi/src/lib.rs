@@ -4,10 +4,6 @@
 //! numeric codes plus owned error objects. Native consumers should include the
 //! shipped `postproject.h` rather than depending on Rust declarations.
 
-#[allow(
-    dead_code,
-    reason = "metadata projection is exposed by the following focused ABI changes"
-)]
 mod metadata;
 
 use std::{
@@ -938,6 +934,124 @@ pub unsafe extern "C" fn pp_metadata_value_get_rational(
                 }
                 _ => Err(metadata_type_error("rational")),
             }
+        })
+    }
+}
+
+/// Returns the number of list items. Null or a non-list value returns zero.
+///
+/// # Safety
+///
+/// `value` must be null or borrowed from a live metadata result set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_list_count(value: *const PpMetadataValue) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null value is live by the caller contract.
+        unsafe { value.as_ref() }.map_or(0, |value| match &value.inner {
+            AbiMetadataValue::List(items) => u64::try_from(items.len()).unwrap_or(u64::MAX),
+            _ => 0,
+        })
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one borrowed child from a list value.
+///
+/// # Safety
+///
+/// `value` must be borrowed and live. `out_item` must be writable and
+/// `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_list_get(
+    value: *const PpMetadataValue,
+    index: u64,
+    out_item: *mut *const PpMetadataValue,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_const_output(out_item);
+        ffi_call(out_error, || {
+            require_output(out_item, "out_item")?;
+            match &metadata_value(value)?.inner {
+                AbiMetadataValue::List(items) => {
+                    out_item.write(ptr::from_ref(item_at(items, index, "metadata list item")?));
+                    Ok(())
+                }
+                _ => Err(metadata_type_error("list")),
+            }
+        })
+    }
+}
+
+/// Returns the number of fields. Null or a non-structure value returns zero.
+///
+/// # Safety
+///
+/// `value` must be null or borrowed from a live metadata result set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_struct_count(value: *const PpMetadataValue) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null value is live by the caller contract.
+        unsafe { value.as_ref() }.map_or(0, |value| match &value.inner {
+            AbiMetadataValue::Struct(fields) => u64::try_from(fields.len()).unwrap_or(u64::MAX),
+            _ => 0,
+        })
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one borrowed name/value pair from a structured value.
+///
+/// # Safety
+///
+/// `value` must be borrowed and live. Outputs must be writable and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_struct_get(
+    value: *const PpMetadataValue,
+    index: u64,
+    out_name: *mut *const c_char,
+    out_field_value: *mut *const PpMetadataValue,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_const_output(out_name);
+        initialize_const_output(out_field_value);
+        ffi_call(out_error, || {
+            require_output(out_name, "out_name")?;
+            require_output(out_field_value, "out_field_value")?;
+            match &metadata_value(value)?.inner {
+                AbiMetadataValue::Struct(fields) => {
+                    let field = item_at(fields, index, "metadata structure field")?;
+                    out_name.write(field.name.as_ptr());
+                    out_field_value.write(ptr::from_ref(&field.value));
+                    Ok(())
+                }
+                _ => Err(metadata_type_error("structure")),
+            }
+        })
+    }
+}
+
+/// Reads a typed `PostProject` object reference.
+///
+/// # Safety
+///
+/// `value` must be borrowed and live. `out_reference` must be writable and
+/// `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_get_reference(
+    value: *const PpMetadataValue,
+    out_reference: *mut PpObjectRef,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_object_ref(out_reference);
+        ffi_call(out_error, || match &metadata_value(value)?.inner {
+            AbiMetadataValue::Reference(reference) => {
+                write_copy(out_reference, *reference, "out_reference")
+            }
+            _ => Err(metadata_type_error("reference")),
         })
     }
 }
@@ -2066,6 +2180,9 @@ fn panic_message(payload: &(dyn Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use postproject_core::{
+        MetadataAssertion, MetadataField, MetadataProperty, PropertyId, VocabularyId,
+    };
 
     #[test]
     fn creates_reads_and_releases_project_handle() {
@@ -2219,5 +2336,105 @@ mod tests {
         }
         // SAFETY: Null is explicitly accepted by the count accessor.
         assert_eq!(unsafe { pp_resolution_set_count(ptr::null()) }, 0);
+    }
+
+    #[test]
+    fn metadata_accessors_traverse_recursive_values() {
+        let asset = ObjectRef::Asset(AssetId::from_bytes([7; 16]));
+        let value = MetadataValue::structure(vec![
+            MetadataField::new(
+                PropertyId::new("labels").unwrap(),
+                MetadataValue::list(vec![
+                    MetadataValue::language_string("Interview", "en-US").unwrap(),
+                ])
+                .unwrap(),
+            ),
+            MetadataField::new(
+                PropertyId::new("source").unwrap(),
+                MetadataValue::reference(asset),
+            ),
+        ])
+        .unwrap();
+        let assertion = MetadataAssertion::new(
+            MetadataProperty::new(
+                VocabularyId::new("com.example.metadata").unwrap(),
+                PropertyId::new("contact").unwrap(),
+            ),
+            value,
+        );
+        let metadata = Box::into_raw(Box::new(
+            PpMetadataSet::from_assertions(asset, &[assertion]).unwrap(),
+        ));
+        let mut target = PpObjectRef {
+            kind: 0,
+            id: PpUuid { bytes: [0; 16] },
+        };
+        let mut vocabulary = ptr::null();
+        let mut property = ptr::null();
+        let mut root = ptr::null();
+        let mut error = ptr::null_mut();
+
+        // SAFETY: The result set is live and every output is writable.
+        assert_eq!(
+            unsafe {
+                pp_metadata_set_get(
+                    metadata,
+                    0,
+                    &raw mut target,
+                    &raw mut vocabulary,
+                    &raw mut property,
+                    &raw mut root,
+                    &raw mut error,
+                )
+            },
+            PP_OK
+        );
+        assert_eq!(target.kind, PP_OBJECT_ASSET);
+        assert_eq!(
+            unsafe { pp_metadata_value_kind(root) },
+            metadata::PP_METADATA_STRUCT
+        );
+        assert_eq!(unsafe { pp_metadata_value_struct_count(root) }, 2);
+
+        let mut field_name = ptr::null();
+        let mut list = ptr::null();
+        assert_eq!(
+            unsafe {
+                pp_metadata_value_struct_get(
+                    root,
+                    0,
+                    &raw mut field_name,
+                    &raw mut list,
+                    &raw mut error,
+                )
+            },
+            PP_OK
+        );
+        assert_eq!(unsafe { CStr::from_ptr(field_name) }.to_bytes(), b"labels");
+        assert_eq!(unsafe { pp_metadata_value_list_count(list) }, 1);
+        let mut text_value = ptr::null();
+        assert_eq!(
+            unsafe { pp_metadata_value_list_get(list, 0, &raw mut text_value, &raw mut error) },
+            PP_OK
+        );
+        let mut text = ptr::null();
+        let mut language = ptr::null();
+        assert_eq!(
+            unsafe {
+                pp_metadata_value_get_string(
+                    text_value,
+                    &raw mut text,
+                    &raw mut language,
+                    &raw mut error,
+                )
+            },
+            PP_OK
+        );
+        assert_eq!(unsafe { CStr::from_ptr(text) }.to_bytes(), b"Interview");
+        assert_eq!(unsafe { CStr::from_ptr(language) }.to_bytes(), b"en-US");
+
+        // SAFETY: The live set is released after all borrowed pointers are done.
+        unsafe { pp_metadata_set_release(metadata) };
+        assert!(error.is_null());
     }
 }
