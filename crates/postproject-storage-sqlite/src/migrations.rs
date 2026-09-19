@@ -4,23 +4,17 @@ use postproject_core::{Error, ErrorKind, Result, Timestamp};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 /// The newest schema understood by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 3;
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 struct Migration {
     version: u32,
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[
-    Migration {
-        version: 2,
-        sql: include_str!("migrations/002_initial.sql"),
-    },
-    Migration {
-        version: 3,
-        sql: include_str!("migrations/003_metadata.sql"),
-    },
-];
+const MIGRATIONS: &[Migration] = &[Migration {
+    version: 1,
+    sql: include_str!("migrations/001_initial.sql"),
+}];
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<()> {
     let current = schema_version(connection)?;
@@ -30,16 +24,6 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<()> {
             format!(
                 "project schema version {current} is newer than supported version \
                  {CURRENT_SCHEMA_VERSION}"
-            ),
-        ));
-    }
-
-    if current != 0 && current < 2 {
-        return Err(Error::new(
-            ErrorKind::Unsupported,
-            format!(
-                "project schema version {current} is an unsupported pre-release format; \
-                 create a new project with schema version {CURRENT_SCHEMA_VERSION}"
             ),
         ));
     }
@@ -127,13 +111,18 @@ mod tests {
             .expect("query migration history")
             .collect::<std::result::Result<_, _>>()
             .expect("read migration history");
-        assert_eq!(applied, [2, 3]);
+        assert_eq!(applied, [1]);
         for table in [
             "projects",
             "assets",
             "representations",
-            "fingerprints",
-            "locations",
+            "resources",
+            "representation_resources",
+            "image_sequences",
+            "image_sequence_missing_frames",
+            "resource_fingerprints",
+            "representation_fingerprints",
+            "locators",
             "media_roots",
             "external_identifiers",
             "metadata_assertions",
@@ -147,47 +136,6 @@ mod tests {
                 .expect("query migrated table");
             assert_eq!(count, 1, "missing migrated table {table}");
         }
-    }
-
-    #[test]
-    fn upgrades_supported_schema_two_projects() {
-        let mut connection = Connection::open_in_memory().expect("open in-memory database");
-        apply_migration(&mut connection, &MIGRATIONS[0]).expect("apply schema two");
-        connection
-            .execute(
-                "INSERT INTO projects (
-                    singleton, id, schema_version, created_at_micros, display_name
-                 ) VALUES (1, zeroblob(16), 2, 0, NULL)",
-                [],
-            )
-            .expect("insert schema-two project");
-
-        migrate(&mut connection).expect("upgrade schema-two project");
-
-        assert_eq!(schema_version(&connection).unwrap(), 3);
-        assert_eq!(
-            connection
-                .query_row(
-                    "SELECT schema_version FROM projects WHERE singleton = 1",
-                    [],
-                    |row| row.get::<_, u32>(0),
-                )
-                .unwrap(),
-            3
-        );
-    }
-
-    #[test]
-    fn obsolete_development_schema_is_rejected_without_modification() {
-        let mut connection = Connection::open_in_memory().expect("open in-memory database");
-        connection
-            .pragma_update(None, "user_version", 1)
-            .expect("set obsolete schema version");
-
-        let error = migrate(&mut connection).expect_err("obsolete schema must be rejected");
-
-        assert_eq!(error.kind(), ErrorKind::Unsupported);
-        assert_eq!(schema_version(&connection).expect("read version"), 1);
     }
 
     #[test]
@@ -210,7 +158,7 @@ mod tests {
     fn failed_migration_rolls_back_completely() {
         let mut connection = Connection::open_in_memory().expect("open in-memory database");
         let invalid = Migration {
-            version: 2,
+            version: 1,
             sql: "CREATE TABLE partial (value INTEGER); INVALID SQL;",
         };
 
