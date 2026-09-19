@@ -776,6 +776,37 @@ pub unsafe extern "C" fn pp_metadata_value_get_u64(
     }
 }
 
+/// Reads an exact decimal coefficient string and fractional scale.
+///
+/// # Safety
+///
+/// `value` must be borrowed and live. Outputs must be writable and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_get_decimal(
+    value: *const PpMetadataValue,
+    out_coefficient: *mut *const c_char,
+    out_scale: *mut u32,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_const_output(out_coefficient);
+        initialize_value(out_scale, 0);
+        ffi_call(out_error, || {
+            require_output(out_coefficient, "out_coefficient")?;
+            require_output(out_scale, "out_scale")?;
+            match &metadata_value(value)?.inner {
+                AbiMetadataValue::Decimal { coefficient, scale } => {
+                    out_coefficient.write(coefficient.as_ptr());
+                    out_scale.write(*scale);
+                    Ok(())
+                }
+                _ => Err(metadata_type_error("decimal")),
+            }
+        })
+    }
+}
+
 /// Reads a boolean as zero or one.
 ///
 /// # Safety
@@ -872,6 +903,40 @@ pub unsafe extern "C" fn pp_metadata_value_get_bytes(
                     Ok(())
                 }
                 _ => Err(metadata_type_error("bytes")),
+            }
+        })
+    }
+}
+
+/// Reads an exact rational numerator and positive denominator.
+///
+/// # Safety
+///
+/// `value` must be borrowed and live. Outputs must be writable and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_get_rational(
+    value: *const PpMetadataValue,
+    out_numerator: *mut i64,
+    out_denominator: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_value(out_numerator, 0);
+        initialize_value(out_denominator, 0);
+        ffi_call(out_error, || {
+            require_output(out_numerator, "out_numerator")?;
+            require_output(out_denominator, "out_denominator")?;
+            match &metadata_value(value)?.inner {
+                AbiMetadataValue::Rational {
+                    numerator,
+                    denominator,
+                } => {
+                    out_numerator.write(*numerator);
+                    out_denominator.write(*denominator);
+                    Ok(())
+                }
+                _ => Err(metadata_type_error("rational")),
             }
         })
     }

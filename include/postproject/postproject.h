@@ -162,6 +162,10 @@ PP_API pp_error_code_t pp_metadata_value_get_i64(
 PP_API pp_error_code_t pp_metadata_value_get_u64(
     const pp_metadata_value_t *value, uint64_t *out_value,
     pp_error_t **out_error);
+/* Decimal coefficient is exact base-ten text borrowed from the result set. */
+PP_API pp_error_code_t pp_metadata_value_get_decimal(
+    const pp_metadata_value_t *value, const char **out_coefficient,
+    uint32_t *out_scale, pp_error_t **out_error);
 PP_API pp_error_code_t pp_metadata_value_get_bool(
     const pp_metadata_value_t *value, uint8_t *out_value,
     pp_error_t **out_error);
@@ -174,6 +178,9 @@ PP_API pp_error_code_t pp_metadata_value_get_uri(
 PP_API pp_error_code_t pp_metadata_value_get_bytes(
     const pp_metadata_value_t *value, const uint8_t **out_bytes,
     uint64_t *out_length, pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_value_get_rational(
+    const pp_metadata_value_t *value, int64_t *out_numerator,
+    uint64_t *out_denominator, pp_error_t **out_error);
 /* Resolution is read-only. Borrowed candidate URI and evidence-detail strings
  * remain valid until pp_resolution_set_release(). */
 PP_API pp_error_code_t pp_project_resolve_asset(
