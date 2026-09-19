@@ -1,5 +1,7 @@
 //! Structure and membership values for compound representations.
 
+use std::collections::BTreeSet;
+
 use crate::{Error, ErrorKind, RationalRate, ResourceId, Result};
 
 /// Maximum encoded length of an extensible resource-role identifier.
@@ -10,6 +12,8 @@ pub const MAX_SEQUENCE_PATTERN_BYTES: usize = 1_024;
 pub const MAX_FRAME_PADDING: u8 = 32;
 /// Maximum number of sparse frame exceptions stored in one sequence descriptor.
 pub const MAX_SEQUENCE_EXCEPTIONS: usize = 100_000;
+/// Maximum number of materialized resource members in one content structure.
+pub const MAX_CONTENT_MEMBERS: usize = 100_000;
 
 /// An inclusive, regularly stepped frame domain.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -304,6 +308,136 @@ impl ResourceMember {
     }
 }
 
+/// The structural shape used to realize a representation.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum ContentStructureKind {
+    /// One concrete resource.
+    SingleResource,
+    /// One compact patterned image-sequence resource.
+    ImageSequence,
+    /// Several required resources consumed in stable order.
+    OrderedParts,
+    /// A role-bearing collection of required and optional resources.
+    Package,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ContentStructureData {
+    SingleResource(ResourceId),
+    ImageSequence(ImageSequenceDescriptor),
+    OrderedParts(Vec<ResourceMember>),
+    Package(Vec<ResourceMember>),
+}
+
+/// A validated description of how resources realize one representation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentStructure(ContentStructureData);
+
+impl ContentStructure {
+    /// Creates a representation backed by one required resource.
+    #[must_use]
+    pub const fn single_resource(resource_id: ResourceId) -> Self {
+        Self(ContentStructureData::SingleResource(resource_id))
+    }
+
+    /// Creates a representation backed by one compact image sequence.
+    #[must_use]
+    pub const fn image_sequence(descriptor: ImageSequenceDescriptor) -> Self {
+        Self(ContentStructureData::ImageSequence(descriptor))
+    }
+
+    /// Creates an ordered span whose members are all required.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] when the membership is empty,
+    /// unbounded, duplicated, or contains an optional member.
+    pub fn ordered_parts(members: Vec<ResourceMember>) -> Result<Self> {
+        validate_members(&members)?;
+        if members.iter().any(|member| !member.is_required()) {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "ordered content parts must all be required",
+            ));
+        }
+        Ok(Self(ContentStructureData::OrderedParts(members)))
+    }
+
+    /// Creates a package with at least one required member.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] when the membership is empty,
+    /// unbounded, duplicated, or has no required member.
+    pub fn package(members: Vec<ResourceMember>) -> Result<Self> {
+        validate_members(&members)?;
+        if !members.iter().any(ResourceMember::is_required) {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "a content package must have at least one required member",
+            ));
+        }
+        Ok(Self(ContentStructureData::Package(members)))
+    }
+
+    /// Returns the structure discriminator.
+    #[must_use]
+    pub const fn kind(&self) -> ContentStructureKind {
+        match self.0 {
+            ContentStructureData::SingleResource(_) => ContentStructureKind::SingleResource,
+            ContentStructureData::ImageSequence(_) => ContentStructureKind::ImageSequence,
+            ContentStructureData::OrderedParts(_) => ContentStructureKind::OrderedParts,
+            ContentStructureData::Package(_) => ContentStructureKind::Package,
+        }
+    }
+
+    /// Returns the resource when this is a single-resource structure.
+    #[must_use]
+    pub const fn single_resource_id(&self) -> Option<ResourceId> {
+        match self.0 {
+            ContentStructureData::SingleResource(resource_id) => Some(resource_id),
+            _ => None,
+        }
+    }
+
+    /// Returns the descriptor when this is an image sequence.
+    #[must_use]
+    pub const fn image_sequence_descriptor(&self) -> Option<&ImageSequenceDescriptor> {
+        match &self.0 {
+            ContentStructureData::ImageSequence(descriptor) => Some(descriptor),
+            _ => None,
+        }
+    }
+
+    /// Returns members for an ordered or package structure.
+    #[must_use]
+    pub fn members(&self) -> Option<&[ResourceMember]> {
+        match &self.0 {
+            ContentStructureData::OrderedParts(members)
+            | ContentStructureData::Package(members) => Some(members),
+            _ => None,
+        }
+    }
+}
+
+fn validate_members(members: &[ResourceMember]) -> Result<()> {
+    if members.is_empty() || members.len() > MAX_CONTENT_MEMBERS {
+        return Err(Error::new(
+            ErrorKind::InvalidArgument,
+            format!("content structure must have 1-{MAX_CONTENT_MEMBERS} members"),
+        ));
+    }
+    let unique: BTreeSet<_> = members.iter().map(ResourceMember::resource_id).collect();
+    if unique.len() != members.len() {
+        return Err(Error::new(
+            ErrorKind::InvalidArgument,
+            "content structure contains a duplicate resource",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,5 +514,24 @@ mod tests {
         assert_eq!(member.resource_id(), resource_id);
         assert_eq!(member.role().as_str(), "postproject:thumbnail");
         assert!(!member.is_required());
+    }
+
+    #[test]
+    fn compound_structures_enforce_membership_invariants() {
+        let essence = ResourceRole::new("postproject:essence").expect("valid role");
+        let thumbnail = ResourceRole::new("postproject:thumbnail").expect("valid role");
+        let required = ResourceMember::new(ResourceId::new(), essence, true);
+        let optional = ResourceMember::new(ResourceId::new(), thumbnail, false);
+
+        let ordered =
+            ContentStructure::ordered_parts(vec![required.clone()]).expect("valid ordered parts");
+        let package = ContentStructure::package(vec![required.clone(), optional.clone()])
+            .expect("valid package");
+
+        assert_eq!(ordered.kind(), ContentStructureKind::OrderedParts);
+        assert_eq!(package.members().expect("package members").len(), 2);
+        assert!(ContentStructure::ordered_parts(vec![optional.clone()]).is_err());
+        assert!(ContentStructure::package(vec![optional]).is_err());
+        assert!(ContentStructure::package(vec![required.clone(), required]).is_err());
     }
 }
