@@ -29,7 +29,8 @@ Rust is an implementation detail. Native consumers will use an intentionally
 designed C ABI, with a thin C++17 RAII wrapper layered on top.
 
 See [the architecture](docs/architecture.md), [domain model](docs/domain-model.md),
-and [roadmap](docs/roadmap.md) for the current design.
+[benchmark methodology](docs/benchmarks.md), and [roadmap](docs/roadmap.md) for
+the current design.
 
 ## Build
 

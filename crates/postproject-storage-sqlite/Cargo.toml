@@ -14,8 +14,13 @@ postproject-core = { version = "0.1.0-alpha.1", path = "../postproject-core" }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
 
 [dev-dependencies]
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
 postproject-media = { version = "0.1.0-alpha.1", path = "../postproject-media" }
 tempfile = "3"
+
+[[bench]]
+name = "iteration_one"
+harness = false
 
 [lints]
 workspace = true
