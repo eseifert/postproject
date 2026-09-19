@@ -7,7 +7,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 
-use postproject_core::{Error, ErrorKind, FileFacts, Fingerprint, Result, Timestamp};
+use postproject_core::{Error, ErrorKind, FileFacts, ResourceFingerprint, Result, Timestamp};
 
 /// Files at or below this size receive a complete content hash.
 pub const FULL_HASH_LIMIT_BYTES: u64 = 1024 * 1024;
@@ -35,7 +35,7 @@ pub enum FingerprintCoverage {
 /// A calculated fingerprint together with cheap facts and coverage evidence.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FingerprintReport {
-    fingerprint: Fingerprint,
+    fingerprint: ResourceFingerprint,
     facts: FileFacts,
     coverage: FingerprintCoverage,
 }
@@ -43,7 +43,7 @@ pub struct FingerprintReport {
 impl FingerprintReport {
     /// Returns the versioned content fingerprint.
     #[must_use]
-    pub const fn fingerprint(&self) -> &Fingerprint {
+    pub const fn fingerprint(&self) -> &ResourceFingerprint {
         &self.fingerprint
     }
 
@@ -61,7 +61,7 @@ impl FingerprintReport {
 
     /// Splits the report into persistable domain values.
     #[must_use]
-    pub fn into_parts(self) -> (Fingerprint, FileFacts, FingerprintCoverage) {
+    pub fn into_parts(self) -> (ResourceFingerprint, FileFacts, FingerprintCoverage) {
         (self.fingerprint, self.facts, self.coverage)
     }
 }
@@ -124,7 +124,8 @@ pub fn fingerprint_file(path: impl AsRef<Path>) -> Result<FingerprintReport> {
         ));
     }
 
-    let fingerprint = Fingerprint::new(algorithm, ALGORITHM_VERSION, digest.as_bytes().to_vec())?;
+    let fingerprint =
+        ResourceFingerprint::new(algorithm, ALGORITHM_VERSION, digest.as_bytes().to_vec())?;
     Ok(FingerprintReport {
         fingerprint,
         facts: FileFacts::new(size, modified_timestamp(&before)),
@@ -240,7 +241,7 @@ mod tests {
         }
     }
 
-    fn fingerprint_bytes(bytes: &[u8]) -> Fingerprint {
+    fn fingerprint_bytes(bytes: &[u8]) -> ResourceFingerprint {
         let mut file = NamedTempFile::new().expect("create file");
         file.write_all(bytes).expect("write file");
         let report = fingerprint_file(file.path()).expect("fingerprint file");

@@ -3,8 +3,9 @@
 use std::{fs, path::Path};
 
 use postproject_core::{
-    Asset, AssetId, Location, LocationAvailability, LocationId, MediaRoot, MediaRootId,
-    OriginalMediaImport, Representation, RepresentationId, RepresentationKind, Result, Timestamp,
+    Asset, AssetId, ContentStructure, Locator, LocatorAvailability, LocatorId, MediaRoot,
+    MediaRootId, OriginalMediaImport, Representation, RepresentationId, RepresentationKind,
+    Resource, ResourceId, Result, Timestamp,
 };
 
 use crate::{canonical_file_uri, fingerprint_file};
@@ -29,21 +30,23 @@ pub fn prepare_original_media(
     let now = Timestamp::now()?;
     let asset = Asset::new(AssetId::new(), now, display_name, import_source);
     let (fingerprint, facts, _) = report.into_parts();
+    let resource_id = ResourceId::new();
     let representation = Representation::new(
         RepresentationId::new(),
         asset.id(),
         RepresentationKind::Original,
-        Some(fingerprint),
-        Some(facts),
+        ContentStructure::single_resource(resource_id),
+        Vec::new(),
     );
-    let location = Location::new(
-        LocationId::new(),
-        representation.id(),
+    let resource = Resource::new(resource_id, vec![fingerprint], Some(facts));
+    let locator = Locator::new(
+        LocatorId::new(),
+        resource_id,
         uri,
         Some(now),
-        LocationAvailability::Online,
+        LocatorAvailability::Online,
     )?;
-    OriginalMediaImport::new(asset, representation, location)
+    OriginalMediaImport::new(asset, representation, vec![resource], vec![locator])
 }
 
 /// Validates a directory and prepares a canonical resolver media root.
@@ -85,7 +88,7 @@ pub fn prepare_media_root(
     )
 }
 
-/// Prepares a confirmed online location for transactional persistence.
+/// Prepares a confirmed online locator for transactional persistence.
 ///
 /// The URI is normalized by the domain constructor. This function does not
 /// require the URI to use the `file` scheme because future storage transports may
@@ -94,17 +97,17 @@ pub fn prepare_media_root(
 /// # Errors
 ///
 /// Returns errors from time capture or URI validation.
-pub fn prepare_confirmed_location(
-    representation_id: RepresentationId,
+pub fn prepare_confirmed_locator(
+    resource_id: ResourceId,
     uri: impl Into<String>,
-) -> Result<Location> {
+) -> Result<Locator> {
     let now = Timestamp::now()?;
-    Location::new(
-        LocationId::new(),
-        representation_id,
+    Locator::new(
+        LocatorId::new(),
+        resource_id,
         uri,
         Some(now),
-        LocationAvailability::Online,
+        LocatorAvailability::Online,
     )
 }
 
@@ -128,12 +131,13 @@ mod tests {
         .expect("prepare import");
 
         assert_eq!(prepared.representation().asset_id(), prepared.asset().id());
+        assert_eq!(prepared.resources().len(), 1);
+        assert_eq!(prepared.resources()[0].fingerprints().len(), 1);
         assert_eq!(
-            prepared.location().representation_id(),
-            prepared.representation().id()
+            prepared.locators()[0].resource_id(),
+            prepared.resources()[0].id()
         );
-        assert!(prepared.representation().fingerprint().is_some());
-        assert!(prepared.location().uri().starts_with("file:"));
+        assert!(prepared.locators()[0].uri().starts_with("file:"));
     }
 
     #[test]
