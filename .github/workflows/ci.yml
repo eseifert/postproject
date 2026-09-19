@@ -100,3 +100,40 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build target/cpp-consumer --config Release --parallel
       - run: ctest --test-dir target/cpp-consumer --build-config Release --output-on-failure
+
+  sanitizers:
+    name: Native ASan and UBSan
+    runs-on: ubuntu-latest
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p postproject-ffi
+      - name: Compile sanitized C consumer
+        run: >-
+          cc -std=c11 -Wall -Wextra -Werror
+          -fsanitize=address,undefined -fno-omit-frame-pointer
+          -Iinclude tests/abi/c_smoke.c
+          -Ltarget/release -lpostproject
+          -Wl,-rpath,$PWD/target/release
+          -o target/c-smoke-sanitized
+      - run: target/c-smoke-sanitized target/c-smoke-sanitized.pproj
+      - name: Install native package
+        run: >-
+          cmake -S . -B target/cmake-sanitized-package
+          -DPOSTPROJECT_LIBRARY="$GITHUB_WORKSPACE/target/release/libpostproject.so"
+          -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/target/sanitized-install"
+          -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --install target/cmake-sanitized-package
+      - name: Configure sanitized C++ consumer
+        run: >-
+          cmake -S tests/abi -B target/cpp-sanitized
+          -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/target/sanitized-install"
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS=-fsanitize=address,undefined
+          -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined
+      - run: cmake --build target/cpp-sanitized --parallel
+      - run: ctest --test-dir target/cpp-sanitized --output-on-failure

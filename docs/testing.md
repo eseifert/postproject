@@ -38,6 +38,10 @@ and runs lifecycle, identity, transaction commit/rollback, move-ownership, and
 error-propagation checks. The consumer configuration and build never invokes
 Cargo.
 
+The native sanitizer job rebuilds both consumers with AddressSanitizer and
+UndefinedBehaviorSanitizer, enables leak detection, and runs their real lifecycle
+and transaction workflows against the release shared library.
+
 The CLI integration test creates a project, imports media, removes the known
 file, discovers two byte-identical candidates under a configured root, verifies
 an explicit ambiguous result, confirms one candidate, and reopens the project to

@@ -119,6 +119,8 @@ The installed package supplies `PostProject::postproject` for CMake consumers
 and `postproject` for `pkg-config`. Consumers use only the installed native
 library and headers; they do not invoke Cargo. Library filenames differ by
 platform, so pass the appropriate `.dylib` or `.dll` path outside Linux.
+Standalone installed-package consumers are available under `examples/c` and
+`examples/cpp`.
 
 ## License
 

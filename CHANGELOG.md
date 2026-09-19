@@ -29,3 +29,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - Criterion baselines for bulk import, large-project open, resolver scans, and commits.
 - Schema-0 migration fixture and full multi-asset relocation/ambiguity E2E coverage.
 - `cargo-fuzz` targets for project files, fingerprints, C strings, and strong IDs.
+- ASan/UBSan native-consumer CI and a standalone installed-package C example.
