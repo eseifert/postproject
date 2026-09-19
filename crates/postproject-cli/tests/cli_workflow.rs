@@ -1,8 +1,12 @@
 //! End-to-end tests of the public command-line workflow.
 
-use std::fs;
+use std::{fs, str::FromStr};
 
 use assert_cmd::cargo::cargo_bin_cmd;
+use postproject_core::{
+    AssetId, MetadataField, MetadataProperty, MetadataValue, ObjectRef, PropertyId, VocabularyId,
+};
+use postproject_storage_sqlite::SqliteProject;
 use serde_json::Value;
 
 fn run_json(arguments: &[&str]) -> Value {
@@ -45,6 +49,66 @@ fn exercise_identifiers(project: &str, asset_id: &str) {
     assert_eq!(found[0]["id"], asset_id);
 }
 
+fn exercise_metadata(project_path: &str, asset_id: &str) {
+    let vocabulary = "http://iptc.org/std/videometadatahub/1.0";
+    for (value, language) in [("Interview", "en-US"), ("Gespräch", "de-DE")] {
+        let added = run_json(&[
+            "metadata",
+            "add-text",
+            project_path,
+            "asset",
+            asset_id,
+            vocabulary,
+            "title",
+            value,
+            "--language",
+            language,
+        ]);
+        assert_eq!(added["value"]["type"], "lang_string");
+        assert_eq!(added["value"]["language"], language);
+    }
+
+    let found = run_json(&["metadata", "find", project_path, vocabulary, "title"]);
+    assert_eq!(found.as_array().expect("metadata matches").len(), 2);
+
+    inject_structured_metadata(project_path, asset_id);
+    let listed = run_json(&["metadata", "list", project_path, "asset", asset_id]);
+    assert_eq!(listed.as_array().expect("metadata assertions").len(), 3);
+    assert_eq!(listed[0]["value"]["type"], "struct");
+    assert_eq!(listed[0]["value"]["fields"][0]["name"], "name");
+
+    run_json(&[
+        "metadata",
+        "remove",
+        project_path,
+        "asset",
+        asset_id,
+        vocabulary,
+        "title",
+    ]);
+    let listed = run_json(&["metadata", "list", project_path, "asset", asset_id]);
+    assert_eq!(listed.as_array().expect("remaining metadata").len(), 1);
+}
+
+fn inject_structured_metadata(project_path: &str, asset_id: &str) {
+    let target = ObjectRef::Asset(AssetId::from_str(asset_id).expect("parse asset ID"));
+    let property = MetadataProperty::new(
+        VocabularyId::new("com.example.editor/metadata").unwrap(),
+        PropertyId::new("contact").unwrap(),
+    );
+    let value = MetadataValue::structure(vec![MetadataField::new(
+        PropertyId::new("name").unwrap(),
+        MetadataValue::string("Camera department").unwrap(),
+    )])
+    .unwrap();
+    let mut project = SqliteProject::open(project_path).expect("open project for test metadata");
+    let mut transaction = project.begin_transaction().unwrap();
+    transaction
+        .add_metadata_value(target, &property, &value)
+        .unwrap();
+    transaction.commit().unwrap();
+}
+
 #[test]
 fn lifecycle_and_explicit_ambiguous_confirmation() {
     let directory = tempfile::tempdir().expect("create test directory");
@@ -81,6 +145,7 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
     assert_eq!(listed[0]["id"], asset_id);
 
     exercise_identifiers(project.to_str().expect("UTF-8 project path"), asset_id);
+    exercise_metadata(project.to_str().expect("UTF-8 project path"), asset_id);
 
     let candidates = directory.path().join("candidates");
     fs::create_dir(&candidates).expect("create candidates root");

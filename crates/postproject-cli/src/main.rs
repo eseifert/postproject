@@ -8,8 +8,9 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
     Asset, AssetId, EvidenceKind, ExternalIdentifier, IdentifierScheme, Location,
-    LocationAvailability, ObjectRef, Representation, RepresentationId, RepresentationKind,
-    Resolution, ResolutionEvidence, ResolutionState,
+    LocationAvailability, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
+    MetadataValueKind, ObjectRef, ProjectId, PropertyId, Representation, RepresentationId,
+    RepresentationKind, Resolution, ResolutionEvidence, ResolutionState, VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_location, prepare_media_root, prepare_original_media,
@@ -38,6 +39,8 @@ enum Command {
     Root(RootArgs),
     /// Manage external industry, vendor, and application identifiers.
     Identifier(IdentifierArgs),
+    /// Inspect and manage standards-aware metadata assertions.
+    Metadata(MetadataArgs),
 }
 
 #[derive(Debug, Args)]
@@ -168,6 +171,66 @@ struct IdentifierFindArgs {
     value: String,
 }
 
+#[derive(Debug, Args)]
+struct MetadataArgs {
+    #[command(subcommand)]
+    command: MetadataCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum MetadataCommand {
+    /// Append a plain or language-tagged text value.
+    AddText(MetadataAddTextArgs),
+    /// List all metadata assertions attached to an object.
+    List(MetadataTargetArgs),
+    /// Remove every value of one property from an object.
+    Remove(MetadataPropertyArgs),
+    /// Find assertions using an exact vocabulary and property.
+    Find(MetadataFindArgs),
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum MetadataTargetKind {
+    Project,
+    Asset,
+    Representation,
+}
+
+#[derive(Debug, Args)]
+struct MetadataTargetArgs {
+    project: PathBuf,
+    #[arg(value_enum)]
+    target_kind: MetadataTargetKind,
+    target_id: String,
+}
+
+#[derive(Debug, Args)]
+struct MetadataPropertyArgs {
+    #[command(flatten)]
+    target: MetadataTargetArgs,
+    vocabulary: String,
+    property: String,
+}
+
+#[derive(Debug, Args)]
+struct MetadataAddTextArgs {
+    #[command(flatten)]
+    target: MetadataTargetArgs,
+    vocabulary: String,
+    property: String,
+    value: String,
+    /// Optional BCP 47-shaped language tag.
+    #[arg(long)]
+    language: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct MetadataFindArgs {
+    project: PathBuf,
+    vocabulary: String,
+    property: String,
+}
+
 #[derive(Debug, Serialize)]
 struct ProjectView {
     id: String,
@@ -277,6 +340,47 @@ struct ObjectRefView {
     id: String,
 }
 
+#[derive(Debug, Serialize)]
+struct MetadataAssertionView {
+    target_kind: &'static str,
+    target_id: String,
+    vocabulary: String,
+    property: String,
+    value: MetadataValueView,
+}
+
+#[derive(Debug, Serialize)]
+struct MetadataPropertyView {
+    target_kind: &'static str,
+    target_id: String,
+    vocabulary: String,
+    property: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum MetadataValueView {
+    String { value: String },
+    LangString { value: String, language: String },
+    I64 { value: i64 },
+    U64 { value: u64 },
+    Decimal { coefficient: String, scale: u32 },
+    Bool { value: bool },
+    Timestamp { unix_micros: i64 },
+    Uri { value: String },
+    Bytes { hex: String },
+    Rational { numerator: i64, denominator: u64 },
+    List { values: Vec<MetadataValueView> },
+    Struct { fields: Vec<MetadataFieldView> },
+    Reference { target: ObjectRefView },
+}
+
+#[derive(Debug, Serialize)]
+struct MetadataFieldView {
+    name: String,
+    value: MetadataValueView,
+}
+
 fn main() -> ExitCode {
     match execute(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -304,6 +408,12 @@ fn execute(cli: Cli) -> Result<()> {
             IdentifierCommand::Remove(args) => identifier_mutate(args, true, cli.json),
             IdentifierCommand::List(args) => identifier_list(&args, cli.json),
             IdentifierCommand::Find(args) => identifier_find(args, cli.json),
+        },
+        Command::Metadata(args) => match args.command {
+            MetadataCommand::AddText(args) => metadata_add_text(args, cli.json),
+            MetadataCommand::List(args) => metadata_list(&args, cli.json),
+            MetadataCommand::Remove(args) => metadata_remove(args, cli.json),
+            MetadataCommand::Find(args) => metadata_find(args, cli.json),
         },
     }
 }
@@ -521,6 +631,109 @@ fn identifier_find(args: IdentifierFindArgs, json: bool) -> Result<()> {
     }
 }
 
+fn metadata_add_text(args: MetadataAddTextArgs, json: bool) -> Result<()> {
+    let target = parse_metadata_target(args.target.target_kind, &args.target.target_id)?;
+    let property = parse_metadata_property(args.vocabulary, args.property)?;
+    let value = match args.language {
+        Some(language) => MetadataValue::language_string(args.value, language),
+        None => MetadataValue::string(args.value),
+    }
+    .context("validate metadata text")?;
+    let assertion = MetadataAssertion::new(property.clone(), value.clone());
+    let view = metadata_assertion_view(target, &assertion)?;
+    let mut project = SqliteProject::open(&args.target.project).context("open project")?;
+    let mut transaction = project
+        .begin_transaction()
+        .context("begin metadata transaction")?;
+    transaction
+        .add_metadata_value(target, &property, &value)
+        .context("stage metadata value")?;
+    transaction.commit().context("commit metadata value")?;
+
+    if json {
+        print_json(&view)
+    } else {
+        println!(
+            "added {}:{} to {} {}",
+            view.vocabulary, view.property, view.target_kind, view.target_id
+        );
+        Ok(())
+    }
+}
+
+fn metadata_list(args: &MetadataTargetArgs, json: bool) -> Result<()> {
+    let target = parse_metadata_target(args.target_kind, &args.target_id)?;
+    let project = SqliteProject::open(&args.project).context("open project")?;
+    let views = project
+        .metadata(target)
+        .context("load metadata")?
+        .iter()
+        .map(|assertion| metadata_assertion_view(target, assertion))
+        .collect::<Result<Vec<_>>>()?;
+
+    print_metadata_assertions(&views, json)
+}
+
+fn metadata_remove(args: MetadataPropertyArgs, json: bool) -> Result<()> {
+    let target = parse_metadata_target(args.target.target_kind, &args.target.target_id)?;
+    let property = parse_metadata_property(args.vocabulary, args.property)?;
+    let target_view = object_ref_view(target)?;
+    let view = MetadataPropertyView {
+        target_kind: target_view.kind,
+        target_id: target_view.id,
+        vocabulary: property.vocabulary().as_str().to_owned(),
+        property: property.property().as_str().to_owned(),
+    };
+    let mut project = SqliteProject::open(&args.target.project).context("open project")?;
+    let mut transaction = project
+        .begin_transaction()
+        .context("begin metadata transaction")?;
+    transaction
+        .remove_metadata_property(target, &property)
+        .context("stage metadata property removal")?;
+    transaction
+        .commit()
+        .context("commit metadata property removal")?;
+
+    if json {
+        print_json(&view)
+    } else {
+        println!(
+            "removed {}:{} from {} {}",
+            view.vocabulary, view.property, view.target_kind, view.target_id
+        );
+        Ok(())
+    }
+}
+
+fn metadata_find(args: MetadataFindArgs, json: bool) -> Result<()> {
+    let property = parse_metadata_property(args.vocabulary, args.property)?;
+    let project = SqliteProject::open(&args.project).context("open project")?;
+    let views = project
+        .query_by_metadata_property(&property)
+        .context("query metadata property")?
+        .iter()
+        .map(|matched| metadata_assertion_view(matched.target(), matched.assertion()))
+        .collect::<Result<Vec<_>>>()?;
+
+    print_metadata_assertions(&views, json)
+}
+
+fn print_metadata_assertions(views: &[MetadataAssertionView], json: bool) -> Result<()> {
+    if json {
+        print_json(&views)
+    } else {
+        for view in views {
+            let value = serde_json::to_string(&view.value).context("format metadata value")?;
+            println!(
+                "{}\t{}:{}\t{}",
+                view.target_id, view.vocabulary, view.property, value
+            );
+        }
+        Ok(())
+    }
+}
+
 fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
     let mut project = SqliteProject::open(&args.project).context("open project")?;
     let asset_id = parse_asset_id(&args.asset_id)?;
@@ -605,6 +818,27 @@ fn parse_identifier_target(kind: IdentifierTargetKind, value: &str) -> Result<Ob
     }
 }
 
+fn parse_metadata_target(kind: MetadataTargetKind, value: &str) -> Result<ObjectRef> {
+    match kind {
+        MetadataTargetKind::Project => ProjectId::from_str(value)
+            .map(ObjectRef::Project)
+            .context("parse project ID"),
+        MetadataTargetKind::Asset => AssetId::from_str(value)
+            .map(ObjectRef::Asset)
+            .context("parse asset ID"),
+        MetadataTargetKind::Representation => RepresentationId::from_str(value)
+            .map(ObjectRef::Representation)
+            .context("parse representation ID"),
+    }
+}
+
+fn parse_metadata_property(vocabulary: String, property: String) -> Result<MetadataProperty> {
+    Ok(MetadataProperty::new(
+        VocabularyId::new(vocabulary).context("validate metadata vocabulary")?,
+        PropertyId::new(property).context("validate metadata property")?,
+    ))
+}
+
 fn external_identifier_view(
     target: ObjectRef,
     identifier: &ExternalIdentifier,
@@ -639,6 +873,123 @@ fn object_ref_view(target: ObjectRef) -> Result<ObjectRefView> {
         }),
         _ => bail!("object kind is not supported by this CLI"),
     }
+}
+
+fn metadata_assertion_view(
+    target: ObjectRef,
+    assertion: &MetadataAssertion,
+) -> Result<MetadataAssertionView> {
+    let target = object_ref_view(target)?;
+    Ok(MetadataAssertionView {
+        target_kind: target.kind,
+        target_id: target.id,
+        vocabulary: assertion.property().vocabulary().as_str().to_owned(),
+        property: assertion.property().property().as_str().to_owned(),
+        value: metadata_value_view(assertion.value())?,
+    })
+}
+
+fn metadata_value_view(value: &MetadataValue) -> Result<MetadataValueView> {
+    match value.kind() {
+        MetadataValueKind::String => Ok(MetadataValueView::String {
+            value: value
+                .as_string()
+                .context("metadata string has wrong internal type")?
+                .to_owned(),
+        }),
+        MetadataValueKind::LangString => {
+            let (text, language) = value
+                .as_language_string()
+                .context("metadata language string has wrong internal type")?;
+            Ok(MetadataValueView::LangString {
+                value: text.to_owned(),
+                language: language.to_owned(),
+            })
+        }
+        MetadataValueKind::I64 => Ok(MetadataValueView::I64 {
+            value: value
+                .as_i64()
+                .context("metadata integer has wrong internal type")?,
+        }),
+        MetadataValueKind::U64 => Ok(MetadataValueView::U64 {
+            value: value
+                .as_u64()
+                .context("metadata unsigned integer has wrong internal type")?,
+        }),
+        MetadataValueKind::Decimal => {
+            let decimal = value
+                .as_decimal()
+                .context("metadata decimal has wrong internal type")?;
+            Ok(MetadataValueView::Decimal {
+                coefficient: decimal.coefficient().to_string(),
+                scale: decimal.scale(),
+            })
+        }
+        MetadataValueKind::Bool => Ok(MetadataValueView::Bool {
+            value: value
+                .as_bool()
+                .context("metadata boolean has wrong internal type")?,
+        }),
+        MetadataValueKind::Timestamp => Ok(MetadataValueView::Timestamp {
+            unix_micros: value
+                .as_timestamp()
+                .context("metadata timestamp has wrong internal type")?
+                .as_unix_micros(),
+        }),
+        MetadataValueKind::Uri => Ok(MetadataValueView::Uri {
+            value: value
+                .as_uri()
+                .context("metadata URI has wrong internal type")?
+                .to_owned(),
+        }),
+        MetadataValueKind::Bytes => Ok(MetadataValueView::Bytes {
+            hex: hex::encode(
+                value
+                    .as_bytes()
+                    .context("metadata bytes have wrong internal type")?,
+            ),
+        }),
+        MetadataValueKind::Rational => {
+            let rational = value
+                .as_rational()
+                .context("metadata rational has wrong internal type")?;
+            Ok(MetadataValueView::Rational {
+                numerator: rational.numerator(),
+                denominator: rational.denominator(),
+            })
+        }
+        MetadataValueKind::List => Ok(MetadataValueView::List {
+            values: value
+                .as_list()
+                .context("metadata list has wrong internal type")?
+                .iter()
+                .map(metadata_value_view)
+                .collect::<Result<_>>()?,
+        }),
+        MetadataValueKind::Struct => Ok(MetadataValueView::Struct {
+            fields: value
+                .as_structure()
+                .context("metadata structure has wrong internal type")?
+                .iter()
+                .map(metadata_field_view)
+                .collect::<Result<_>>()?,
+        }),
+        MetadataValueKind::Reference => Ok(MetadataValueView::Reference {
+            target: object_ref_view(
+                value
+                    .as_reference()
+                    .context("metadata reference has wrong internal type")?,
+            )?,
+        }),
+        _ => bail!("metadata value kind is not supported by this CLI"),
+    }
+}
+
+fn metadata_field_view(field: &MetadataField) -> Result<MetadataFieldView> {
+    Ok(MetadataFieldView {
+        name: field.name().as_str().to_owned(),
+        value: metadata_value_view(field.value())?,
+    })
 }
 
 fn find_asset(project: &SqliteProject, asset_id: AssetId) -> Result<Asset> {
