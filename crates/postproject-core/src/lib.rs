@@ -17,8 +17,8 @@ mod uri;
 
 pub use error::{Error, ErrorKind, Result};
 pub use id::{
-    ActivityId, AssetId, LocationId, MediaRootId, ObjectRef, ProjectId, RepresentationId,
-    RevisionId, TransactionId,
+    ActivityId, AssetId, LocationId, LocatorId, MediaRootId, ObjectRef, ProjectId,
+    RepresentationId, ResourceId, RevisionId, TransactionId,
 };
 pub use identifier::{
     ExternalIdentifier, IdentifierScheme, MAX_IDENTIFIER_QUALIFIER_BYTES,

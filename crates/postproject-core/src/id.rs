@@ -78,6 +78,14 @@ strong_id!(
     RepresentationId
 );
 strong_id!(
+    /// Stable identity of stored content used by a representation.
+    ResourceId
+);
+strong_id!(
+    /// Stable identity of one access route to a resource.
+    LocatorId
+);
+strong_id!(
     /// Stable identity of a physical media location record.
     LocationId
 );
@@ -132,9 +140,12 @@ mod tests {
         let bytes = [7; 16];
         let project = ProjectId::from_bytes(bytes);
         let asset = AssetId::from_bytes(bytes);
+        let resource = ResourceId::from_bytes(bytes);
+        let locator = LocatorId::from_bytes(bytes);
 
         assert_eq!(project.as_bytes(), asset.as_bytes());
         assert_eq!(project.to_string(), asset.to_string());
+        assert_eq!(resource.as_bytes(), locator.as_bytes());
     }
 
     #[test]
