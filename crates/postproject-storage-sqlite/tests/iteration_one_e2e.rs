@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, fs};
 
 use postproject_core::{AssetId, RepresentationId, ResolutionState};
 use postproject_media::{
-    MediaResolver, prepare_confirmed_location, prepare_media_root, prepare_original_media,
+    MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
 };
 use postproject_storage_sqlite::SqliteProject;
 
@@ -80,11 +80,15 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
             .into_iter()
             .find(|representation| representation.id() == *representation_id)
             .expect("representation exists");
-        let locations = project
-            .locations(*representation_id)
-            .expect("load known locations");
+        let resource = project
+            .resources(*representation_id)
+            .expect("load resources")
+            .remove(0);
+        let locators = project
+            .locators(resource.id())
+            .expect("load known locators");
         let resolution = resolver
-            .resolve(&representation, &locations, &[])
+            .resolve(representation.id(), &resource, &locators, &[])
             .expect("resolve without roots");
         assert_eq!(resolution.state(), ResolutionState::Missing);
     }
@@ -103,11 +107,18 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
             .representations(asset.id())
             .expect("load representations")
         {
-            let locations = project
-                .locations(representation.id())
-                .expect("load locations");
+            let resource = project
+                .resources(representation.id())
+                .expect("load resources")
+                .remove(0);
+            let locators = project.locators(resource.id()).expect("load locators");
             let resolution = resolver
-                .resolve(&representation, &locations, project.project().media_roots())
+                .resolve(
+                    representation.id(),
+                    &resource,
+                    &locators,
+                    project.project().media_roots(),
+                )
                 .expect("resolve relocated media");
             match resolution.state() {
                 ResolutionState::ResolvedExact => {
@@ -124,8 +135,8 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
                 .first()
                 .expect("resolved candidate exists");
             confirmations.push(
-                prepare_confirmed_location(representation.id(), selected.uri())
-                    .expect("prepare confirmed location"),
+                prepare_confirmed_locator(resource.id(), selected.uri())
+                    .expect("prepare confirmed locator"),
             );
         }
     }
@@ -134,10 +145,10 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
     let mut transaction = project
         .begin_transaction()
         .expect("begin confirmation transaction");
-    for location in &confirmations {
+    for locator in &confirmations {
         transaction
-            .add_location(location)
-            .expect("stage confirmed location");
+            .add_locator(locator)
+            .expect("stage confirmed locator");
     }
     transaction.commit().expect("commit confirmed locations");
     drop(transaction);
@@ -151,13 +162,17 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
             .into_iter()
             .find(|representation| representation.id() == representation_id)
             .expect("persisted representation exists");
-        let locations = project
-            .locations(representation_id)
-            .expect("load persisted locations");
-        assert_eq!(locations.len(), 2);
+        let resource = project
+            .resources(representation_id)
+            .expect("load persisted resources")
+            .remove(0);
+        let locators = project
+            .locators(resource.id())
+            .expect("load persisted locators");
+        assert_eq!(locators.len(), 2);
         let resolution = resolver
-            .resolve(&representation, &locations, &[])
-            .expect("resolve from confirmed location without roots");
+            .resolve(representation.id(), &resource, &locators, &[])
+            .expect("resolve from confirmed locator without roots");
         assert_eq!(resolution.state(), ResolutionState::OnlineAtKnownLocation);
     }
 }

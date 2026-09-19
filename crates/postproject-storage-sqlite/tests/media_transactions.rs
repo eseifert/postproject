@@ -26,12 +26,9 @@ fn imported_original_and_root_survive_reopen() {
         .expect("prepare media root");
     let asset_id = prepared.asset().id();
     let representation_id = prepared.representation().id();
-    let location_id = prepared.location().id();
-    let fingerprint = prepared
-        .representation()
-        .fingerprint()
-        .expect("prepared fingerprint")
-        .clone();
+    let resource_id = prepared.resources()[0].id();
+    let locator_id = prepared.locators()[0].id();
+    let fingerprint = prepared.resources()[0].fingerprints()[0].clone();
 
     let mut project = SqliteProject::create(&project_path, None).expect("create project");
     {
@@ -65,13 +62,19 @@ fn imported_original_and_root_survive_reopen() {
         .expect("load representations");
     assert_eq!(representations.len(), 1);
     assert_eq!(representations[0].id(), representation_id);
-    assert_eq!(representations[0].fingerprint(), Some(&fingerprint));
-    let locations = reopened
-        .locations(representation_id)
-        .expect("load locations");
-    assert_eq!(locations.len(), 1);
-    assert_eq!(locations[0].id(), location_id);
-    assert_eq!(locations[0].uri(), prepared.location().uri());
+    assert_eq!(
+        representations[0].content_structure().single_resource_id(),
+        Some(resource_id)
+    );
+    let resources = reopened
+        .resources(representation_id)
+        .expect("load resources");
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0].fingerprints(), [fingerprint]);
+    let locators = reopened.locators(resource_id).expect("load locators");
+    assert_eq!(locators.len(), 1);
+    assert_eq!(locators[0].id(), locator_id);
+    assert_eq!(locators[0].uri(), prepared.locators()[0].uri());
     assert_eq!(reopened.project().media_roots(), [root]);
 }
 

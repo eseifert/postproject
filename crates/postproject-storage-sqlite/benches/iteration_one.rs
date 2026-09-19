@@ -9,8 +9,8 @@ use std::{fs, hint::black_box, path::PathBuf};
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use postproject_core::{
-    Asset, AssetId, Location, LocationAvailability, LocationId, OriginalMediaImport,
-    Representation, RepresentationId, RepresentationKind, Timestamp,
+    Asset, AssetId, ContentStructure, Locator, LocatorAvailability, LocatorId, OriginalMediaImport,
+    Representation, RepresentationId, RepresentationKind, Resource, ResourceId, Timestamp,
 };
 use postproject_media::{MediaResolver, prepare_media_root, prepare_original_media};
 use postproject_storage_sqlite::SqliteProject;
@@ -105,8 +105,9 @@ fn benchmark_resolver_scan(criterion: &mut Criterion) {
             black_box(
                 resolver
                     .resolve(
-                        import.representation(),
-                        std::slice::from_ref(import.location()),
+                        import.representation().id(),
+                        &import.resources()[0],
+                        import.locators(),
                         std::slice::from_ref(&root),
                     )
                     .expect("resolve benchmark media"),
@@ -154,22 +155,25 @@ fn synthetic_import(index: usize) -> OriginalMediaImport {
         None,
         Some("benchmark".to_owned()),
     );
+    let resource_id = ResourceId::new();
     let representation = Representation::new(
         RepresentationId::new(),
         asset.id(),
         RepresentationKind::Original,
-        None,
-        None,
+        ContentStructure::single_resource(resource_id),
+        Vec::new(),
     );
-    let location = Location::new(
-        LocationId::new(),
-        representation.id(),
+    let resource = Resource::new(resource_id, Vec::new(), None);
+    let locator = Locator::new(
+        LocatorId::new(),
+        resource_id,
         format!("file:///benchmark/{index}.mov"),
         None,
-        LocationAvailability::Unknown,
+        LocatorAvailability::Unknown,
     )
-    .expect("construct benchmark location");
-    OriginalMediaImport::new(asset, representation, location).expect("construct benchmark import")
+    .expect("construct benchmark locator");
+    OriginalMediaImport::new(asset, representation, vec![resource], vec![locator])
+        .expect("construct benchmark import")
 }
 
 criterion_group!(iteration_one, benchmarks);

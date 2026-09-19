@@ -4,7 +4,7 @@ use std::fs;
 
 use postproject_core::ResolutionState;
 use postproject_media::{
-    MediaResolver, prepare_confirmed_location, prepare_media_root, prepare_original_media,
+    MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
 };
 use postproject_storage_sqlite::SqliteProject;
 use tempfile::tempdir;
@@ -39,11 +39,15 @@ fn moved_media_resolves_and_confirmed_location_persists() {
         .representations(asset_id)
         .expect("load representation")
         .remove(0);
-    let known_locations = project
-        .locations(representation.id())
-        .expect("load known locations");
+    let resource = project
+        .resources(representation.id())
+        .expect("load resource")
+        .remove(0);
+    let known_locators = project
+        .locators(resource.id())
+        .expect("load known locators");
     let missing = resolver
-        .resolve(&representation, &known_locations, &[])
+        .resolve(representation.id(), &resource, &known_locators, &[])
         .expect("resolve without roots");
     assert_eq!(missing.state(), ResolutionState::Missing);
 
@@ -57,8 +61,9 @@ fn moved_media_resolves_and_confirmed_location_persists() {
 
     let unique = resolver
         .resolve(
-            &representation,
-            &known_locations,
+            representation.id(),
+            &resource,
+            &known_locators,
             project.project().media_roots(),
         )
         .expect("resolve unique media");
@@ -68,8 +73,9 @@ fn moved_media_resolves_and_confirmed_location_persists() {
     fs::copy(&relocated_path, &duplicate_path).expect("create duplicate");
     let ambiguous = resolver
         .resolve(
-            &representation,
-            &known_locations,
+            representation.id(),
+            &resource,
+            &known_locators,
             project.project().media_roots(),
         )
         .expect("resolve duplicate media");
@@ -83,30 +89,31 @@ fn moved_media_resolves_and_confirmed_location_persists() {
         .expect("find intended candidate")
         .uri()
         .to_owned();
-    let confirmed = prepare_confirmed_location(representation.id(), chosen_uri)
-        .expect("prepare confirmed location");
+    let confirmed =
+        prepare_confirmed_locator(resource.id(), chosen_uri).expect("prepare confirmed locator");
     let mut transaction = project
         .begin_transaction()
         .expect("begin confirmation transaction");
     transaction
-        .add_location(&confirmed)
-        .expect("stage confirmed location");
+        .add_locator(&confirmed)
+        .expect("stage confirmed locator");
     transaction.commit().expect("commit confirmation");
     drop(transaction);
     drop(project);
 
     let reopened = SqliteProject::open(&project_path).expect("reopen confirmed project");
-    let locations = reopened
-        .locations(representation.id())
-        .expect("load confirmed locations");
-    assert_eq!(locations.len(), 2);
+    let locators = reopened
+        .locators(resource.id())
+        .expect("load confirmed locators");
+    assert_eq!(locators.len(), 2);
     let online = resolver
         .resolve(
-            &representation,
-            &locations,
+            representation.id(),
+            &resource,
+            &locators,
             reopened.project().media_roots(),
         )
-        .expect("resolve confirmed location");
+        .expect("resolve confirmed locator");
     assert_eq!(online.state(), ResolutionState::OnlineAtKnownLocation);
     assert_eq!(online.candidates()[0].uri(), confirmed.uri());
 }
