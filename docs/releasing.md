@@ -23,8 +23,8 @@ Before tagging a release:
 8. Create a signed tag matching the package version and publish the CI-produced
    native archive with checksums. Never rebuild an artifact after tagging.
 
-The regular Linux package artifact is produced from `cargo build --locked` and
-the CMake install rules on every push. Platform release candidates should use the
-same source commit and locked dependency graph. Windows packaging must include
-the DLL and its matching import library; macOS packaging must preserve the dylib
-install name expected by the CMake target.
+Linux, macOS, and Windows package artifacts are produced from
+`cargo build --locked` and the same CMake install rules on every push. Windows
+packaging includes the DLL and its matching import library by passing them as
+`POSTPROJECT_RUNTIME_LIBRARY` and `POSTPROJECT_LIBRARY`; macOS packaging must
+preserve the dylib install name expected by the CMake target.

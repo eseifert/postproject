@@ -31,12 +31,14 @@ The C ABI job builds the optimized shared library, compiles a standalone C11
 consumer using only the public header, runs create/open/error operations, and
 compares the exported dynamic symbols against `tests/abi/expected-symbols.txt`.
 
-The C++ package job installs the native library, C and C++ headers, CMake package
-files, and `pkg-config` metadata into a temporary prefix. It then configures a
-separate C++17 CMake project against that prefix, builds with warnings denied,
-and runs lifecycle, identity, transaction commit/rollback, move-ownership, and
-error-propagation checks. The consumer configuration and build never invokes
-Cargo.
+The native package matrix installs the platform library, optional static archive,
+C and C++ headers, CMake package files, and `pkg-config` metadata into temporary
+prefixes on Linux, macOS, and Windows. It then configures a separate C11/C++17
+CMake project against each prefix, builds with warnings denied, and runs
+lifecycle, identity, transaction commit/rollback, relocation,
+structured-evidence, confirmation, move-ownership, and error-propagation checks.
+The consumer configuration and build never invokes Cargo. Each platform package
+is uploaded as a CI artifact.
 
 The native sanitizer job rebuilds both consumers with AddressSanitizer and
 UndefinedBehaviorSanitizer, enables leak detection, and runs their real lifecycle

@@ -1,20 +1,34 @@
 @PACKAGE_INIT@
 
-find_library(
+set_and_check(
     PostProject_LIBRARY
-    NAMES postproject libpostproject
-    PATHS "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@"
-    NO_DEFAULT_PATH
-    REQUIRED
+    "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/@POSTPROJECT_LIBRARY_FILENAME@"
 )
 
 if(NOT TARGET PostProject::postproject)
     add_library(PostProject::postproject UNKNOWN IMPORTED)
+    if(WIN32)
+        set_and_check(
+            PostProject_RUNTIME_LIBRARY
+            "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/@POSTPROJECT_RUNTIME_LIBRARY_FILENAME@"
+        )
+        set_target_properties(
+            PostProject::postproject
+            PROPERTIES
+                IMPORTED_IMPLIB "${PostProject_LIBRARY}"
+                IMPORTED_LOCATION "${PostProject_RUNTIME_LIBRARY}"
+        )
+    else()
+        set_target_properties(
+            PostProject::postproject
+            PROPERTIES IMPORTED_LOCATION "${PostProject_LIBRARY}"
+        )
+    endif()
     set_target_properties(
         PostProject::postproject
         PROPERTIES
-            IMPORTED_LOCATION "${PostProject_LIBRARY}"
             INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@"
+            INTERFACE_COMPILE_DEFINITIONS POSTPROJECT_SHARED
     )
 endif()
 

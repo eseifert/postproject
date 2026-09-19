@@ -77,23 +77,55 @@ jobs:
           <(nm -D --defined-only target/release/libpostproject.so |
           awk '{print $3}' | sort)
 
-  cpp-package:
-    name: Installed C and C++17 consumers
-    runs-on: ubuntu-latest
+  native-package:
+    name: Native package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            link_library: libpostproject.so
+            static_library: libpostproject.a
+            runtime_library: ""
+            artifact: linux-x86_64
+          - os: macos-latest
+            link_library: libpostproject.dylib
+            static_library: libpostproject.a
+            runtime_library: ""
+            artifact: macos-arm64
+          - os: windows-latest
+            link_library: postproject.dll.lib
+            static_library: postproject.lib
+            runtime_library: postproject.dll
+            artifact: windows-x86_64
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked -p postproject-ffi
       - name: Install native package
-        run: >-
-          cmake -S . -B target/cmake-package
-          -DPOSTPROJECT_LIBRARY="$GITHUB_WORKSPACE/target/release/libpostproject.so"
-          -DPOSTPROJECT_STATIC_LIBRARY="$GITHUB_WORKSPACE/target/release/libpostproject.a"
-          -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/target/install"
-          -DCMAKE_BUILD_TYPE=Release
+        shell: bash
+        env:
+          LINK_LIBRARY: ${{ matrix.link_library }}
+          STATIC_LIBRARY: ${{ matrix.static_library }}
+          RUNTIME_LIBRARY: ${{ matrix.runtime_library }}
+        run: |
+          package_args=(
+            -S .
+            -B target/cmake-package
+            "-DPOSTPROJECT_LIBRARY=$GITHUB_WORKSPACE/target/release/$LINK_LIBRARY"
+            "-DPOSTPROJECT_STATIC_LIBRARY=$GITHUB_WORKSPACE/target/release/$STATIC_LIBRARY"
+            "-DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/target/install"
+            -DCMAKE_BUILD_TYPE=Release
+          )
+          if [[ -n "$RUNTIME_LIBRARY" ]]; then
+            package_args+=("-DPOSTPROJECT_RUNTIME_LIBRARY=$GITHUB_WORKSPACE/target/release/$RUNTIME_LIBRARY")
+          fi
+          cmake "${package_args[@]}"
       - run: cmake --install target/cmake-package
-      - run: pkg-config --validate target/install/lib/pkgconfig/postproject.pc
+      - if: matrix.os == 'ubuntu-latest'
+        run: pkg-config --validate target/install/lib/pkgconfig/postproject.pc
       - name: Configure consumer without Cargo
         run: >-
           cmake -S tests/abi -B target/cpp-consumer
@@ -101,15 +133,23 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build target/cpp-consumer --config Release --parallel
       - run: ctest --test-dir target/cpp-consumer --build-config Release --output-on-failure
-      - name: Verify and upload native package
-        run: >-
-          test -f target/install/lib/libpostproject.so -a
-          -f target/install/lib/libpostproject.a -a
-          -f target/install/include/postproject/postproject.h -a
-          -f target/install/include/postproject/postproject.hpp
+      - name: Verify native package
+        shell: bash
+        env:
+          LINK_LIBRARY: ${{ matrix.link_library }}
+          STATIC_LIBRARY: ${{ matrix.static_library }}
+          RUNTIME_LIBRARY: ${{ matrix.runtime_library }}
+        run: |
+          test -f "target/install/lib/$LINK_LIBRARY"
+          test -f "target/install/lib/$STATIC_LIBRARY"
+          test -f target/install/include/postproject/postproject.h
+          test -f target/install/include/postproject/postproject.hpp
+          if [[ -n "$RUNTIME_LIBRARY" ]]; then
+            test -f "target/install/bin/$RUNTIME_LIBRARY"
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: libpostproject-linux-x86_64
+          name: libpostproject-${{ matrix.artifact }}
           path: target/install
           if-no-files-found: error
 

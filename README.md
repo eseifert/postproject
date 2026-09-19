@@ -125,8 +125,10 @@ cmake --install target/package
 
 The installed package supplies `PostProject::postproject` for CMake consumers
 and `postproject` for `pkg-config`. Consumers use only the installed native
-library and headers; they do not invoke Cargo. Library filenames differ by
-platform, so pass the appropriate `.dylib` or `.dll` path outside Linux.
+library and headers; they do not invoke Cargo. On macOS, pass the `.dylib` as
+`POSTPROJECT_LIBRARY`. On Windows, pass the Cargo-produced import library as
+`POSTPROJECT_LIBRARY` and its matching DLL as `POSTPROJECT_RUNTIME_LIBRARY`;
+the installer places them in the conventional `lib` and `bin` directories.
 Standalone installed-package consumers are available under `examples/c` and
 `examples/cpp`.
 
