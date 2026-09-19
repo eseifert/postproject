@@ -1,4 +1,4 @@
-//! Stable C ABI for libpostproject.
+//! Public C ABI for `PostProject`.
 //!
 //! All exported calls contain Rust panics and translate domain errors into stable
 //! numeric codes plus owned error objects. Native consumers should include the
@@ -15,8 +15,9 @@ use std::{
 };
 
 use postproject_core::{
-    AssetId, Error, ErrorKind, EvidenceKind, Location, MediaRoot, OriginalMediaImport, ProjectId,
-    RepresentationId, Resolution, ResolutionEvidence, ResolutionState, TransactionLifecycle,
+    AssetId, Error, ErrorKind, EvidenceKind, ExternalIdentifier, IdentifierScheme, Location,
+    MediaRoot, ObjectRef, OriginalMediaImport, ProjectId, RepresentationId, Resolution,
+    ResolutionEvidence, ResolutionState, TransactionLifecycle,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_location, prepare_media_root, prepare_original_media,
@@ -54,8 +55,13 @@ const PP_EVIDENCE_MEDIA_ROOT_RELATION: u32 = 8;
 const PP_EVIDENCE_CONFLICTING_CANDIDATE: u32 = 9;
 const PP_EVIDENCE_DISCOVERY_ERROR: u32 = 10;
 
-/// Current iteration-1 ABI version.
-pub const ABI_VERSION: u32 = 1;
+const PP_OBJECT_PROJECT: u32 = 1;
+const PP_OBJECT_ASSET: u32 = 2;
+const PP_OBJECT_REPRESENTATION: u32 = 3;
+const PP_OBJECT_ACTIVITY: u32 = 4;
+
+/// Current pre-1.0 ABI version.
+pub const ABI_VERSION: u32 = 2;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -63,6 +69,16 @@ pub const ABI_VERSION: u32 = 1;
 pub struct PpUuid {
     /// UUID bytes in network order.
     pub bytes: [u8; 16],
+}
+
+/// Fixed-layout typed reference to a `PostProject` object.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PpObjectRef {
+    /// One of the `PP_OBJECT_*` constants from the public header.
+    pub kind: u32,
+    /// Stable ID whose interpretation is selected by `kind`.
+    pub id: PpUuid,
 }
 
 /// Opaque project handle owned by the C caller.
@@ -86,6 +102,24 @@ enum StagedMutation {
     Import(OriginalMediaImport),
     MediaRoot(MediaRoot),
     Location(Location),
+    AddExternalIdentifier(ObjectRef, ExternalIdentifier),
+    RemoveExternalIdentifier(ObjectRef, ExternalIdentifier),
+}
+
+/// Opaque immutable external-identifier result set owned by the C caller.
+pub struct PpExternalIdentifierSet {
+    identifiers: Vec<AbiExternalIdentifier>,
+}
+
+struct AbiExternalIdentifier {
+    scheme: CString,
+    value: CString,
+    qualifier: Option<CString>,
+}
+
+/// Opaque immutable object-reference result set owned by the C caller.
+pub struct PpObjectRefSet {
+    objects: Vec<PpObjectRef>,
 }
 
 /// Opaque set of immutable media-resolution results owned by the C caller.
@@ -264,6 +298,235 @@ pub unsafe extern "C" fn pp_project_asset_exists(
             Ok(())
         })
     }
+}
+
+/// Loads external identifiers attached to one typed object reference.
+///
+/// Strings returned by result accessors are borrowed until the result set is
+/// released.
+///
+/// # Safety
+///
+/// `project` and `target` must be readable live values. `out_identifiers` must
+/// be writable. `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_external_identifiers(
+    project: *const PpProject,
+    target: *const PpObjectRef,
+    out_identifiers: *mut *mut PpExternalIdentifierSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Pointers are validated before use and outputs are initialized.
+    unsafe {
+        initialize_output(out_identifiers);
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            let target = target
+                .as_ref()
+                .ok_or_else(|| invalid_argument("target must not be null"))?;
+            if out_identifiers.is_null() {
+                return Err(invalid_argument("out_identifiers must not be null"));
+            }
+            let target = object_ref_from_abi(*target)?;
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let identifiers = inner
+                .external_identifiers(target)?
+                .into_iter()
+                .map(AbiExternalIdentifier::try_from)
+                .collect::<Result<Vec<_>, _>>()?;
+            out_identifiers.write(Box::into_raw(Box::new(PpExternalIdentifierSet {
+                identifiers,
+            })));
+            Ok(())
+        })
+    }
+}
+
+/// Finds objects carrying an exact external identifier scheme and value.
+///
+/// # Safety
+///
+/// `project` must be live; `scheme` and `value` must be borrowed NUL-terminated
+/// UTF-8 strings; `out_objects` must be writable; and `out_error` may be null or
+/// writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_find_by_external_identifier(
+    project: *const PpProject,
+    scheme: *const c_char,
+    value: *const c_char,
+    out_objects: *mut *mut PpObjectRefSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Pointers are validated before use and outputs are initialized.
+    unsafe {
+        initialize_output(out_objects);
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            if out_objects.is_null() {
+                return Err(invalid_argument("out_objects must not be null"));
+            }
+            let scheme = IdentifierScheme::new(required_utf8(scheme, "scheme")?)?;
+            let value = required_utf8(value, "value")?;
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let objects = inner
+                .find_by_external_identifier(&scheme, value)?
+                .into_iter()
+                .map(object_ref_to_abi)
+                .collect::<Result<Vec<_>, _>>()?;
+            out_objects.write(Box::into_raw(Box::new(PpObjectRefSet { objects })));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the number of values in an external-identifier result set.
+/// Null input returns zero.
+///
+/// # Safety
+///
+/// `identifiers` must be null or a live handle returned by this library.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_external_identifier_set_count(
+    identifiers: *const PpExternalIdentifierSet,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null handle is live by the caller contract.
+        unsafe { identifiers.as_ref() }.map_or(0, |set| {
+            u64::try_from(set.identifiers.len()).unwrap_or(u64::MAX)
+        })
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one external identifier. Returned strings are borrowed from the set.
+///
+/// # Safety
+///
+/// `identifiers` must be live; outputs must be writable; and `out_error` may be
+/// null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_external_identifier_set_get(
+    identifiers: *const PpExternalIdentifierSet,
+    index: u64,
+    out_scheme: *mut *const c_char,
+    out_value: *mut *const c_char,
+    out_qualifier: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_const_output(out_scheme);
+        initialize_const_output(out_value);
+        initialize_const_output(out_qualifier);
+        ffi_call(out_error, || {
+            require_output(out_scheme, "out_scheme")?;
+            require_output(out_value, "out_value")?;
+            require_output(out_qualifier, "out_qualifier")?;
+            let identifiers = identifiers
+                .as_ref()
+                .ok_or_else(|| invalid_argument("identifiers must not be null"))?;
+            let identifier = item_at(&identifiers.identifiers, index, "identifier")?;
+            out_scheme.write(identifier.scheme.as_ptr());
+            out_value.write(identifier.value.as_ptr());
+            out_qualifier.write(
+                identifier
+                    .qualifier
+                    .as_ref()
+                    .map_or(ptr::null(), |value| value.as_ptr()),
+            );
+            Ok(())
+        })
+    }
+}
+
+/// Releases an external-identifier result set. Null is a no-op.
+///
+/// # Safety
+///
+/// A non-null handle must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_external_identifier_set_release(
+    identifiers: *mut PpExternalIdentifierSet,
+) {
+    if identifiers.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership is transferred back exactly once by contract.
+        drop(unsafe { Box::from_raw(identifiers) });
+    }));
+}
+
+/// Returns the number of values in an object-reference result set.
+/// Null input returns zero.
+///
+/// # Safety
+///
+/// `objects` must be null or a live handle returned by this library.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_object_ref_set_count(objects: *const PpObjectRefSet) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null handle is live by the caller contract.
+        unsafe { objects.as_ref() }.map_or(0, |set| {
+            u64::try_from(set.objects.len()).unwrap_or(u64::MAX)
+        })
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one typed object reference.
+///
+/// # Safety
+///
+/// `objects` must be live; `out_object` must be writable; and `out_error` may
+/// be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_object_ref_set_get(
+    objects: *const PpObjectRefSet,
+    index: u64,
+    out_object: *mut PpObjectRef,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_object_ref(out_object);
+        ffi_call(out_error, || {
+            require_output(out_object, "out_object")?;
+            let objects = objects
+                .as_ref()
+                .ok_or_else(|| invalid_argument("objects must not be null"))?;
+            out_object.write(*item_at(&objects.objects, index, "object")?);
+            Ok(())
+        })
+    }
+}
+
+/// Releases an object-reference result set. Null is a no-op.
+///
+/// # Safety
+///
+/// A non-null handle must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_object_ref_set_release(objects: *mut PpObjectRefSet) {
+    if objects.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership is transferred back exactly once by contract.
+        drop(unsafe { Box::from_raw(objects) });
+    }));
 }
 
 /// Resolves every representation belonging to an asset without mutating the project.
@@ -674,6 +937,79 @@ pub unsafe extern "C" fn pp_transaction_confirm_location(
     }
 }
 
+/// Stages an external identifier attachment.
+///
+/// `qualifier` may be null; other string inputs are required borrowed
+/// NUL-terminated UTF-8. The target is validated when the transaction commits.
+///
+/// # Safety
+///
+/// `transaction` must be live, `target` readable, string pointers must satisfy
+/// the rules above, and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_add_external_identifier(
+    transaction: *mut PpTransaction,
+    target: *const PpObjectRef,
+    scheme: *const c_char,
+    value: *const c_char,
+    qualifier: *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are checked before dereference and borrowed only for this call.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let target = target
+                .as_ref()
+                .ok_or_else(|| invalid_argument("target must not be null"))?;
+            let target = object_ref_from_abi(*target)?;
+            let identifier = external_identifier_from_abi(scheme, value, qualifier)?;
+            transaction
+                .mutations
+                .push(StagedMutation::AddExternalIdentifier(target, identifier));
+            Ok(())
+        })
+    }
+}
+
+/// Stages removal of one exact external identifier attachment.
+///
+/// # Safety
+///
+/// The pointer and UTF-8 contracts are identical to
+/// [`pp_transaction_add_external_identifier`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_remove_external_identifier(
+    transaction: *mut PpTransaction,
+    target: *const PpObjectRef,
+    scheme: *const c_char,
+    value: *const c_char,
+    qualifier: *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are checked before dereference and borrowed only for this call.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let target = target
+                .as_ref()
+                .ok_or_else(|| invalid_argument("target must not be null"))?;
+            let target = object_ref_from_abi(*target)?;
+            let identifier = external_identifier_from_abi(scheme, value, qualifier)?;
+            transaction
+                .mutations
+                .push(StagedMutation::RemoveExternalIdentifier(target, identifier));
+            Ok(())
+        })
+    }
+}
+
 /// Atomically commits all staged transaction mutations.
 ///
 /// # Safety
@@ -847,6 +1183,18 @@ unsafe fn initialize_uuid(output: *mut PpUuid) {
     }
 }
 
+unsafe fn initialize_object_ref(output: *mut PpObjectRef) {
+    if !output.is_null() {
+        // SAFETY: Non-null outputs are writable by the exported caller contract.
+        unsafe {
+            output.write(PpObjectRef {
+                kind: 0,
+                id: PpUuid { bytes: [0; 16] },
+            });
+        }
+    }
+}
+
 unsafe fn initialize_value<T: Copy>(output: *mut T, value: T) {
     if !output.is_null() {
         // SAFETY: Non-null output pointers are required to be writable by every
@@ -928,6 +1276,55 @@ unsafe fn optional_utf8<'a>(value: *const c_char, label: &str) -> Result<Option<
 
 fn invalid_argument(message: impl Into<String>) -> Error {
     Error::new(ErrorKind::InvalidArgument, message)
+}
+
+unsafe fn external_identifier_from_abi(
+    scheme: *const c_char,
+    value: *const c_char,
+    qualifier: *const c_char,
+) -> Result<ExternalIdentifier, Error> {
+    // SAFETY: The exported caller guarantees live NUL-terminated strings.
+    let scheme = IdentifierScheme::new(unsafe { required_utf8(scheme, "scheme") }?)?;
+    // SAFETY: Same contract as above.
+    let value = unsafe { required_utf8(value, "value") }?;
+    // SAFETY: Null is accepted for the optional qualifier.
+    let qualifier = unsafe { optional_utf8(qualifier, "qualifier") }?.map(str::to_owned);
+    ExternalIdentifier::new(scheme, value, qualifier)
+}
+
+fn object_ref_from_abi(value: PpObjectRef) -> Result<ObjectRef, Error> {
+    match value.kind {
+        PP_OBJECT_PROJECT => Ok(ObjectRef::Project(ProjectId::from_bytes(value.id.bytes))),
+        PP_OBJECT_ASSET => Ok(ObjectRef::Asset(AssetId::from_bytes(value.id.bytes))),
+        PP_OBJECT_REPRESENTATION => Ok(ObjectRef::Representation(RepresentationId::from_bytes(
+            value.id.bytes,
+        ))),
+        PP_OBJECT_ACTIVITY => Ok(ObjectRef::Activity(
+            postproject_core::ActivityId::from_bytes(value.id.bytes),
+        )),
+        kind => Err(invalid_argument(format!(
+            "object kind {kind} is not recognized"
+        ))),
+    }
+}
+
+fn object_ref_to_abi(value: ObjectRef) -> Result<PpObjectRef, Error> {
+    let (kind, bytes) = match value {
+        ObjectRef::Project(id) => (PP_OBJECT_PROJECT, id.into_bytes()),
+        ObjectRef::Asset(id) => (PP_OBJECT_ASSET, id.into_bytes()),
+        ObjectRef::Representation(id) => (PP_OBJECT_REPRESENTATION, id.into_bytes()),
+        ObjectRef::Activity(id) => (PP_OBJECT_ACTIVITY, id.into_bytes()),
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "object kind is not supported by this ABI",
+            ));
+        }
+    };
+    Ok(PpObjectRef {
+        kind,
+        id: PpUuid { bytes },
+    })
 }
 
 const fn error_code(kind: ErrorKind) -> u32 {
@@ -1025,6 +1422,30 @@ fn sanitized_cstring(value: &str) -> CString {
     CString::new(value.replace('\0', "�")).unwrap_or_default()
 }
 
+fn exact_cstring(value: &str, label: &str) -> Result<CString, Error> {
+    CString::new(value).map_err(|_| {
+        Error::new(
+            ErrorKind::Internal,
+            format!("validated {label} unexpectedly contains NUL"),
+        )
+    })
+}
+
+impl TryFrom<ExternalIdentifier> for AbiExternalIdentifier {
+    type Error = Error;
+
+    fn try_from(identifier: ExternalIdentifier) -> Result<Self, Self::Error> {
+        Ok(Self {
+            scheme: exact_cstring(identifier.scheme().as_str(), "identifier scheme")?,
+            value: exact_cstring(identifier.value(), "identifier value")?,
+            qualifier: identifier
+                .qualifier()
+                .map(|value| exact_cstring(value, "identifier qualifier"))
+                .transpose()?,
+        })
+    }
+}
+
 const fn resolution_state(state: ResolutionState) -> u32 {
     match state {
         ResolutionState::OnlineAtKnownLocation => PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATION,
@@ -1068,6 +1489,12 @@ impl PpTransaction {
                     StagedMutation::Import(import) => transaction.import_original(import)?,
                     StagedMutation::MediaRoot(root) => transaction.add_media_root(root.clone())?,
                     StagedMutation::Location(location) => transaction.add_location(location)?,
+                    StagedMutation::AddExternalIdentifier(target, identifier) => {
+                        transaction.add_external_identifier(*target, identifier)?;
+                    }
+                    StagedMutation::RemoveExternalIdentifier(target, identifier) => {
+                        transaction.remove_external_identifier(*target, identifier)?;
+                    }
                 }
             }
             transaction.commit()

@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
   if (argc != 3) {
     return 64;
   }
-  if (pp_abi_version() != UINT32_C(1)) {
+  if (pp_abi_version() != UINT32_C(2)) {
     return 1;
   }
   pp_error_code_t status =
@@ -98,6 +98,16 @@ int main(int argc, char **argv) {
     pp_error_release(error);
     return 12;
   }
+  pp_object_ref_t asset_ref = {PP_OBJECT_ASSET, asset_id};
+  status = pp_transaction_add_external_identifier(
+      transaction, &asset_ref, "com.example.asset", "asset-42", "primary",
+      &error);
+  if (status != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 23;
+  }
   status = pp_transaction_add_media_root(transaction, argv[2], "fixture root",
                                          0, &root_id, &error);
   if (status != PP_OK || uuid_is_zero(&root_id)) {
@@ -131,6 +141,41 @@ int main(int argc, char **argv) {
     pp_error_release(error);
     return 15;
   }
+  pp_external_identifier_set_t *identifiers = NULL;
+  status = pp_project_external_identifiers(project, &asset_ref, &identifiers,
+                                           &error);
+  const char *scheme = NULL;
+  const char *external_value = NULL;
+  const char *qualifier = NULL;
+  if (status != PP_OK || identifiers == NULL ||
+      pp_external_identifier_set_count(identifiers) != UINT64_C(1) ||
+      pp_external_identifier_set_get(identifiers, 0, &scheme, &external_value,
+                                     &qualifier, &error) != PP_OK ||
+      strcmp(scheme, "com.example.asset") != 0 ||
+      strcmp(external_value, "asset-42") != 0 ||
+      strcmp(qualifier, "primary") != 0) {
+    pp_external_identifier_set_release(identifiers);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 24;
+  }
+  pp_external_identifier_set_release(identifiers);
+  pp_object_ref_set_t *objects = NULL;
+  pp_object_ref_t found_object = {0, {{0}}};
+  status = pp_project_find_by_external_identifier(
+      project, "com.example.asset", "asset-42", &objects, &error);
+  if (status != PP_OK || objects == NULL ||
+      pp_object_ref_set_count(objects) != UINT64_C(1) ||
+      pp_object_ref_set_get(objects, 0, &found_object, &error) != PP_OK ||
+      found_object.kind != PP_OBJECT_ASSET ||
+      memcmp(found_object.id.bytes, asset_id.bytes, sizeof(asset_id.bytes)) !=
+          0) {
+    pp_object_ref_set_release(objects);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 25;
+  }
+  pp_object_ref_set_release(objects);
 
   int moved_path_length =
       snprintf(moved_media_path, sizeof(moved_media_path), "%s.moved", argv[1]);

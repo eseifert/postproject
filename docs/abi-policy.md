@@ -1,13 +1,14 @@
 # ABI policy
 
-ABI version 1 is pre-release and may change during the 0.x series, with every
+ABI version 2 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
 
 ## Types and ownership
 
-Projects, transactions, resolution sets, and errors are opaque handles. A
+Projects, transactions, resolution sets, external-identifier sets,
+object-reference sets, and errors are opaque handles. A
 successful creation/open call transfers one project ownership reference to the
 caller, which releases it exactly once with `pp_project_release`. Failed calls
 optionally transfer an error object, released exactly once with
@@ -21,9 +22,10 @@ staged work. A transaction retains the underlying project state, so its handle
 remains valid if the originating project handle is released. Closed transaction
 handles may only be released.
 
-`pp_uuid_t` is the only public layout-bearing domain type and contains exactly 16
-network-order UUID bytes. Numeric errors are fixed-width values defined in the C
-header.
+`pp_uuid_t` contains exactly 16 network-order UUID bytes. `pp_object_ref_t`
+combines that ID with a fixed-width object-kind tag; open-world concepts such as
+identifier schemes remain UTF-8 strings rather than C enums. Numeric errors and
+object kinds are fixed-width values defined in the C header.
 
 ## Strings and errors
 
@@ -70,6 +72,15 @@ candidate using `pp_transaction_confirm_location`, and only transaction commit
 makes that location durable. The caller is responsible for passing a URI from
 the result it reviewed; the API validates the URI and representation identity at
 persistence time but does not silently choose a candidate.
+
+## External identifiers
+
+External identifiers are staged with a typed object reference, scheme, opaque
+value, and optional qualifier. Add/remove operations are atomic with every other
+transaction mutation. Enumeration returns an owned result-set handle whose
+strings remain borrowed until release. Exact scheme/value lookup returns a
+separate owned object-reference set and does not normalize inputs or contact a
+registry.
 
 The wrapper adds no domain behavior and exposes no C++ standard-library type
 through exported library symbols. Its source compatibility follows the 0.x

@@ -22,11 +22,25 @@ extern "C" {
 typedef struct pp_project pp_project_t;
 typedef struct pp_transaction pp_transaction_t;
 typedef struct pp_resolution_set pp_resolution_set_t;
+typedef struct pp_external_identifier_set pp_external_identifier_set_t;
+typedef struct pp_object_ref_set pp_object_ref_set_t;
 typedef struct pp_error pp_error_t;
 
 typedef struct pp_uuid {
   uint8_t bytes[16];
 } pp_uuid_t;
+
+typedef uint32_t pp_object_kind_t;
+
+#define PP_OBJECT_PROJECT UINT32_C(1)
+#define PP_OBJECT_ASSET UINT32_C(2)
+#define PP_OBJECT_REPRESENTATION UINT32_C(3)
+#define PP_OBJECT_ACTIVITY UINT32_C(4)
+
+typedef struct pp_object_ref {
+  pp_object_kind_t kind;
+  pp_uuid_t id;
+} pp_object_ref_t;
 
 typedef uint32_t pp_error_code_t;
 
@@ -83,6 +97,27 @@ PP_API pp_error_code_t pp_project_asset_exists(const pp_project_t *project,
                                                const pp_uuid_t *asset_id,
                                                uint8_t *out_exists,
                                                pp_error_t **out_error);
+/* Result strings are borrowed until the owning result set is released. */
+PP_API pp_error_code_t pp_project_external_identifiers(
+    const pp_project_t *project, const pp_object_ref_t *target,
+    pp_external_identifier_set_t **out_identifiers, pp_error_t **out_error);
+PP_API pp_error_code_t pp_project_find_by_external_identifier(
+    const pp_project_t *project, const char *scheme, const char *value,
+    pp_object_ref_set_t **out_objects, pp_error_t **out_error);
+PP_API uint64_t pp_external_identifier_set_count(
+    const pp_external_identifier_set_t *identifiers);
+PP_API pp_error_code_t pp_external_identifier_set_get(
+    const pp_external_identifier_set_t *identifiers, uint64_t index,
+    const char **out_scheme, const char **out_value, const char **out_qualifier,
+    pp_error_t **out_error);
+PP_API void pp_external_identifier_set_release(
+    pp_external_identifier_set_t *identifiers);
+PP_API uint64_t
+pp_object_ref_set_count(const pp_object_ref_set_t *objects);
+PP_API pp_error_code_t pp_object_ref_set_get(
+    const pp_object_ref_set_t *objects, uint64_t index,
+    pp_object_ref_t *out_object, pp_error_t **out_error);
+PP_API void pp_object_ref_set_release(pp_object_ref_set_t *objects);
 /* Resolution is read-only. Borrowed candidate URI and evidence-detail strings
  * remain valid until pp_resolution_set_release(). */
 PP_API pp_error_code_t pp_project_resolve_asset(
@@ -128,6 +163,16 @@ PP_API pp_error_code_t pp_transaction_add_media_root(
 PP_API pp_error_code_t pp_transaction_confirm_location(
     pp_transaction_t *transaction, const pp_uuid_t *representation_id,
     const char *uri, pp_error_t **out_error);
+/* Scheme and value are required borrowed UTF-8 without embedded NUL. Qualifier
+ * may be NULL. The complete mutation is validated and persisted at commit. */
+PP_API pp_error_code_t pp_transaction_add_external_identifier(
+    pp_transaction_t *transaction, const pp_object_ref_t *target,
+    const char *scheme, const char *value, const char *qualifier,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_remove_external_identifier(
+    pp_transaction_t *transaction, const pp_object_ref_t *target,
+    const char *scheme, const char *value, const char *qualifier,
+    pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_commit(pp_transaction_t *transaction,
                                              pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_rollback(pp_transaction_t *transaction,
