@@ -4,7 +4,7 @@ use postproject_core::{Error, ErrorKind, Result, Timestamp};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 /// The newest schema understood by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 struct Migration {
     version: u32,
@@ -12,8 +12,8 @@ struct Migration {
 }
 
 const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("migrations/001_initial.sql"),
+    version: 2,
+    sql: include_str!("migrations/002_initial.sql"),
 }];
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<()> {
@@ -24,6 +24,16 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<()> {
             format!(
                 "project schema version {current} is newer than supported version \
                  {CURRENT_SCHEMA_VERSION}"
+            ),
+        ));
+    }
+
+    if current != 0 && current < CURRENT_SCHEMA_VERSION {
+        return Err(Error::new(
+            ErrorKind::Unsupported,
+            format!(
+                "project schema version {current} is an unsupported pre-release format; \
+                 create a new project with schema version {CURRENT_SCHEMA_VERSION}"
             ),
         ));
     }
@@ -111,7 +121,7 @@ mod tests {
             .expect("query migration history")
             .collect::<std::result::Result<_, _>>()
             .expect("read migration history");
-        assert_eq!(applied, [1]);
+        assert_eq!(applied, [2]);
         for table in [
             "projects",
             "assets",
@@ -119,6 +129,7 @@ mod tests {
             "fingerprints",
             "locations",
             "media_roots",
+            "external_identifiers",
         ] {
             let count: u32 = connection
                 .query_row(
@@ -129,6 +140,19 @@ mod tests {
                 .expect("query migrated table");
             assert_eq!(count, 1, "missing migrated table {table}");
         }
+    }
+
+    #[test]
+    fn obsolete_development_schema_is_rejected_without_modification() {
+        let mut connection = Connection::open_in_memory().expect("open in-memory database");
+        connection
+            .pragma_update(None, "user_version", 1)
+            .expect("set obsolete schema version");
+
+        let error = migrate(&mut connection).expect_err("obsolete schema must be rejected");
+
+        assert_eq!(error.kind(), ErrorKind::Unsupported);
+        assert_eq!(schema_version(&connection).expect("read version"), 1);
     }
 
     #[test]
@@ -151,7 +175,7 @@ mod tests {
     fn failed_migration_rolls_back_completely() {
         let mut connection = Connection::open_in_memory().expect("open in-memory database");
         let invalid = Migration {
-            version: 1,
+            version: 2,
             sql: "CREATE TABLE partial (value INTEGER); INVALID SQL;",
         };
 

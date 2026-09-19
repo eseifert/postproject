@@ -7,14 +7,19 @@ SQLite's per-connection value-length limit is reduced to 16 MiB before migration
 or queries run. This bounds allocations for strings, blobs, and result rows read
 from an untrusted project file while leaving ample room for project metadata.
 
-## Schema version 1
+## Schema version 2
 
-Version 1 stores a singleton project record plus assets, representations,
-fingerprints, locations, and media roots. Public identities are 16-byte UUID
-values; SQLite row numbers are never exposed. Constraints enforce ID lengths,
-enumeration ranges, non-empty fingerprint values, and referential integrity.
-Indexes support the first-iteration access patterns: representations by asset,
-locations by representation, and enabled media roots by priority.
+Version 2 stores a singleton project record plus assets, representations,
+fingerprints, locations, media roots, and external identifiers. Public
+identities are 16-byte UUID values; SQLite row numbers are never exposed.
+Constraints enforce ID lengths, enumeration ranges, bounded identifier text,
+non-empty fingerprint values, and referential integrity. Indexes support
+representations by asset, locations by representation, external identifiers by
+target and exact scheme/value, and enabled media roots by priority.
+
+External identifiers use a polymorphic asset/representation target. SQLite
+triggers enforce target existence and cleanup because one column cannot carry
+foreign keys to two target tables.
 
 ## Migrations and durability
 
@@ -22,7 +27,9 @@ locations by representation, and enabled media roots by priority.
 records every applied numbered migration and its timestamp. Each migration runs
 inside an immediate SQLite transaction. A failed statement therefore leaves both
 the prior schema and version intact. Opening a newer unsupported schema fails
-without modifying it.
+without modifying it. The obsolete pre-release schema is rejected explicitly;
+there is no compatibility migration because no external project files were
+published for that development format.
 
 Project creation reserves a new file without overwriting any existing path, runs
 migrations, then inserts project identity and metadata in one transaction. Normal
@@ -37,8 +44,8 @@ becoming part of the public contract.
 ## Domain transactions
 
 Media imports insert the asset, original representation, optional fingerprint,
-and initial location inside one explicit deferred SQLite transaction. Media roots
-participate in the same transaction boundary. Commit and rollback close the
-transaction; repeated close attempts return a conflict. Dropping an open
-transaction uses SQLite rollback semantics, so partially staged imports never
-become visible.
+and initial location inside one explicit deferred SQLite transaction. Media
+roots and external-identifier attachments/removals participate in the same
+transaction boundary. Commit and rollback close the transaction; repeated close
+attempts return a conflict. Dropping an open transaction uses SQLite rollback
+semantics, so partially staged changes never become visible.
