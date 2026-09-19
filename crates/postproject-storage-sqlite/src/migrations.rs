@@ -4,17 +4,23 @@ use postproject_core::{Error, ErrorKind, Result, Timestamp};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 /// The newest schema understood by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 struct Migration {
     version: u32,
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 2,
-    sql: include_str!("migrations/002_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 2,
+        sql: include_str!("migrations/002_initial.sql"),
+    },
+    Migration {
+        version: 3,
+        sql: include_str!("migrations/003_metadata.sql"),
+    },
+];
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<()> {
     let current = schema_version(connection)?;
@@ -28,7 +34,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<()> {
         ));
     }
 
-    if current != 0 && current < CURRENT_SCHEMA_VERSION {
+    if current != 0 && current < 2 {
         return Err(Error::new(
             ErrorKind::Unsupported,
             format!(
@@ -121,7 +127,7 @@ mod tests {
             .expect("query migration history")
             .collect::<std::result::Result<_, _>>()
             .expect("read migration history");
-        assert_eq!(applied, [2]);
+        assert_eq!(applied, [2, 3]);
         for table in [
             "projects",
             "assets",
@@ -130,6 +136,7 @@ mod tests {
             "locations",
             "media_roots",
             "external_identifiers",
+            "metadata_assertions",
         ] {
             let count: u32 = connection
                 .query_row(
@@ -140,6 +147,34 @@ mod tests {
                 .expect("query migrated table");
             assert_eq!(count, 1, "missing migrated table {table}");
         }
+    }
+
+    #[test]
+    fn upgrades_supported_schema_two_projects() {
+        let mut connection = Connection::open_in_memory().expect("open in-memory database");
+        apply_migration(&mut connection, &MIGRATIONS[0]).expect("apply schema two");
+        connection
+            .execute(
+                "INSERT INTO projects (
+                    singleton, id, schema_version, created_at_micros, display_name
+                 ) VALUES (1, zeroblob(16), 2, 0, NULL)",
+                [],
+            )
+            .expect("insert schema-two project");
+
+        migrate(&mut connection).expect("upgrade schema-two project");
+
+        assert_eq!(schema_version(&connection).unwrap(), 3);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT schema_version FROM projects WHERE singleton = 1",
+                    [],
+                    |row| row.get::<_, u32>(0),
+                )
+                .unwrap(),
+            3
+        );
     }
 
     #[test]
