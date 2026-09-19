@@ -419,6 +419,19 @@ impl ContentStructure {
             _ => None,
         }
     }
+
+    /// Returns referenced resources in structural order.
+    #[must_use]
+    pub fn resource_ids(&self) -> Vec<ResourceId> {
+        match &self.0 {
+            ContentStructureData::SingleResource(resource_id) => vec![*resource_id],
+            ContentStructureData::ImageSequence(descriptor) => vec![descriptor.resource_id()],
+            ContentStructureData::OrderedParts(members)
+            | ContentStructureData::Package(members) => {
+                members.iter().map(ResourceMember::resource_id).collect()
+            }
+        }
+    }
 }
 
 fn validate_members(members: &[ResourceMember]) -> Result<()> {
@@ -530,6 +543,10 @@ mod tests {
 
         assert_eq!(ordered.kind(), ContentStructureKind::OrderedParts);
         assert_eq!(package.members().expect("package members").len(), 2);
+        assert_eq!(
+            package.resource_ids(),
+            vec![required.resource_id(), optional.resource_id()]
+        );
         assert!(ContentStructure::ordered_parts(vec![optional.clone()]).is_err());
         assert!(ContentStructure::package(vec![optional]).is_err());
         assert!(ContentStructure::package(vec![required.clone(), required]).is_err());
