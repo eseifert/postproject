@@ -185,96 +185,6 @@ pub enum RepresentationKind {
     Derived,
 }
 
-/// Cheap filesystem facts stored with a representation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct FileFacts {
-    size_bytes: u64,
-    modified_at: Option<Timestamp>,
-}
-
-impl FileFacts {
-    /// Creates file facts from a byte size and optional modification time.
-    #[must_use]
-    pub const fn new(size_bytes: u64, modified_at: Option<Timestamp>) -> Self {
-        Self {
-            size_bytes,
-            modified_at,
-        }
-    }
-
-    /// Returns the observed file size.
-    #[must_use]
-    pub const fn size_bytes(self) -> u64 {
-        self.size_bytes
-    }
-
-    /// Returns the observed modification time, when available.
-    #[must_use]
-    pub const fn modified_at(self) -> Option<Timestamp> {
-        self.modified_at
-    }
-}
-
-/// Versioned, deterministic identity evidence derived from file contents.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Fingerprint {
-    algorithm: String,
-    version: u16,
-    value: Vec<u8>,
-}
-
-impl Fingerprint {
-    /// Creates a fingerprint after validating its extensible algorithm label and value.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ErrorKind::InvalidArgument`] when the algorithm label is empty,
-    /// too long, contains unsupported bytes, or when `value` is empty.
-    pub fn new(algorithm: impl Into<String>, version: u16, value: Vec<u8>) -> Result<Self> {
-        let algorithm = algorithm.into();
-        if algorithm.is_empty()
-            || algorithm.len() > 64
-            || !algorithm
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-        {
-            return Err(Error::new(
-                ErrorKind::InvalidArgument,
-                "fingerprint algorithm must be 1-64 ASCII letters, digits, '-' or '_'",
-            ));
-        }
-        if value.is_empty() {
-            return Err(Error::new(
-                ErrorKind::InvalidArgument,
-                "fingerprint value must not be empty",
-            ));
-        }
-        Ok(Self {
-            algorithm,
-            version,
-            value,
-        })
-    }
-
-    /// Returns the algorithm identifier.
-    #[must_use]
-    pub fn algorithm(&self) -> &str {
-        &self.algorithm
-    }
-
-    /// Returns the algorithm format version.
-    #[must_use]
-    pub const fn version(&self) -> u16 {
-        self.version
-    }
-
-    /// Returns the opaque fingerprint bytes.
-    #[must_use]
-    pub fn value(&self) -> &[u8] {
-        &self.value
-    }
-}
-
 /// One encoded or derived form of an asset.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Representation {
@@ -533,18 +443,6 @@ mod tests {
         assert_eq!(project.media_roots()[0].priority(), 0);
         assert_eq!(project.media_roots()[1].id(), first_id);
         assert_eq!(project.media_roots()[2].id(), second_id);
-    }
-
-    #[test]
-    fn fingerprint_validation_preserves_extensibility() {
-        let fingerprint =
-            Fingerprint::new("blake3", 1, vec![1, 2, 3]).expect("algorithm label is valid");
-        assert_eq!(fingerprint.algorithm(), "blake3");
-        assert_eq!(fingerprint.version(), 1);
-        assert_eq!(fingerprint.value(), [1, 2, 3]);
-
-        assert!(Fingerprint::new("contains spaces", 1, vec![1]).is_err());
-        assert!(Fingerprint::new("valid", 1, Vec::new()).is_err());
     }
 
     #[test]

@@ -1,12 +1,77 @@
 //! Storage-level resource identity and access values.
 
-use crate::{FileFacts, Fingerprint, LocatorId, ResourceId, Result, Timestamp, uri::normalize_uri};
+use crate::{Error, ErrorKind, LocatorId, ResourceId, Result, Timestamp, uri::normalize_uri};
+
+/// Cheap filesystem facts observed for one resource.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FileFacts {
+    size_bytes: u64,
+    modified_at: Option<Timestamp>,
+}
+
+impl FileFacts {
+    /// Creates file facts from a byte size and optional modification time.
+    #[must_use]
+    pub const fn new(size_bytes: u64, modified_at: Option<Timestamp>) -> Self {
+        Self {
+            size_bytes,
+            modified_at,
+        }
+    }
+
+    /// Returns the observed file size.
+    #[must_use]
+    pub const fn size_bytes(self) -> u64 {
+        self.size_bytes
+    }
+
+    /// Returns the observed modification time, when available.
+    #[must_use]
+    pub const fn modified_at(self) -> Option<Timestamp> {
+        self.modified_at
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FingerprintData {
+    algorithm: String,
+    version: u16,
+    value: Vec<u8>,
+}
+
+impl FingerprintData {
+    fn new(algorithm: impl Into<String>, version: u16, value: Vec<u8>) -> Result<Self> {
+        let algorithm = algorithm.into();
+        if algorithm.is_empty()
+            || algorithm.len() > 64
+            || !algorithm
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "fingerprint algorithm must be 1-64 ASCII letters, digits, '-' or '_'",
+            ));
+        }
+        if value.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "fingerprint value must not be empty",
+            ));
+        }
+        Ok(Self {
+            algorithm,
+            version,
+            value,
+        })
+    }
+}
 
 macro_rules! typed_fingerprint {
     ($(#[$metadata:meta])* $name:ident) => {
         $(#[$metadata])*
         #[derive(Clone, Debug, Eq, PartialEq)]
-        pub struct $name(Fingerprint);
+        pub struct $name(FingerprintData);
 
         impl $name {
             /// Creates typed fingerprint evidence.
@@ -19,25 +84,25 @@ macro_rules! typed_fingerprint {
                 version: u16,
                 value: Vec<u8>,
             ) -> Result<Self> {
-                Fingerprint::new(algorithm, version, value).map(Self)
+                FingerprintData::new(algorithm, version, value).map(Self)
             }
 
             /// Returns the algorithm identifier.
             #[must_use]
             pub fn algorithm(&self) -> &str {
-                self.0.algorithm()
+                &self.0.algorithm
             }
 
             /// Returns the algorithm format version.
             #[must_use]
             pub const fn version(&self) -> u16 {
-                self.0.version()
+                self.0.version
             }
 
             /// Returns the opaque fingerprint bytes.
             #[must_use]
             pub fn value(&self) -> &[u8] {
-                self.0.value()
+                &self.0.value
             }
         }
     };
@@ -198,5 +263,7 @@ mod tests {
 
         assert_eq!(resource.algorithm(), "blake3");
         assert_eq!(representation.algorithm(), "tree-blake3");
+        assert!(ResourceFingerprint::new("contains spaces", 1, vec![1]).is_err());
+        assert!(RepresentationFingerprint::new("valid", 1, Vec::new()).is_err());
     }
 }

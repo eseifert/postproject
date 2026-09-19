@@ -40,14 +40,14 @@ pub use metadata::{
     MetadataValue, MetadataValueKind, PropertyId, RationalValue, VocabularyId,
 };
 pub use model::{
-    Asset, FileFacts, Fingerprint, MediaRoot, OriginalMediaImport, Project, Representation,
-    RepresentationKind, Timestamp,
+    Asset, MediaRoot, OriginalMediaImport, Project, Representation, RepresentationKind, Timestamp,
 };
 pub use resolution::{
     Confidence, EvidenceKind, Resolution, ResolutionCandidate, ResolutionEvidence, ResolutionState,
 };
 pub use resource::{
-    Locator, LocatorAvailability, RepresentationFingerprint, Resource, ResourceFingerprint,
+    FileFacts, Locator, LocatorAvailability, RepresentationFingerprint, Resource,
+    ResourceFingerprint,
 };
 pub use storage::{ProjectRead, ProjectStore, ProjectStoreTransaction};
 pub use time::{RationalRate, RationalTime, TimeRange};
