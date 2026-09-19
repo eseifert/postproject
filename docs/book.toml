@@ -3,11 +3,10 @@ title = "PostProject"
 description = "User, integration, and contributor documentation for PostProject"
 authors = ["PostProject contributors"]
 language = "en"
-multilingual = false
 src = "src"
 
 [build]
-build-dir = "../target/book"
+build-dir = "../target/postproject"
 
 [output.html]
 git-repository-url = "https://github.com/eseifert/postproject"

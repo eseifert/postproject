@@ -59,7 +59,9 @@ jobs:
         with:
           tool: mdbook,lychee,typos-cli
       - run: mdbook build docs
-      - run: lychee --offline --no-progress target/book README.md
+      - run: >-
+          lychee --offline --no-progress --root-dir target
+          target/postproject README.md
       - run: typos README.md docs/src docs/adr
 
   dependencies:
