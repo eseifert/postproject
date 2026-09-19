@@ -7,13 +7,13 @@ use std::{path::PathBuf, process::ExitCode, str::FromStr};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
-    Asset, AssetId, EvidenceKind, ExternalIdentifier, IdentifierScheme, Location,
-    LocationAvailability, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
+    Asset, AssetId, EvidenceKind, ExternalIdentifier, IdentifierScheme, Locator,
+    LocatorAvailability, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
     MetadataValueKind, ObjectRef, ProjectId, PropertyId, Representation, RepresentationId,
-    RepresentationKind, Resolution, ResolutionEvidence, ResolutionState, VocabularyId,
+    RepresentationKind, Resolution, ResolutionEvidence, ResolutionState, Resource, VocabularyId,
 };
 use postproject_media::{
-    MediaResolver, prepare_confirmed_location, prepare_media_root, prepare_original_media,
+    MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
 };
 use postproject_storage_sqlite::SqliteProject;
 use serde::Serialize;
@@ -64,7 +64,7 @@ enum MediaCommand {
     Add(MediaAddArgs),
     /// List logical media assets.
     List(ProjectArgs),
-    /// Show an asset, its representations, and locations.
+    /// Show an asset, its representations, resources, and locators.
     Show(MediaAssetArgs),
     /// Resolve an asset under configured media roots.
     Resolve(MediaResolveArgs),
@@ -243,7 +243,8 @@ struct ProjectView {
 struct ImportView {
     asset_id: String,
     representation_id: String,
-    location_id: String,
+    resource_id: String,
+    locator_id: String,
     uri: String,
 }
 
@@ -268,9 +269,16 @@ struct AssetView {
 struct RepresentationView {
     id: String,
     kind: &'static str,
-    fingerprint: Option<FingerprintView>,
+    structure: &'static str,
+    resources: Vec<ResourceView>,
+}
+
+#[derive(Debug, Serialize)]
+struct ResourceView {
+    id: String,
+    fingerprints: Vec<FingerprintView>,
     file_size_bytes: Option<u64>,
-    locations: Vec<LocationView>,
+    locators: Vec<LocatorView>,
 }
 
 #[derive(Debug, Serialize)]
@@ -281,7 +289,7 @@ struct FingerprintView {
 }
 
 #[derive(Debug, Serialize)]
-struct LocationView {
+struct LocatorView {
     id: String,
     uri: String,
     availability: &'static str,
@@ -441,8 +449,9 @@ fn media_add(args: MediaAddArgs, json: bool) -> Result<()> {
     let view = ImportView {
         asset_id: prepared.asset().id().to_string(),
         representation_id: prepared.representation().id().to_string(),
-        location_id: prepared.location().id().to_string(),
-        uri: prepared.location().uri().to_owned(),
+        resource_id: prepared.resources()[0].id().to_string(),
+        locator_id: prepared.locators()[0].id().to_string(),
+        uri: prepared.locators()[0].uri().to_owned(),
     };
     let mut project = SqliteProject::open(&args.project).context("open project")?;
     let mut transaction = project
@@ -508,13 +517,16 @@ fn media_show(args: &MediaAssetArgs, json: bool) -> Result<()> {
         );
         for representation in &view.representations {
             println!(
-                "  {} {}: {} location(s)",
+                "  {} {} ({}): {} resource(s)",
                 representation.kind,
                 representation.id,
-                representation.locations.len()
+                representation.structure,
+                representation.resources.len()
             );
-            for location in &representation.locations {
-                println!("    {} [{}]", location.uri, location.availability);
+            for resource in &representation.resources {
+                for locator in &resource.locators {
+                    println!("    {} [{}]", locator.uri, locator.availability);
+                }
             }
         }
         Ok(())
@@ -744,44 +756,58 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
     let resolver = MediaResolver::default();
     let mut resolutions = Vec::new();
     for representation in &representations {
-        let locations = project
-            .locations(representation.id())
-            .context("load representation locations")?;
-        resolutions.push(
-            resolver
-                .resolve(representation, &locations, project.project().media_roots())
-                .context("resolve representation")?,
-        );
+        let resources = project
+            .resources(representation.id())
+            .context("load representation resources")?;
+        if resources.len() != 1 {
+            bail!("compound representation resolution is not exposed by this command yet");
+        }
+        let resource = &resources[0];
+        let locators = project
+            .locators(resource.id())
+            .context("load resource locators")?;
+        let resolution = resolver
+            .resolve(
+                representation.id(),
+                resource,
+                &locators,
+                project.project().media_roots(),
+            )
+            .context("resolve representation resource")?;
+        resolutions.push((resource.id(), resolution));
     }
 
     if let Some(uri) = args.confirm.as_deref() {
         let matching: Vec<_> = resolutions
             .iter()
-            .flat_map(|resolution| {
+            .flat_map(|(resource_id, resolution)| {
                 resolution
                     .candidates()
                     .iter()
                     .filter(move |candidate| candidate.uri() == uri)
-                    .map(move |_| resolution.representation_id())
+                    .map(move |_| *resource_id)
             })
             .collect();
         if matching.len() != 1 {
             bail!("confirmation URI must identify exactly one candidate from this resolution");
         }
-        let location = prepare_confirmed_location(matching[0], uri.to_owned())
-            .context("prepare confirmed location")?;
+        let locator = prepare_confirmed_locator(matching[0], uri.to_owned())
+            .context("prepare confirmed locator")?;
         let mut transaction = project
             .begin_transaction()
             .context("begin confirmation transaction")?;
         transaction
-            .add_location(&location)
-            .context("stage confirmed location")?;
-        transaction.commit().context("commit confirmed location")?;
+            .add_locator(&locator)
+            .context("stage confirmed locator")?;
+        transaction.commit().context("commit confirmed locator")?;
     }
 
     let view = ResolveView {
         asset_id: asset_id.to_string(),
-        resolutions: resolutions.iter().map(ResolutionView::from).collect(),
+        resolutions: resolutions
+            .iter()
+            .map(|(_, resolution)| ResolutionView::from(resolution))
+            .collect(),
         confirmed_uri: args.confirm,
     };
     if json {
@@ -1007,10 +1033,17 @@ fn asset_view(project: &SqliteProject, asset: &Asset) -> Result<AssetView> {
         .representations(asset.id())
         .context("load asset representations")?
     {
-        let locations = project
-            .locations(representation.id())
-            .context("load representation locations")?;
-        representations.push(representation_view(&representation, &locations));
+        let mut resources = Vec::new();
+        for resource in project
+            .resources(representation.id())
+            .context("load representation resources")?
+        {
+            let locators = project
+                .locators(resource.id())
+                .context("load resource locators")?;
+            resources.push(resource_view(&resource, &locators));
+        }
+        representations.push(representation_view(&representation, resources));
     }
     Ok(AssetView {
         id: asset.id().to_string(),
@@ -1023,32 +1056,42 @@ fn asset_view(project: &SqliteProject, asset: &Asset) -> Result<AssetView> {
 
 fn representation_view(
     representation: &Representation,
-    locations: &[Location],
+    resources: Vec<ResourceView>,
 ) -> RepresentationView {
     RepresentationView {
         id: representation.id().to_string(),
         kind: representation_kind(representation.kind()),
-        fingerprint: representation
-            .fingerprint()
+        structure: content_structure_kind(representation.content_structure().kind()),
+        resources,
+    }
+}
+
+fn resource_view(resource: &Resource, locators: &[Locator]) -> ResourceView {
+    ResourceView {
+        id: resource.id().to_string(),
+        fingerprints: resource
+            .fingerprints()
+            .iter()
             .map(|fingerprint| FingerprintView {
                 algorithm: fingerprint.algorithm().to_owned(),
                 version: fingerprint.version(),
                 value_hex: hex::encode(fingerprint.value()),
-            }),
-        file_size_bytes: representation
+            })
+            .collect(),
+        file_size_bytes: resource
             .file_facts()
             .map(postproject_core::FileFacts::size_bytes),
-        locations: locations.iter().map(LocationView::from).collect(),
+        locators: locators.iter().map(LocatorView::from).collect(),
     }
 }
 
-impl From<&Location> for LocationView {
-    fn from(location: &Location) -> Self {
+impl From<&Locator> for LocatorView {
+    fn from(locator: &Locator) -> Self {
         Self {
-            id: location.id().to_string(),
-            uri: location.uri().to_owned(),
-            availability: location_availability(location.availability()),
-            last_seen_unix_micros: location
+            id: locator.id().to_string(),
+            uri: locator.uri().to_owned(),
+            availability: locator_availability(locator.availability()),
+            last_seen_unix_micros: locator
                 .last_seen()
                 .map(postproject_core::Timestamp::as_unix_micros),
         }
@@ -1107,10 +1150,20 @@ const fn representation_kind(kind: RepresentationKind) -> &'static str {
     }
 }
 
-const fn location_availability(availability: LocationAvailability) -> &'static str {
+const fn content_structure_kind(kind: postproject_core::ContentStructureKind) -> &'static str {
+    match kind {
+        postproject_core::ContentStructureKind::SingleResource => "single_resource",
+        postproject_core::ContentStructureKind::ImageSequence => "image_sequence",
+        postproject_core::ContentStructureKind::OrderedParts => "ordered_parts",
+        postproject_core::ContentStructureKind::Package => "package",
+        _ => "unknown",
+    }
+}
+
+const fn locator_availability(availability: LocatorAvailability) -> &'static str {
     match availability {
-        LocationAvailability::Online => "online",
-        LocationAvailability::Offline => "offline",
+        LocatorAvailability::Online => "online",
+        LocatorAvailability::Offline => "offline",
         _ => "unknown",
     }
 }

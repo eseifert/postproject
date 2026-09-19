@@ -203,9 +203,9 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
         asset_id,
     ]);
     assert_eq!(
-        shown["representations"][0]["locations"]
+        shown["representations"][0]["resources"][0]["locators"]
             .as_array()
-            .expect("locations")
+            .expect("locators")
             .len(),
         2
     );
