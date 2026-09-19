@@ -33,11 +33,26 @@ int main(int argc, char **argv) {
     }
     auto transaction = project.beginTransaction();
     const auto asset_id = transaction.importMedia(media_path, "C++ asset");
+    const postproject::ObjectRef asset_ref{postproject::ObjectKind::asset,
+                                           asset_id};
+    const postproject::ExternalIdentifier external_id{
+        "com.example.asset", "asset-42", std::string("primary")};
+    transaction.addExternalIdentifier(asset_ref, external_id);
     static_cast<void>(transaction.addMediaRoot(
         std::filesystem::path(path).parent_path().string(), "fixtures"));
     transaction.commit();
     if (!project.containsAsset(asset_id)) {
       return 8;
+    }
+    const auto identifiers = project.externalIdentifiers(asset_ref);
+    const auto found =
+        project.findByExternalIdentifier("com.example.asset", "asset-42");
+    if (identifiers.size() != 1 ||
+        identifiers[0].scheme != external_id.scheme ||
+        identifiers[0].value != external_id.value ||
+        identifiers[0].qualifier != external_id.qualifier || found.size() != 1 ||
+        !(found[0] == asset_ref)) {
+      return 13;
     }
 
     auto rolled_back = project.beginTransaction();

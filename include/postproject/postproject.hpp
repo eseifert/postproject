@@ -68,6 +68,29 @@ private:
   Bytes bytes_;
 };
 
+enum class ObjectKind : std::uint32_t {
+  project = PP_OBJECT_PROJECT,
+  asset = PP_OBJECT_ASSET,
+  representation = PP_OBJECT_REPRESENTATION,
+  activity = PP_OBJECT_ACTIVITY,
+};
+
+struct ObjectRef final {
+  ObjectKind kind;
+  Uuid id;
+
+  friend constexpr bool operator==(const ObjectRef &left,
+                                   const ObjectRef &right) noexcept {
+    return left.kind == right.kind && left.id == right.id;
+  }
+};
+
+struct ExternalIdentifier final {
+  std::string scheme;
+  std::string value;
+  std::optional<std::string> qualifier;
+};
+
 enum class ResolutionState : std::uint32_t {
   online_at_known_location = PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATION,
   resolved_exact = PP_RESOLUTION_RESOLVED_EXACT,
@@ -125,6 +148,24 @@ struct ResolutionSetDeleter final {
 using ResolutionSetHandle =
     std::unique_ptr<pp_resolution_set_t, ResolutionSetDeleter>;
 
+struct ExternalIdentifierSetDeleter final {
+  void operator()(pp_external_identifier_set_t *identifiers) const noexcept {
+    pp_external_identifier_set_release(identifiers);
+  }
+};
+
+using ExternalIdentifierSetHandle = std::unique_ptr<
+    pp_external_identifier_set_t, ExternalIdentifierSetDeleter>;
+
+struct ObjectRefSetDeleter final {
+  void operator()(pp_object_ref_set_t *objects) const noexcept {
+    pp_object_ref_set_release(objects);
+  }
+};
+
+using ObjectRefSetHandle =
+    std::unique_ptr<pp_object_ref_set_t, ObjectRefSetDeleter>;
+
 inline void throw_if_error(pp_error_code_t status, pp_error_t *raw_error) {
   ErrorHandle error(raw_error);
   if (status == PP_OK) {
@@ -133,7 +174,7 @@ inline void throw_if_error(pp_error_code_t status, pp_error_t *raw_error) {
 
   const char *raw_message = error ? pp_error_message(error.get()) : nullptr;
   std::string message =
-      raw_message != nullptr ? raw_message : "libpostproject operation failed";
+      raw_message != nullptr ? raw_message : "PostProject operation failed";
   throw Error(static_cast<ErrorCode>(status), std::move(message));
 }
 
@@ -160,6 +201,14 @@ inline pp_uuid_t native_uuid(const Uuid &value) {
     native.bytes[index] = value.bytes()[index];
   }
   return native;
+}
+
+inline ObjectRef object_ref(const pp_object_ref_t &value) {
+  return {static_cast<ObjectKind>(value.kind), uuid(value.id)};
+}
+
+inline pp_object_ref_t native_object_ref(const ObjectRef &value) {
+  return {static_cast<pp_object_kind_t>(value.kind), native_uuid(value.id)};
 }
 
 inline Evidence resolution_evidence(const pp_resolution_set_t *resolutions,
@@ -227,6 +276,16 @@ public:
     detail::throw_if_error(status, error);
   }
 
+  void addExternalIdentifier(const ObjectRef &target,
+                             const ExternalIdentifier &identifier) {
+    mutate_external_identifier(false, target, identifier);
+  }
+
+  void removeExternalIdentifier(const ObjectRef &target,
+                                const ExternalIdentifier &identifier) {
+    mutate_external_identifier(true, target, identifier);
+  }
+
   void commit() {
     pp_error_t *error = nullptr;
     const pp_error_code_t status = pp_transaction_commit(transaction_, &error);
@@ -287,6 +346,36 @@ private:
     return detail::uuid(value);
   }
 
+  void mutate_external_identifier(bool remove, const ObjectRef &target,
+                                  const ExternalIdentifier &identifier) {
+    const pp_object_ref_t native_target = detail::native_object_ref(target);
+    const std::string scheme =
+        detail::checked_string(identifier.scheme, "scheme");
+    const std::string value = detail::checked_string(identifier.value, "value");
+    const std::optional<std::string> qualifier =
+        identifier.qualifier.has_value()
+            ? std::optional<std::string>(detail::checked_string(
+                  *identifier.qualifier, "qualifier"))
+            : std::nullopt;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = remove
+                                       ? pp_transaction_remove_external_identifier(
+                                             transaction_, &native_target,
+                                             scheme.c_str(), value.c_str(),
+                                             qualifier.has_value()
+                                                 ? qualifier->c_str()
+                                                 : nullptr,
+                                             &error)
+                                       : pp_transaction_add_external_identifier(
+                                             transaction_, &native_target,
+                                             scheme.c_str(), value.c_str(),
+                                             qualifier.has_value()
+                                                 ? qualifier->c_str()
+                                                 : nullptr,
+                                             &error);
+    detail::throw_if_error(status, error);
+  }
+
   pp_transaction_t *transaction_ = nullptr;
 };
 
@@ -345,6 +434,66 @@ public:
         pp_project_asset_exists(project_, &value, &exists, &error);
     detail::throw_if_error(status, error);
     return exists != 0;
+  }
+
+  [[nodiscard]] std::vector<ExternalIdentifier>
+  externalIdentifiers(const ObjectRef &target) const {
+    const pp_object_ref_t native_target = detail::native_object_ref(target);
+    pp_external_identifier_set_t *raw_identifiers = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_project_external_identifiers(
+        project_, &native_target, &raw_identifiers, &error);
+    detail::throw_if_error(status, error);
+    detail::ExternalIdentifierSetHandle identifiers(raw_identifiers);
+
+    std::vector<ExternalIdentifier> result;
+    const std::uint64_t count =
+        pp_external_identifier_set_count(identifiers.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      const char *scheme = nullptr;
+      const char *value = nullptr;
+      const char *qualifier = nullptr;
+      pp_error_t *item_error = nullptr;
+      const pp_error_code_t item_status = pp_external_identifier_set_get(
+          identifiers.get(), index, &scheme, &value, &qualifier, &item_error);
+      detail::throw_if_error(item_status, item_error);
+      result.push_back(
+          {scheme != nullptr ? std::string(scheme) : std::string(),
+           value != nullptr ? std::string(value) : std::string(),
+           qualifier != nullptr
+               ? std::optional<std::string>(std::string(qualifier))
+               : std::nullopt});
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::vector<ObjectRef>
+  findByExternalIdentifier(std::string_view scheme,
+                           std::string_view value) const {
+    const std::string native_scheme =
+        detail::checked_string(scheme, "scheme");
+    const std::string native_value = detail::checked_string(value, "value");
+    pp_object_ref_set_t *raw_objects = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_project_find_by_external_identifier(
+        project_, native_scheme.c_str(), native_value.c_str(), &raw_objects,
+        &error);
+    detail::throw_if_error(status, error);
+    detail::ObjectRefSetHandle objects(raw_objects);
+
+    std::vector<ObjectRef> result;
+    const std::uint64_t count = pp_object_ref_set_count(objects.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      pp_object_ref_t object{};
+      pp_error_t *item_error = nullptr;
+      const pp_error_code_t item_status =
+          pp_object_ref_set_get(objects.get(), index, &object, &item_error);
+      detail::throw_if_error(item_status, item_error);
+      result.push_back(detail::object_ref(object));
+    }
+    return result;
   }
 
   [[nodiscard]] std::vector<Resolution>
