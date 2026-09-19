@@ -19,8 +19,9 @@ mod transaction;
 mod uri;
 
 pub use content::{
-    FrameRange, ImageSequencePattern, MAX_FRAME_PADDING, MAX_RESOURCE_ROLE_BYTES,
-    MAX_SEQUENCE_PATTERN_BYTES, ResourceMember, ResourceRole,
+    FrameRange, ImageSequenceDescriptor, ImageSequencePattern, MAX_FRAME_PADDING,
+    MAX_RESOURCE_ROLE_BYTES, MAX_SEQUENCE_EXCEPTIONS, MAX_SEQUENCE_PATTERN_BYTES, ResourceMember,
+    ResourceRole,
 };
 pub use error::{Error, ErrorKind, Result};
 pub use id::{

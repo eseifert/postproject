@@ -1,6 +1,6 @@
 //! Structure and membership values for compound representations.
 
-use crate::{Error, ErrorKind, ResourceId, Result};
+use crate::{Error, ErrorKind, RationalRate, ResourceId, Result};
 
 /// Maximum encoded length of an extensible resource-role identifier.
 pub const MAX_RESOURCE_ROLE_BYTES: usize = 128;
@@ -8,6 +8,8 @@ pub const MAX_RESOURCE_ROLE_BYTES: usize = 128;
 pub const MAX_SEQUENCE_PATTERN_BYTES: usize = 1_024;
 /// Maximum supported zero-padding width for an image-sequence frame number.
 pub const MAX_FRAME_PADDING: u8 = 32;
+/// Maximum number of sparse frame exceptions stored in one sequence descriptor.
+pub const MAX_SEQUENCE_EXCEPTIONS: usize = 100_000;
 
 /// An inclusive, regularly stepped frame domain.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -140,6 +142,93 @@ impl ImageSequencePattern {
     }
 }
 
+/// A compact description of one regular or sparse image sequence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImageSequenceDescriptor {
+    resource_id: ResourceId,
+    pattern: ImageSequencePattern,
+    frames: FrameRange,
+    rate: RationalRate,
+    known_missing_frames: Vec<i64>,
+}
+
+impl ImageSequenceDescriptor {
+    /// Creates a sequence descriptor and canonicalizes its sparse exceptions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] when there are too many missing
+    /// frames or an exception does not belong to the regular frame domain.
+    pub fn new(
+        resource_id: ResourceId,
+        pattern: ImageSequencePattern,
+        frames: FrameRange,
+        rate: RationalRate,
+        mut known_missing_frames: Vec<i64>,
+    ) -> Result<Self> {
+        if known_missing_frames.len() > MAX_SEQUENCE_EXCEPTIONS {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                format!("image sequence has more than {MAX_SEQUENCE_EXCEPTIONS} sparse exceptions"),
+            ));
+        }
+        if known_missing_frames
+            .iter()
+            .any(|frame| !frames.contains(*frame))
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "missing image-sequence frame is outside the regular frame domain",
+            ));
+        }
+        known_missing_frames.sort_unstable();
+        known_missing_frames.dedup();
+        Ok(Self {
+            resource_id,
+            pattern,
+            frames,
+            rate,
+            known_missing_frames,
+        })
+    }
+
+    /// Returns the compact patterned resource identity.
+    #[must_use]
+    pub const fn resource_id(&self) -> ResourceId {
+        self.resource_id
+    }
+
+    /// Returns the sequence filename pattern.
+    #[must_use]
+    pub const fn pattern(&self) -> &ImageSequencePattern {
+        &self.pattern
+    }
+
+    /// Returns the regular frame domain before sparse exceptions.
+    #[must_use]
+    pub const fn frames(&self) -> FrameRange {
+        self.frames
+    }
+
+    /// Returns the exact playback or capture rate.
+    #[must_use]
+    pub const fn rate(&self) -> RationalRate {
+        self.rate
+    }
+
+    /// Returns sorted, unique frames known to be absent.
+    #[must_use]
+    pub fn known_missing_frames(&self) -> &[i64] {
+        &self.known_missing_frames
+    }
+
+    /// Returns whether a frame is recorded as missing.
+    #[must_use]
+    pub fn is_known_missing(&self, frame: i64) -> bool {
+        self.known_missing_frames.binary_search(&frame).is_ok()
+    }
+}
+
 /// A namespaced, open-world role for a resource within a representation.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ResourceRole(String);
@@ -239,6 +328,35 @@ mod tests {
         assert_eq!(pattern.filename(-2), "shot.-002.exr");
         assert!(ImageSequencePattern::new("directory/shot.", ".exr", 4).is_err());
         assert!(ImageSequencePattern::new("", "", 0).is_err());
+    }
+
+    #[test]
+    fn sequence_descriptor_is_compact_and_canonical() {
+        let frames = FrameRange::new(1_001, 1_010, 1).expect("valid range");
+        let pattern = ImageSequencePattern::new("render.", ".exr", 4).expect("valid pattern");
+        let rate = RationalRate::new(24_000, 1_001).expect("valid rate");
+        let descriptor = ImageSequenceDescriptor::new(
+            ResourceId::new(),
+            pattern,
+            frames,
+            rate,
+            vec![1_007, 1_003, 1_007],
+        )
+        .expect("valid sequence");
+
+        assert_eq!(descriptor.known_missing_frames(), [1_003, 1_007]);
+        assert!(descriptor.is_known_missing(1_003));
+        assert!(!descriptor.is_known_missing(1_004));
+        assert!(
+            ImageSequenceDescriptor::new(
+                ResourceId::new(),
+                descriptor.pattern().clone(),
+                frames,
+                rate,
+                vec![999],
+            )
+            .is_err()
+        );
     }
 
     #[test]
