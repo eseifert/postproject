@@ -30,3 +30,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - Schema-0 migration fixture and full multi-asset relocation/ambiguity E2E coverage.
 - `cargo-fuzz` targets for project files, fingerprints, C strings, and strong IDs.
 - ASan/UBSan native-consumer CI and a standalone installed-package C example.
+- Shared/static native artifacts, installed release documentation, and release checklist.

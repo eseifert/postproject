@@ -30,7 +30,8 @@ designed C ABI, with a thin C++17 RAII wrapper layered on top.
 
 See [the architecture](docs/architecture.md), [domain model](docs/domain-model.md),
 [benchmark methodology](docs/benchmarks.md), [fuzzing guide](docs/fuzzing.md), and
-[roadmap](docs/roadmap.md) for the current design.
+[release checklist](docs/releasing.md) for the current design and delivery policy.
+See the [roadmap](docs/roadmap.md) for explicitly deferred work.
 
 ## Build
 
@@ -111,6 +112,7 @@ To stage a conventional native package after building the library:
 cargo build --release --locked -p postproject-ffi
 cmake -S . -B target/package \
   -DPOSTPROJECT_LIBRARY="$PWD/target/release/libpostproject.so" \
+  -DPOSTPROJECT_STATIC_LIBRARY="$PWD/target/release/libpostproject.a" \
   -DCMAKE_INSTALL_PREFIX="$PWD/target/install"
 cmake --install target/package
 ```

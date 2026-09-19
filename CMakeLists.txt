@@ -8,6 +8,7 @@ include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 
 set(POSTPROJECT_LIBRARY "" CACHE FILEPATH "Path to the prebuilt libpostproject native library")
+set(POSTPROJECT_STATIC_LIBRARY "" CACHE FILEPATH "Optional path to the prebuilt static library")
 if(NOT POSTPROJECT_LIBRARY)
     message(FATAL_ERROR "POSTPROJECT_LIBRARY must name a library built by cargo build --release -p postproject-ffi")
 endif()
@@ -22,8 +23,14 @@ install(
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/postproject"
 )
 install(FILES "${POSTPROJECT_LIBRARY}" DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+if(POSTPROJECT_STATIC_LIBRARY)
+    if(NOT EXISTS "${POSTPROJECT_STATIC_LIBRARY}")
+        message(FATAL_ERROR "POSTPROJECT_STATIC_LIBRARY does not exist: ${POSTPROJECT_STATIC_LIBRARY}")
+    endif()
+    install(FILES "${POSTPROJECT_STATIC_LIBRARY}" DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+endif()
 install(
-    FILES LICENSE LICENSES/Apache-2.0.txt LICENSES/MIT.txt
+    FILES LICENSE LICENSES/Apache-2.0.txt LICENSES/MIT.txt README.md CHANGELOG.md
     DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/libpostproject"
 )
 

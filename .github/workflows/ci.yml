@@ -89,6 +89,7 @@ jobs:
         run: >-
           cmake -S . -B target/cmake-package
           -DPOSTPROJECT_LIBRARY="$GITHUB_WORKSPACE/target/release/libpostproject.so"
+          -DPOSTPROJECT_STATIC_LIBRARY="$GITHUB_WORKSPACE/target/release/libpostproject.a"
           -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/target/install"
           -DCMAKE_BUILD_TYPE=Release
       - run: cmake --install target/cmake-package
@@ -100,6 +101,17 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build target/cpp-consumer --config Release --parallel
       - run: ctest --test-dir target/cpp-consumer --build-config Release --output-on-failure
+      - name: Verify and upload native package
+        run: >-
+          test -f target/install/lib/libpostproject.so -a
+          -f target/install/lib/libpostproject.a -a
+          -f target/install/include/postproject/postproject.h -a
+          -f target/install/include/postproject/postproject.hpp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libpostproject-linux-x86_64
+          path: target/install
+          if-no-files-found: error
 
   sanitizers:
     name: Native ASan and UBSan
@@ -125,6 +137,7 @@ jobs:
         run: >-
           cmake -S . -B target/cmake-sanitized-package
           -DPOSTPROJECT_LIBRARY="$GITHUB_WORKSPACE/target/release/libpostproject.so"
+          -DPOSTPROJECT_STATIC_LIBRARY="$GITHUB_WORKSPACE/target/release/libpostproject.a"
           -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/target/sanitized-install"
           -DCMAKE_BUILD_TYPE=Release
       - run: cmake --install target/cmake-sanitized-package
