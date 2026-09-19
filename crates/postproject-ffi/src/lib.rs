@@ -735,6 +735,148 @@ pub unsafe extern "C" fn pp_metadata_value_get_string(
     }
 }
 
+/// Reads a signed integer value.
+///
+/// # Safety
+///
+/// `value` must be borrowed and live. `out_value` must be writable and
+/// `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_get_i64(
+    value: *const PpMetadataValue,
+    out_value: *mut i64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_value(out_value, 0);
+        ffi_call(out_error, || match &metadata_value(value)?.inner {
+            AbiMetadataValue::I64(stored) => write_copy(out_value, *stored, "out_value"),
+            _ => Err(metadata_type_error("i64")),
+        })
+    }
+}
+
+/// Reads an unsigned integer value.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_metadata_value_get_i64`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_get_u64(
+    value: *const PpMetadataValue,
+    out_value: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_value(out_value, 0);
+        ffi_call(out_error, || match &metadata_value(value)?.inner {
+            AbiMetadataValue::U64(stored) => write_copy(out_value, *stored, "out_value"),
+            _ => Err(metadata_type_error("u64")),
+        })
+    }
+}
+
+/// Reads a boolean as zero or one.
+///
+/// # Safety
+///
+/// `value` must be borrowed and live. `out_value` must be writable and
+/// `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_get_bool(
+    value: *const PpMetadataValue,
+    out_value: *mut u8,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_value(out_value, 0);
+        ffi_call(out_error, || match &metadata_value(value)?.inner {
+            AbiMetadataValue::Bool(stored) => write_copy(out_value, u8::from(*stored), "out_value"),
+            _ => Err(metadata_type_error("bool")),
+        })
+    }
+}
+
+/// Reads a signed Unix-microsecond timestamp.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_metadata_value_get_i64`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_get_timestamp(
+    value: *const PpMetadataValue,
+    out_unix_micros: *mut i64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_value(out_unix_micros, 0);
+        ffi_call(out_error, || match &metadata_value(value)?.inner {
+            AbiMetadataValue::Timestamp(stored) => {
+                write_copy(out_unix_micros, *stored, "out_unix_micros")
+            }
+            _ => Err(metadata_type_error("timestamp")),
+        })
+    }
+}
+
+/// Reads borrowed URI text.
+///
+/// # Safety
+///
+/// `value` must be borrowed and live. `out_uri` must be writable and
+/// `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_get_uri(
+    value: *const PpMetadataValue,
+    out_uri: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_const_output(out_uri);
+        ffi_call(out_error, || {
+            require_output(out_uri, "out_uri")?;
+            match &metadata_value(value)?.inner {
+                AbiMetadataValue::Uri(stored) => {
+                    out_uri.write(stored.as_ptr());
+                    Ok(())
+                }
+                _ => Err(metadata_type_error("URI")),
+            }
+        })
+    }
+}
+
+/// Reads borrowed opaque bytes and their length.
+///
+/// # Safety
+///
+/// `value` must be borrowed and live. Outputs must be writable and `out_error`
+/// may be null or writable. The byte pointer remains valid with the result set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_value_get_bytes(
+    value: *const PpMetadataValue,
+    out_bytes: *mut *const u8,
+    out_length: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_const_output(out_bytes);
+        initialize_value(out_length, 0);
+        ffi_call(out_error, || {
+            require_output(out_bytes, "out_bytes")?;
+            require_output(out_length, "out_length")?;
+            match &metadata_value(value)?.inner {
+                AbiMetadataValue::Bytes(stored) => {
+                    out_bytes.write(stored.as_ptr());
+                    out_length.write(length_as_u64(stored.len())?);
+                    Ok(())
+                }
+                _ => Err(metadata_type_error("bytes")),
+            }
+        })
+    }
+}
+
 /// Resolves every representation belonging to an asset without mutating the project.
 ///
 /// The returned immutable result set owns all candidate URI and evidence-detail
@@ -1685,6 +1827,13 @@ unsafe fn metadata_value<'a>(value: *const PpMetadataValue) -> Result<&'a PpMeta
 
 fn metadata_type_error(expected: &str) -> Error {
     invalid_argument(format!("metadata value is not {expected}"))
+}
+
+unsafe fn write_copy<T: Copy>(output: *mut T, value: T, label: &str) -> Result<(), Error> {
+    require_output(output, label)?;
+    // SAFETY: The caller contract requires this checked non-null output to be writable.
+    unsafe { output.write(value) };
+    Ok(())
 }
 
 impl PpResolutionSet {

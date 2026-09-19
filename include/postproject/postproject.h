@@ -156,6 +156,24 @@ pp_metadata_value_kind(const pp_metadata_value_t *value);
 PP_API pp_error_code_t pp_metadata_value_get_string(
     const pp_metadata_value_t *value, const char **out_text,
     const char **out_language, pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_value_get_i64(
+    const pp_metadata_value_t *value, int64_t *out_value,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_value_get_u64(
+    const pp_metadata_value_t *value, uint64_t *out_value,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_value_get_bool(
+    const pp_metadata_value_t *value, uint8_t *out_value,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_value_get_timestamp(
+    const pp_metadata_value_t *value, int64_t *out_unix_micros,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_value_get_uri(
+    const pp_metadata_value_t *value, const char **out_uri,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_value_get_bytes(
+    const pp_metadata_value_t *value, const uint8_t **out_bytes,
+    uint64_t *out_length, pp_error_t **out_error);
 /* Resolution is read-only. Borrowed candidate URI and evidence-detail strings
  * remain valid until pp_resolution_set_release(). */
 PP_API pp_error_code_t pp_project_resolve_asset(
