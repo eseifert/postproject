@@ -13,7 +13,7 @@ pub const MAX_METADATA_TEXT_BYTES: usize = 1024 * 1024;
 /// Maximum UTF-8 byte length of one URI value.
 pub const MAX_METADATA_URI_BYTES: usize = 4096;
 /// Maximum byte length of one binary value.
-pub const MAX_METADATA_BINARY_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_METADATA_BINARY_BYTES: usize = 15 * 1024 * 1024;
 /// Maximum byte length of a language tag.
 pub const MAX_LANGUAGE_TAG_BYTES: usize = 64;
 /// Maximum number of direct children in a list or structured value.
@@ -23,7 +23,7 @@ pub const MAX_METADATA_DECIMAL_SCALE: u32 = 1024;
 /// Maximum nesting depth of lists and structured values, including the root.
 pub const MAX_METADATA_NESTING_DEPTH: usize = 32;
 /// Maximum aggregate payload size of one metadata value.
-pub const MAX_METADATA_TOTAL_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_METADATA_TOTAL_BYTES: usize = 15 * 1024 * 1024;
 
 /// An extensible identifier for a metadata vocabulary or namespace.
 ///

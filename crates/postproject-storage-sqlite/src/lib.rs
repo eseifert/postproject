@@ -5,6 +5,11 @@
 
 #![forbid(unsafe_code)]
 
+#[allow(
+    dead_code,
+    reason = "wired into metadata persistence in the next change"
+)]
+mod metadata_codec;
 mod migrations;
 mod transaction;
 
