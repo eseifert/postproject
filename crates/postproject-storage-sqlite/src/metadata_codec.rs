@@ -137,7 +137,8 @@ fn encode_reference(writer: &mut Writer, reference: ObjectRef) -> Result<()> {
         ObjectRef::Project(id) => (0, id.into_bytes()),
         ObjectRef::Asset(id) => (1, id.into_bytes()),
         ObjectRef::Representation(id) => (2, id.into_bytes()),
-        ObjectRef::Activity(id) => (3, id.into_bytes()),
+        ObjectRef::Resource(id) => (3, id.into_bytes()),
+        ObjectRef::Activity(id) => (4, id.into_bytes()),
         _ => {
             return Err(Error::new(
                 ErrorKind::Unsupported,
@@ -219,7 +220,10 @@ fn decode_reference(reader: &mut Reader<'_>) -> Result<ObjectRef> {
         2 => Ok(ObjectRef::Representation(RepresentationId::from_bytes(
             bytes,
         ))),
-        3 => Ok(ObjectRef::Activity(ActivityId::from_bytes(bytes))),
+        3 => Ok(ObjectRef::Resource(
+            postproject_core::ResourceId::from_bytes(bytes),
+        )),
+        4 => Ok(ObjectRef::Activity(ActivityId::from_bytes(bytes))),
         _ => Err(malformed(format!(
             "metadata reference uses unknown object kind {kind}"
         ))),
@@ -448,7 +452,10 @@ mod tests {
             MetadataValue::reference(ObjectRef::Representation(RepresentationId::from_bytes(
                 [3; 16],
             ))),
-            MetadataValue::reference(ObjectRef::Activity(ActivityId::from_bytes([4; 16]))),
+            MetadataValue::reference(ObjectRef::Resource(
+                postproject_core::ResourceId::from_bytes([4; 16]),
+            )),
+            MetadataValue::reference(ObjectRef::Activity(ActivityId::from_bytes([5; 16]))),
         ];
         for value in values {
             round_trip(&value);

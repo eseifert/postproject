@@ -10,7 +10,8 @@ use postproject_core::{
     Asset, AssetId, EvidenceKind, ExternalIdentifier, IdentifierScheme, Locator,
     LocatorAvailability, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
     MetadataValueKind, ObjectRef, ProjectId, PropertyId, Representation, RepresentationId,
-    RepresentationKind, Resolution, ResolutionEvidence, ResolutionState, Resource, VocabularyId,
+    RepresentationKind, Resolution, ResolutionEvidence, ResolutionState, Resource, ResourceId,
+    VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
@@ -130,7 +131,7 @@ struct IdentifierArgs {
 
 #[derive(Debug, Subcommand)]
 enum IdentifierCommand {
-    /// Attach an external identifier to an asset or representation.
+    /// Attach an external identifier to an asset, representation, or resource.
     Add(IdentifierMutationArgs),
     /// Remove one exact external identifier attachment.
     Remove(IdentifierMutationArgs),
@@ -144,6 +145,7 @@ enum IdentifierCommand {
 enum IdentifierTargetKind {
     Asset,
     Representation,
+    Resource,
 }
 
 #[derive(Debug, Args)]
@@ -194,6 +196,7 @@ enum MetadataTargetKind {
     Project,
     Asset,
     Representation,
+    Resource,
 }
 
 #[derive(Debug, Args)]
@@ -841,6 +844,9 @@ fn parse_identifier_target(kind: IdentifierTargetKind, value: &str) -> Result<Ob
         IdentifierTargetKind::Representation => RepresentationId::from_str(value)
             .map(ObjectRef::Representation)
             .context("parse representation ID"),
+        IdentifierTargetKind::Resource => ResourceId::from_str(value)
+            .map(ObjectRef::Resource)
+            .context("parse resource ID"),
     }
 }
 
@@ -855,6 +861,9 @@ fn parse_metadata_target(kind: MetadataTargetKind, value: &str) -> Result<Object
         MetadataTargetKind::Representation => RepresentationId::from_str(value)
             .map(ObjectRef::Representation)
             .context("parse representation ID"),
+        MetadataTargetKind::Resource => ResourceId::from_str(value)
+            .map(ObjectRef::Resource)
+            .context("parse resource ID"),
     }
 }
 
@@ -891,6 +900,10 @@ fn object_ref_view(target: ObjectRef) -> Result<ObjectRefView> {
         }),
         ObjectRef::Representation(id) => Ok(ObjectRefView {
             kind: "representation",
+            id: id.to_string(),
+        }),
+        ObjectRef::Resource(id) => Ok(ObjectRefView {
+            kind: "resource",
             id: id.to_string(),
         }),
         ObjectRef::Activity(id) => Ok(ObjectRefView {

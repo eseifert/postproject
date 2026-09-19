@@ -37,7 +37,8 @@ typedef uint32_t pp_object_kind_t;
 #define PP_OBJECT_PROJECT UINT32_C(1)
 #define PP_OBJECT_ASSET UINT32_C(2)
 #define PP_OBJECT_REPRESENTATION UINT32_C(3)
-#define PP_OBJECT_ACTIVITY UINT32_C(4)
+#define PP_OBJECT_RESOURCE UINT32_C(4)
+#define PP_OBJECT_ACTIVITY UINT32_C(5)
 
 typedef uint32_t pp_metadata_value_kind_t;
 

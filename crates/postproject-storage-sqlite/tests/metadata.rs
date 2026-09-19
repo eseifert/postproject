@@ -41,6 +41,7 @@ fn repeated_and_structured_metadata_round_trip_and_query() {
     let prepared = prepare_original_media(&media_path, None, None).expect("prepare import");
     let asset = ObjectRef::Asset(prepared.asset().id());
     let representation = ObjectRef::Representation(prepared.representation().id());
+    let resource = ObjectRef::Resource(prepared.resources()[0].id());
     let keywords = property("http://iptc.org/std/videometadatahub/1.0", "keywords");
     let contact = property(
         "http://iptc.org/std/videometadatahub/1.0",
@@ -78,6 +79,13 @@ fn repeated_and_structured_metadata_round_trip_and_query() {
             .expect("add representation metadata");
         transaction
             .add_metadata_value(
+                resource,
+                &application_note,
+                &MetadataValue::string("storage-specific note").unwrap(),
+            )
+            .expect("add resource metadata");
+        transaction
+            .add_metadata_value(
                 project_target,
                 &application_note,
                 &MetadataValue::string("production note").unwrap(),
@@ -103,9 +111,10 @@ fn repeated_and_structured_metadata_round_trip_and_query() {
     let matches = reopened
         .query_by_metadata_property(&application_note)
         .expect("query application property");
-    assert_eq!(matches.len(), 2);
+    assert_eq!(matches.len(), 3);
     assert_eq!(matches[0].target(), project_target);
     assert_eq!(matches[1].target(), representation);
+    assert_eq!(matches[2].target(), resource);
 
     {
         let mut transaction = reopened.begin_transaction().unwrap();

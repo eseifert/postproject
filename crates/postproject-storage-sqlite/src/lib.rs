@@ -936,9 +936,10 @@ pub(crate) fn encode_identifier_target(target: &ObjectRef) -> Result<(i64, &[u8;
     match target {
         ObjectRef::Asset(id) => Ok((1, id.as_bytes())),
         ObjectRef::Representation(id) => Ok((2, id.as_bytes())),
+        ObjectRef::Resource(id) => Ok((3, id.as_bytes())),
         ObjectRef::Project(_) | ObjectRef::Activity(_) => Err(Error::new(
             ErrorKind::Unsupported,
-            "external identifiers currently support assets and representations",
+            "external identifiers support assets, representations, and resources",
         )),
         _ => Err(Error::new(
             ErrorKind::Unsupported,
@@ -952,6 +953,7 @@ fn decode_identifier_target(kind: i64, id: Vec<u8>) -> Result<ObjectRef> {
     match kind {
         1 => Ok(ObjectRef::Asset(AssetId::from_bytes(id))),
         2 => Ok(ObjectRef::Representation(RepresentationId::from_bytes(id))),
+        3 => Ok(ObjectRef::Resource(ResourceId::from_bytes(id))),
         _ => Err(Error::new(
             ErrorKind::Storage,
             format!("stored external identifier target kind {kind} is invalid"),
@@ -964,7 +966,8 @@ pub(crate) fn encode_metadata_target(target: &ObjectRef) -> Result<(i64, &[u8; 1
         ObjectRef::Project(id) => Ok((0, id.as_bytes())),
         ObjectRef::Asset(id) => Ok((1, id.as_bytes())),
         ObjectRef::Representation(id) => Ok((2, id.as_bytes())),
-        ObjectRef::Activity(id) => Ok((3, id.as_bytes())),
+        ObjectRef::Resource(id) => Ok((3, id.as_bytes())),
+        ObjectRef::Activity(id) => Ok((4, id.as_bytes())),
         _ => Err(Error::new(
             ErrorKind::Unsupported,
             "metadata target kind is not supported by this schema",
@@ -978,7 +981,8 @@ fn decode_metadata_target(kind: i64, id: Vec<u8>) -> Result<ObjectRef> {
         0 => Ok(ObjectRef::Project(ProjectId::from_bytes(id))),
         1 => Ok(ObjectRef::Asset(AssetId::from_bytes(id))),
         2 => Ok(ObjectRef::Representation(RepresentationId::from_bytes(id))),
-        3 => Ok(ObjectRef::Activity(
+        3 => Ok(ObjectRef::Resource(ResourceId::from_bytes(id))),
+        4 => Ok(ObjectRef::Activity(
             postproject_core::ActivityId::from_bytes(id),
         )),
         _ => Err(Error::new(

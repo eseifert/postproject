@@ -64,7 +64,8 @@ const PP_EVIDENCE_DISCOVERY_ERROR: u32 = 10;
 const PP_OBJECT_PROJECT: u32 = 1;
 const PP_OBJECT_ASSET: u32 = 2;
 const PP_OBJECT_REPRESENTATION: u32 = 3;
-const PP_OBJECT_ACTIVITY: u32 = 4;
+const PP_OBJECT_RESOURCE: u32 = 4;
+const PP_OBJECT_ACTIVITY: u32 = 5;
 
 /// Current pre-1.0 ABI version.
 pub const ABI_VERSION: u32 = 4;
@@ -1925,6 +1926,7 @@ fn object_ref_from_abi(value: PpObjectRef) -> Result<ObjectRef, Error> {
         PP_OBJECT_REPRESENTATION => Ok(ObjectRef::Representation(RepresentationId::from_bytes(
             value.id.bytes,
         ))),
+        PP_OBJECT_RESOURCE => Ok(ObjectRef::Resource(ResourceId::from_bytes(value.id.bytes))),
         PP_OBJECT_ACTIVITY => Ok(ObjectRef::Activity(
             postproject_core::ActivityId::from_bytes(value.id.bytes),
         )),
@@ -1939,6 +1941,7 @@ pub(crate) fn object_ref_to_abi(value: ObjectRef) -> Result<PpObjectRef, Error> 
         ObjectRef::Project(id) => (PP_OBJECT_PROJECT, id.into_bytes()),
         ObjectRef::Asset(id) => (PP_OBJECT_ASSET, id.into_bytes()),
         ObjectRef::Representation(id) => (PP_OBJECT_REPRESENTATION, id.into_bytes()),
+        ObjectRef::Resource(id) => (PP_OBJECT_RESOURCE, id.into_bytes()),
         ObjectRef::Activity(id) => (PP_OBJECT_ACTIVITY, id.into_bytes()),
         _ => {
             return Err(Error::new(

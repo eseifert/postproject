@@ -112,6 +112,8 @@ pub enum ObjectRef {
     Asset(AssetId),
     /// A concrete asset representation.
     Representation(RepresentationId),
+    /// A storage-level resource.
+    Resource(ResourceId),
     /// A production activity.
     Activity(ActivityId),
 }

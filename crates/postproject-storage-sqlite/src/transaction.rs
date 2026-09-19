@@ -611,6 +611,7 @@ fn identifier_target_exists(
     let table = match target_kind {
         1 => "assets",
         2 => "representations",
+        3 => "resources",
         _ => {
             return Err(Error::new(
                 ErrorKind::Unsupported,
@@ -636,7 +637,8 @@ fn ensure_metadata_target_exists(
         0 => "projects",
         1 => "assets",
         2 => "representations",
-        3 => {
+        3 => "resources",
+        4 => {
             return Err(Error::new(
                 ErrorKind::Unsupported,
                 "activity metadata requires activity persistence",

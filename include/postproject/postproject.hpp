@@ -72,6 +72,7 @@ enum class ObjectKind : std::uint32_t {
   project = PP_OBJECT_PROJECT,
   asset = PP_OBJECT_ASSET,
   representation = PP_OBJECT_REPRESENTATION,
+  resource = PP_OBJECT_RESOURCE,
   activity = PP_OBJECT_ACTIVITY,
 };
 

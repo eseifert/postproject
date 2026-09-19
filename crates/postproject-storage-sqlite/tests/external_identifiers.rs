@@ -27,6 +27,7 @@ fn multiple_external_identifiers_round_trip_and_support_exact_lookup() {
     let prepared = prepare_original_media(&media_path, None, None).expect("prepare import");
     let asset = ObjectRef::Asset(prepared.asset().id());
     let representation = ObjectRef::Representation(prepared.representation().id());
+    let resource = ObjectRef::Resource(prepared.resources()[0].id());
     let umid_scheme = IdentifierScheme::new("urn:smpte:umid").expect("valid scheme");
     let vendor_scheme = IdentifierScheme::new("com.example.camera.serial").expect("valid scheme");
     let material_umid = identifier(
@@ -40,6 +41,7 @@ fn multiple_external_identifiers_round_trip_and_support_exact_lookup() {
         Some("instance"),
     );
     let vendor_id = identifier(&vendor_scheme, "  Camera A / 0007  ", None);
+    let storage_id = identifier(&vendor_scheme, "storage-object-7", Some("resource"));
 
     let mut project = SqliteProject::create(&project_path, None).expect("create project");
     {
@@ -56,6 +58,9 @@ fn multiple_external_identifiers_round_trip_and_support_exact_lookup() {
         transaction
             .add_external_identifier(representation, &vendor_id)
             .expect("attach vendor ID");
+        transaction
+            .add_external_identifier(resource, &storage_id)
+            .expect("attach storage identifier");
         transaction.commit().expect("commit transaction");
     }
     drop(project);
@@ -72,6 +77,12 @@ fn multiple_external_identifiers_round_trip_and_support_exact_lookup() {
             .external_identifiers(representation)
             .expect("load representation identifiers"),
         std::slice::from_ref(&vendor_id)
+    );
+    assert_eq!(
+        reopened
+            .external_identifiers(resource)
+            .expect("load resource identifiers"),
+        std::slice::from_ref(&storage_id)
     );
     assert_eq!(
         reopened
