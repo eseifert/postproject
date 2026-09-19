@@ -6,8 +6,8 @@ set_and_check(
 )
 
 if(NOT TARGET PostProject::postproject)
-    add_library(PostProject::postproject UNKNOWN IMPORTED)
     if(WIN32)
+        add_library(PostProject::postproject SHARED IMPORTED)
         set_and_check(
             PostProject_RUNTIME_LIBRARY
             "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_BINDIR@/@POSTPROJECT_RUNTIME_LIBRARY_FILENAME@"
@@ -19,6 +19,7 @@ if(NOT TARGET PostProject::postproject)
                 IMPORTED_LOCATION "${PostProject_RUNTIME_LIBRARY}"
         )
     else()
+        add_library(PostProject::postproject UNKNOWN IMPORTED)
         set_target_properties(
             PostProject::postproject
             PROPERTIES IMPORTED_LOCATION "${PostProject_LIBRARY}"
