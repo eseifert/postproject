@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+mod content;
 mod error;
 mod id;
 mod identifier;
@@ -17,6 +18,7 @@ mod time;
 mod transaction;
 mod uri;
 
+pub use content::{MAX_RESOURCE_ROLE_BYTES, ResourceMember, ResourceRole};
 pub use error::{Error, ErrorKind, Result};
 pub use id::{
     ActivityId, AssetId, LocationId, LocatorId, MediaRootId, ObjectRef, ProjectId,
