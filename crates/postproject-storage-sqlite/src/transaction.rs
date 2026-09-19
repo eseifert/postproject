@@ -1,9 +1,10 @@
 //! Explicit SQLite-backed domain transactions.
 
 use postproject_core::{
-    Error, ErrorKind, ExternalIdentifier, Location, LocationAvailability, MediaRoot,
-    MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, Project,
-    ProjectStoreTransaction, Result, TransactionId, TransactionLifecycle, TransactionState,
+    ContentStructure, ContentStructureKind, Error, ErrorKind, ExternalIdentifier, Locator,
+    LocatorAvailability, MediaRoot, MetadataProperty, MetadataValue, ObjectRef,
+    OriginalMediaImport, Project, ProjectStoreTransaction, Resource, Result, TransactionId,
+    TransactionLifecycle, TransactionState,
 };
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 
@@ -60,23 +61,6 @@ impl<'project> SqliteTransaction<'project> {
         let transaction = self.open_transaction()?;
         let asset = import.asset();
         let representation = import.representation();
-        let location = import.location();
-        let size = representation
-            .file_facts()
-            .map(|facts| {
-                i64::try_from(facts.size_bytes()).map_err(|error| {
-                    Error::new(
-                        ErrorKind::Unsupported,
-                        format!("media file is too large for SQLite storage: {error}"),
-                    )
-                })
-            })
-            .transpose()?;
-        let modified_at = representation
-            .file_facts()
-            .and_then(postproject_core::FileFacts::modified_at)
-            .map(postproject_core::Timestamp::as_unix_micros);
-        let availability = encode_availability(location.availability())?;
 
         transaction
             .execute(
@@ -93,20 +77,19 @@ impl<'project> SqliteTransaction<'project> {
         transaction
             .execute(
                 "INSERT INTO representations (
-                    id, asset_id, kind, file_size_bytes, modified_at_micros
-                 ) VALUES (?1, ?2, 0, ?3, ?4)",
+                    id, asset_id, kind, structure_kind
+                 ) VALUES (?1, ?2, 0, ?3)",
                 params![
                     representation.id().as_bytes().as_slice(),
                     asset.id().as_bytes().as_slice(),
-                    size,
-                    modified_at,
+                    encode_structure_kind(representation.content_structure().kind()),
                 ],
             )
             .map_err(mutation_error("persist original representation"))?;
-        if let Some(fingerprint) = representation.fingerprint() {
+        for fingerprint in representation.fingerprints() {
             transaction
                 .execute(
-                    "INSERT INTO fingerprints (
+                    "INSERT INTO representation_fingerprints (
                         representation_id, algorithm, algorithm_version, value
                      ) VALUES (?1, ?2, ?3, ?4)",
                     params![
@@ -116,22 +99,31 @@ impl<'project> SqliteTransaction<'project> {
                         fingerprint.value(),
                     ],
                 )
-                .map_err(mutation_error("persist original fingerprint"))?;
+                .map_err(mutation_error("persist representation fingerprint"))?;
         }
-        persist_location(transaction, location, availability)?;
+        for resource in import.resources() {
+            persist_resource(transaction, resource)?;
+        }
+        persist_content_structure(
+            transaction,
+            representation.id(),
+            representation.content_structure(),
+        )?;
+        for locator in import.locators() {
+            persist_locator(transaction, locator)?;
+        }
         Ok(())
     }
 
-    /// Stages an additional confirmed location for a representation.
+    /// Stages an additional confirmed locator for a resource.
     ///
     /// # Errors
     ///
     /// Returns [`ErrorKind::Conflict`] if the transaction is closed,
-    /// [`ErrorKind::AlreadyExists`] for a duplicate location or missing owning
-    /// representation, or [`ErrorKind::Storage`] for other persistence failures.
-    pub fn add_location(&mut self, location: &postproject_core::Location) -> Result<()> {
-        let availability = encode_availability(location.availability())?;
-        persist_location(self.open_transaction()?, location, availability)
+    /// [`ErrorKind::AlreadyExists`] for a duplicate locator or missing owning
+    /// resource, or [`ErrorKind::Storage`] for other persistence failures.
+    pub fn add_locator(&mut self, locator: &Locator) -> Result<()> {
+        persist_locator(self.open_transaction()?, locator)
     }
 
     /// Stages a configured media root.
@@ -399,8 +391,8 @@ impl ProjectStoreTransaction for SqliteTransaction<'_> {
         SqliteTransaction::import_original(self, import)
     }
 
-    fn add_location(&mut self, location: &Location) -> Result<()> {
-        SqliteTransaction::add_location(self, location)
+    fn add_locator(&mut self, locator: &Locator) -> Result<()> {
+        SqliteTransaction::add_locator(self, locator)
     }
 
     fn add_media_root(&mut self, root: MediaRoot) -> Result<()> {
@@ -458,40 +450,154 @@ impl ProjectStoreTransaction for SqliteTransaction<'_> {
     }
 }
 
-fn encode_availability(value: LocationAvailability) -> Result<i64> {
+const fn encode_structure_kind(value: ContentStructureKind) -> i64 {
     match value {
-        LocationAvailability::Unknown => Ok(0),
-        LocationAvailability::Online => Ok(1),
-        LocationAvailability::Offline => Ok(2),
+        ContentStructureKind::SingleResource => 0,
+        ContentStructureKind::ImageSequence => 1,
+        ContentStructureKind::OrderedParts => 2,
+        ContentStructureKind::Package => 3,
+        _ => 3,
+    }
+}
+
+fn encode_availability(value: LocatorAvailability) -> Result<i64> {
+    match value {
+        LocatorAvailability::Unknown => Ok(0),
+        LocatorAvailability::Online => Ok(1),
+        LocatorAvailability::Offline => Ok(2),
         _ => Err(Error::new(
             ErrorKind::Unsupported,
-            "location availability is not supported by this schema",
+            "locator availability is not supported by this schema",
         )),
     }
 }
 
-fn persist_location(
-    transaction: &Transaction<'_>,
-    location: &postproject_core::Location,
-    availability: i64,
-) -> Result<()> {
+fn persist_resource(transaction: &Transaction<'_>, resource: &Resource) -> Result<()> {
+    let size = resource
+        .file_facts()
+        .map(|facts| {
+            i64::try_from(facts.size_bytes()).map_err(|error| {
+                Error::new(
+                    ErrorKind::Unsupported,
+                    format!("media resource is too large for SQLite storage: {error}"),
+                )
+            })
+        })
+        .transpose()?;
+    let modified_at = resource
+        .file_facts()
+        .and_then(postproject_core::FileFacts::modified_at)
+        .map(postproject_core::Timestamp::as_unix_micros);
     transaction
         .execute(
-            "INSERT INTO locations (
-                id, representation_id, uri, last_seen_micros, availability
+            "INSERT INTO resources (id, file_size_bytes, modified_at_micros)
+             VALUES (?1, ?2, ?3)",
+            params![resource.id().as_bytes().as_slice(), size, modified_at],
+        )
+        .map_err(mutation_error("persist resource"))?;
+    for fingerprint in resource.fingerprints() {
+        transaction
+            .execute(
+                "INSERT INTO resource_fingerprints (
+                    resource_id, algorithm, algorithm_version, value
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    resource.id().as_bytes().as_slice(),
+                    fingerprint.algorithm(),
+                    fingerprint.version(),
+                    fingerprint.value(),
+                ],
+            )
+            .map_err(mutation_error("persist resource fingerprint"))?;
+    }
+    Ok(())
+}
+
+fn persist_content_structure(
+    transaction: &Transaction<'_>,
+    representation_id: postproject_core::RepresentationId,
+    structure: &ContentStructure,
+) -> Result<()> {
+    let resource_ids = structure.resource_ids();
+    for (position, resource_id) in resource_ids.iter().enumerate() {
+        let member = structure
+            .members()
+            .and_then(|members| members.get(position));
+        transaction
+            .execute(
+                "INSERT INTO representation_resources (
+                    representation_id, resource_id, position, role, required
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    representation_id.as_bytes().as_slice(),
+                    resource_id.as_bytes().as_slice(),
+                    i64::try_from(position).map_err(|error| Error::new(
+                        ErrorKind::Unsupported,
+                        format!("content position is too large for SQLite: {error}"),
+                    ))?,
+                    member.map(|item| item.role().as_str()),
+                    member.is_none_or(postproject_core::ResourceMember::is_required),
+                ],
+            )
+            .map_err(mutation_error("persist representation resource"))?;
+    }
+
+    if let Some(sequence) = structure.image_sequence_descriptor() {
+        let frames = sequence.frames();
+        let pattern = sequence.pattern();
+        let rate = sequence.rate();
+        transaction
+            .execute(
+                "INSERT INTO image_sequences (
+                    representation_id, resource_id, prefix, suffix, padding,
+                    start_frame, end_frame, frame_step, rate_numerator, rate_denominator
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    representation_id.as_bytes().as_slice(),
+                    sequence.resource_id().as_bytes().as_slice(),
+                    pattern.prefix(),
+                    pattern.suffix(),
+                    pattern.padding(),
+                    frames.start(),
+                    frames.end(),
+                    frames.step(),
+                    rate.numerator(),
+                    rate.denominator(),
+                ],
+            )
+            .map_err(mutation_error("persist image sequence"))?;
+        for frame in sequence.known_missing_frames() {
+            transaction
+                .execute(
+                    "INSERT INTO image_sequence_missing_frames (representation_id, frame)
+                     VALUES (?1, ?2)",
+                    params![representation_id.as_bytes().as_slice(), frame],
+                )
+                .map_err(mutation_error("persist missing sequence frame"))?;
+        }
+    }
+    Ok(())
+}
+
+fn persist_locator(transaction: &Transaction<'_>, locator: &Locator) -> Result<()> {
+    let availability = encode_availability(locator.availability())?;
+    transaction
+        .execute(
+            "INSERT INTO locators (
+                id, resource_id, uri, last_seen_micros, availability
              ) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
-                location.id().as_bytes().as_slice(),
-                location.representation_id().as_bytes().as_slice(),
-                location.uri(),
-                location
+                locator.id().as_bytes().as_slice(),
+                locator.resource_id().as_bytes().as_slice(),
+                locator.uri(),
+                locator
                     .last_seen()
                     .map(postproject_core::Timestamp::as_unix_micros),
                 availability,
             ],
         )
         .map(|_| ())
-        .map_err(mutation_error("persist representation location"))
+        .map_err(mutation_error("persist resource locator"))
 }
 
 fn identifier_target_exists(
