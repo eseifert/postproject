@@ -1,12 +1,34 @@
 # Changelog
 
-All notable changes to libpostproject will be documented here. The project uses
+All notable changes to PostProject will be documented here. The project uses
 [Semantic Versioning](https://semver.org/) once a stable API is released.
 
 ## Unreleased
 
+### Changed
+
+- Renamed the project and repository identity to PostProject and
+  `eseifert/postproject`; native Unix library files retain the conventional
+  `libpostproject` name.
+- Advanced the development version to `0.2.0-alpha.1` for the standards-aware
+  domain-model work. Pre-1.0 API, ABI, schema, CLI, and binding compatibility is
+  not promised.
+
 ### Added
 
+- An mdBook documentation foundation split across application-user,
+  integrator, contributor, concept, and reference sections.
+- Architecture decisions for naming, identity, metadata, provenance, rational
+  time, revision events, Python binding strategy, and explicit SQL persistence.
+- Strong activity and revision IDs, typed cross-object references, and bounded
+  extensible external-identifier domain values with exact opaque round-trips.
+- Canonical SQLite schema version 2 with transactional asset/representation
+  external identifiers, exact scheme/value lookup, rollback behavior, and clean
+  rejection of the obsolete development schema.
+- C ABI version 2 and C++17 wrappers for typed object references, external
+  identifier enumeration, transactional add/remove, and exact lookup.
+- CLI commands for attaching, removing, listing, and finding external
+  identifiers with structured JSON output.
 - Initial workspace and engineering-policy scaffolding.
 - Dual MIT or Apache-2.0 licensing.
 - Strong project, asset, representation, location, media-root, and transaction IDs.
