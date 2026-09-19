@@ -1,4 +1,4 @@
-//! SQLite project-file persistence for libpostproject.
+//! SQLite project-file persistence for `PostProject`.
 //!
 //! This crate translates between domain values and a private, migrated SQLite
 //! schema. SQLite types and errors are never part of the core API contract.
@@ -15,9 +15,10 @@ use std::{
 };
 
 use postproject_core::{
-    Asset, AssetId, Error, ErrorKind, FileFacts, Fingerprint, Location, LocationAvailability,
-    MediaRoot, MediaRootId, Project, ProjectId, ProjectRead, ProjectStore, Representation,
-    RepresentationId, RepresentationKind, Result, Timestamp,
+    Asset, AssetId, Error, ErrorKind, ExternalIdentifier, FileFacts, Fingerprint, IdentifierScheme,
+    Location, LocationAvailability, MediaRoot, MediaRootId, ObjectRef, Project, ProjectId,
+    ProjectRead, ProjectStore, Representation, RepresentationId, RepresentationKind, Result,
+    Timestamp,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
 
@@ -234,6 +235,77 @@ impl SqliteProject {
         .collect()
     }
 
+    /// Loads external identifiers attached to `target` in deterministic order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Unsupported`] for a target kind not yet persisted,
+    /// or [`ErrorKind::Storage`] for query failures and malformed stored data.
+    pub fn external_identifiers(&self, target: ObjectRef) -> Result<Vec<ExternalIdentifier>> {
+        let (target_kind, target_id) = encode_identifier_target(&target)?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT scheme, value, qualifier
+                 FROM external_identifiers
+                 WHERE target_kind = ?1 AND target_id = ?2
+                 ORDER BY scheme, value, qualifier, id",
+            )
+            .map_err(sqlite_error("prepare external-identifier query"))?;
+        let rows = statement
+            .query_map(params![target_kind, target_id.as_slice()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })
+            .map_err(sqlite_error("query external identifiers"))?;
+
+        rows.map(|row| {
+            let (scheme, value, qualifier) =
+                row.map_err(sqlite_error("read external-identifier row"))?;
+            decode_external_identifier(scheme, value, qualifier)
+        })
+        .collect()
+    }
+
+    /// Finds objects carrying an exact external identifier scheme and value.
+    ///
+    /// Multiple qualifiers on one object produce that object only once.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] for an invalid lookup value or
+    /// [`ErrorKind::Storage`] for query failures and malformed target data.
+    pub fn find_by_external_identifier(
+        &self,
+        scheme: &IdentifierScheme,
+        value: &str,
+    ) -> Result<Vec<ObjectRef>> {
+        ExternalIdentifier::new(scheme.clone(), value, None)?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT DISTINCT target_kind, target_id
+                 FROM external_identifiers
+                 WHERE scheme = ?1 AND value = ?2
+                 ORDER BY target_kind, target_id",
+            )
+            .map_err(sqlite_error("prepare external-identifier lookup"))?;
+        let rows = statement
+            .query_map(params![scheme.as_str(), value], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })
+            .map_err(sqlite_error("look up external identifier"))?;
+
+        rows.map(|row| {
+            let (kind, id) = row.map_err(sqlite_error("read external-identifier target"))?;
+            decode_identifier_target(kind, id)
+        })
+        .collect()
+    }
+
     /// Reports whether SQLite foreign-key enforcement is active on this connection.
     ///
     /// This is primarily useful for diagnostics and integration tests.
@@ -263,6 +335,18 @@ impl ProjectRead for SqliteProject {
 
     fn locations(&self, representation_id: RepresentationId) -> Result<Vec<Location>> {
         SqliteProject::locations(self, representation_id)
+    }
+
+    fn external_identifiers(&self, target: ObjectRef) -> Result<Vec<ExternalIdentifier>> {
+        SqliteProject::external_identifiers(self, target)
+    }
+
+    fn find_by_external_identifier(
+        &self,
+        scheme: &IdentifierScheme,
+        value: &str,
+    ) -> Result<Vec<ObjectRef>> {
+        SqliteProject::find_by_external_identifier(self, scheme, value)
     }
 }
 
@@ -470,6 +554,43 @@ fn decode_fingerprint(
         _ => Err(Error::new(
             ErrorKind::Storage,
             "stored fingerprint fields are incomplete",
+        )),
+    }
+}
+
+fn decode_external_identifier(
+    scheme: String,
+    value: String,
+    qualifier: Option<String>,
+) -> Result<ExternalIdentifier> {
+    let scheme = IdentifierScheme::new(scheme).map_err(stored_domain_error("identifier scheme"))?;
+    ExternalIdentifier::new(scheme, value, qualifier)
+        .map_err(stored_domain_error("external identifier"))
+}
+
+pub(crate) fn encode_identifier_target(target: &ObjectRef) -> Result<(i64, &[u8; 16])> {
+    match target {
+        ObjectRef::Asset(id) => Ok((1, id.as_bytes())),
+        ObjectRef::Representation(id) => Ok((2, id.as_bytes())),
+        ObjectRef::Project(_) | ObjectRef::Activity(_) => Err(Error::new(
+            ErrorKind::Unsupported,
+            "external identifiers currently support assets and representations",
+        )),
+        _ => Err(Error::new(
+            ErrorKind::Unsupported,
+            "external identifier target kind is not supported by this schema",
+        )),
+    }
+}
+
+fn decode_identifier_target(kind: i64, id: Vec<u8>) -> Result<ObjectRef> {
+    let id = id_bytes(id, "external identifier target")?;
+    match kind {
+        1 => Ok(ObjectRef::Asset(AssetId::from_bytes(id))),
+        2 => Ok(ObjectRef::Representation(RepresentationId::from_bytes(id))),
+        _ => Err(Error::new(
+            ErrorKind::Storage,
+            format!("stored external identifier target kind {kind} is invalid"),
         )),
     }
 }

@@ -1,12 +1,13 @@
 //! Explicit SQLite-backed domain transactions.
 
 use postproject_core::{
-    Error, ErrorKind, Location, LocationAvailability, MediaRoot, OriginalMediaImport, Project,
-    ProjectStoreTransaction, Result, TransactionId, TransactionLifecycle, TransactionState,
+    Error, ErrorKind, ExternalIdentifier, Location, LocationAvailability, MediaRoot, ObjectRef,
+    OriginalMediaImport, Project, ProjectStoreTransaction, Result, TransactionId,
+    TransactionLifecycle, TransactionState,
 };
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 
-use crate::sqlite_error;
+use crate::{encode_identifier_target, sqlite_error};
 
 /// An explicit project mutation transaction.
 ///
@@ -159,6 +160,81 @@ impl<'project> SqliteTransaction<'project> {
         Ok(())
     }
 
+    /// Stages an external identifier attachment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the target does not exist,
+    /// [`ErrorKind::AlreadyExists`] for an identical attachment,
+    /// [`ErrorKind::Unsupported`] for a target kind not yet persisted, or a
+    /// transaction/storage error.
+    pub fn add_external_identifier(
+        &mut self,
+        target: ObjectRef,
+        identifier: &ExternalIdentifier,
+    ) -> Result<()> {
+        let (target_kind, target_id) = encode_identifier_target(&target)?;
+        let transaction = self.open_transaction()?;
+        if !identifier_target_exists(transaction, target_kind, target_id)? {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                "external identifier target does not exist",
+            ));
+        }
+        transaction
+            .execute(
+                "INSERT INTO external_identifiers (
+                    target_kind, target_id, scheme, value, qualifier
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    target_kind,
+                    target_id.as_slice(),
+                    identifier.scheme().as_str(),
+                    identifier.value(),
+                    identifier.qualifier(),
+                ],
+            )
+            .map(|_| ())
+            .map_err(mutation_error("persist external identifier"))
+    }
+
+    /// Stages removal of an exact external identifier attachment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] if the attachment does not exist,
+    /// [`ErrorKind::Unsupported`] for a target kind not yet persisted, or a
+    /// transaction/storage error.
+    pub fn remove_external_identifier(
+        &mut self,
+        target: ObjectRef,
+        identifier: &ExternalIdentifier,
+    ) -> Result<()> {
+        let (target_kind, target_id) = encode_identifier_target(&target)?;
+        let changed = self
+            .open_transaction()?
+            .execute(
+                "DELETE FROM external_identifiers
+                 WHERE target_kind = ?1 AND target_id = ?2
+                   AND scheme = ?3 AND value = ?4 AND qualifier IS ?5",
+                params![
+                    target_kind,
+                    target_id.as_slice(),
+                    identifier.scheme().as_str(),
+                    identifier.value(),
+                    identifier.qualifier(),
+                ],
+            )
+            .map_err(mutation_error("remove external identifier"))?;
+        if changed == 0 {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                "external identifier attachment does not exist",
+            ));
+        }
+        Ok(())
+    }
+
     /// Atomically commits all staged mutations.
     ///
     /// # Errors
@@ -237,6 +313,22 @@ impl ProjectStoreTransaction for SqliteTransaction<'_> {
         SqliteTransaction::add_media_root(self, root)
     }
 
+    fn add_external_identifier(
+        &mut self,
+        target: ObjectRef,
+        identifier: &ExternalIdentifier,
+    ) -> Result<()> {
+        SqliteTransaction::add_external_identifier(self, target, identifier)
+    }
+
+    fn remove_external_identifier(
+        &mut self,
+        target: ObjectRef,
+        identifier: &ExternalIdentifier,
+    ) -> Result<()> {
+        SqliteTransaction::remove_external_identifier(self, target, identifier)
+    }
+
     fn commit(&mut self) -> Result<()> {
         SqliteTransaction::commit(self)
     }
@@ -280,6 +372,30 @@ fn persist_location(
         )
         .map(|_| ())
         .map_err(mutation_error("persist representation location"))
+}
+
+fn identifier_target_exists(
+    transaction: &Transaction<'_>,
+    target_kind: i64,
+    target_id: &[u8; 16],
+) -> Result<bool> {
+    let table = match target_kind {
+        1 => "assets",
+        2 => "representations",
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "external identifier target kind is not supported by this schema",
+            ));
+        }
+    };
+    transaction
+        .query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE id = ?1)"),
+            [target_id.as_slice()],
+            |row| row.get(0),
+        )
+        .map_err(sqlite_error("check external identifier target"))
 }
 
 fn mutation_error(context: &'static str) -> impl FnOnce(rusqlite::Error) -> Error {

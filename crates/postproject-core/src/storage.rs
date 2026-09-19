@@ -1,8 +1,9 @@
 //! Domain-shaped contracts implemented by persistence backends.
 
 use crate::{
-    Asset, AssetId, Location, MediaRoot, OriginalMediaImport, Project, Representation,
-    RepresentationId, Result, TransactionId, TransactionState,
+    Asset, AssetId, ExternalIdentifier, IdentifierScheme, Location, MediaRoot, ObjectRef,
+    OriginalMediaImport, Project, Representation, RepresentationId, Result, TransactionId,
+    TransactionState,
 };
 
 /// Read operations required from a project persistence backend.
@@ -36,6 +37,26 @@ pub trait ProjectRead {
     /// Returns a storage-domain error when persisted data cannot be read or
     /// decoded safely.
     fn locations(&self, representation_id: RepresentationId) -> Result<Vec<Location>>;
+
+    /// Loads external identifiers attached to `target` in deterministic order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage-domain error when persisted data cannot be read or
+    /// decoded safely, or when the target kind is not supported.
+    fn external_identifiers(&self, target: ObjectRef) -> Result<Vec<ExternalIdentifier>>;
+
+    /// Finds objects carrying the exact external scheme and value.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the lookup value is invalid or persisted
+    /// data cannot be decoded safely.
+    fn find_by_external_identifier(
+        &self,
+        scheme: &IdentifierScheme,
+        value: &str,
+    ) -> Result<Vec<ObjectRef>>;
 }
 
 /// Transactional mutation operations required from a persistence backend.
@@ -69,6 +90,30 @@ pub trait ProjectStoreTransaction {
     /// Returns a domain error when the transaction is closed or persistence
     /// rejects the root.
     fn add_media_root(&mut self, root: MediaRoot) -> Result<()>;
+
+    /// Stages an external identifier attachment.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, the target does
+    /// not exist, the attachment already exists, or persistence fails.
+    fn add_external_identifier(
+        &mut self,
+        target: ObjectRef,
+        identifier: &ExternalIdentifier,
+    ) -> Result<()>;
+
+    /// Stages removal of one exact external identifier attachment.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, the attachment
+    /// does not exist, the target kind is unsupported, or persistence fails.
+    fn remove_external_identifier(
+        &mut self,
+        target: ObjectRef,
+        identifier: &ExternalIdentifier,
+    ) -> Result<()>;
 
     /// Atomically makes every staged mutation durable.
     ///
