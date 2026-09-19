@@ -11,6 +11,7 @@ mod identifier;
 mod metadata;
 mod model;
 mod resolution;
+mod resource;
 mod storage;
 mod transaction;
 mod uri;
@@ -37,6 +38,9 @@ pub use model::{
 };
 pub use resolution::{
     Confidence, EvidenceKind, Resolution, ResolutionCandidate, ResolutionEvidence, ResolutionState,
+};
+pub use resource::{
+    Locator, LocatorAvailability, RepresentationFingerprint, Resource, ResourceFingerprint,
 };
 pub use storage::{ProjectRead, ProjectStore, ProjectStoreTransaction};
 pub use transaction::{TransactionLifecycle, TransactionState};
