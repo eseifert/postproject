@@ -16,10 +16,10 @@ share the installed name `postproject`, and concurrent MSVC links otherwise race
 to write the same PDB file. CI runs both invocations sequentially, so no test
 coverage is omitted.
 
-Tests use real temporary SQLite databases and filesystems and include relocation
-integration coverage. Future phases add migration fixtures, fuzz targets, and the
-complete multi-asset relocation E2E scenario. Tests must not require network
-access, user locale, or wall-clock timing.
+Tests use real temporary SQLite databases and filesystems, a checked-in schema-0
+migration fixture, and the complete multi-asset relocation scenario. Future work
+adds fuzz targets. Tests must not require network access, user locale, or
+wall-clock timing.
 
 `cargo-deny` rejects wildcard dependencies, unknown sources, known advisories, and
 licenses outside the repository's explicit permissive allowlist. Duplicate crate
@@ -42,3 +42,9 @@ file, discovers two byte-identical candidates under a configured root, verifies
 an explicit ambiguous result, confirms one candidate, and reopens the project to
 observe the persisted location. Commands exchange JSON in this test so the
 machine-readable contract is exercised alongside the domain workflow.
+
+The storage E2E test moves a three-file media directory, verifies every known
+location is offline, resolves two unique files, refuses to choose between two
+byte-identical candidates for the third, explicitly confirms all choices in one
+transaction, reopens the project, and resolves from persisted locations with no
+roots supplied.

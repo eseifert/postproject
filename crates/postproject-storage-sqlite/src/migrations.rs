@@ -92,6 +92,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn migrates_schema_zero_fixture_to_current() {
+        let mut connection = Connection::open_in_memory().expect("open in-memory database");
+        connection
+            .execute_batch(include_str!("../../../tests/fixtures/schema-000.sql"))
+            .expect("load schema-zero fixture");
+
+        migrate(&mut connection).expect("migrate schema-zero fixture");
+
+        assert_eq!(
+            schema_version(&connection).expect("read migrated version"),
+            CURRENT_SCHEMA_VERSION
+        );
+        let applied: Vec<u32> = connection
+            .prepare("SELECT version FROM schema_migrations ORDER BY version")
+            .expect("prepare migration-history query")
+            .query_map([], |row| row.get(0))
+            .expect("query migration history")
+            .collect::<std::result::Result<_, _>>()
+            .expect("read migration history");
+        assert_eq!(applied, [1]);
+        for table in [
+            "projects",
+            "assets",
+            "representations",
+            "fingerprints",
+            "locations",
+            "media_roots",
+        ] {
+            let count: u32 = connection
+                .query_row(
+                    "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .expect("query migrated table");
+            assert_eq!(count, 1, "missing migrated table {table}");
+        }
+    }
+
+    #[test]
+    fn newer_schema_is_rejected_without_modification() {
+        let mut connection = Connection::open_in_memory().expect("open in-memory database");
+        connection
+            .pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION + 1)
+            .expect("set future schema version");
+
+        let error = migrate(&mut connection).expect_err("future schema must be rejected");
+
+        assert_eq!(error.kind(), ErrorKind::Unsupported);
+        assert_eq!(
+            schema_version(&connection).expect("read unchanged version"),
+            CURRENT_SCHEMA_VERSION + 1
+        );
+    }
+
+    #[test]
     fn failed_migration_rolls_back_completely() {
         let mut connection = Connection::open_in_memory().expect("open in-memory database");
         let invalid = Migration {

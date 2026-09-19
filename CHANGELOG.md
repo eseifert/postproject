@@ -27,3 +27,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - Additive C ABI transaction, media-import, media-root, and asset-identity operations.
 - C++17 RAII transaction wrapper for atomic imports, media roots, and rollback.
 - Criterion baselines for bulk import, large-project open, resolver scans, and commits.
+- Schema-0 migration fixture and full multi-asset relocation/ambiguity E2E coverage.
