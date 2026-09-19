@@ -11,7 +11,7 @@ publish = false
 
 [dependencies]
 postproject-core = { version = "0.1.0-alpha.1", path = "../postproject-core" }
-rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "limits"] }
 
 [dev-dependencies]
 criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }

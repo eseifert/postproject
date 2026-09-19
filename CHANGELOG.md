@@ -31,3 +31,4 @@ All notable changes to libpostproject will be documented here. The project uses
 - `cargo-fuzz` targets for project files, fingerprints, C strings, and strong IDs.
 - ASan/UBSan native-consumer CI and a standalone installed-package C example.
 - Shared/static native artifacts, installed release documentation, and release checklist.
+- Bounded SQLite value and row sizes when opening untrusted project files.

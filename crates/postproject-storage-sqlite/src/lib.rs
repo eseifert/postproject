@@ -19,10 +19,12 @@ use postproject_core::{
     MediaRoot, MediaRootId, Project, ProjectId, Representation, RepresentationId,
     RepresentationKind, Result, Timestamp,
 };
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
 
 pub use migrations::CURRENT_SCHEMA_VERSION;
 pub use transaction::SqliteTransaction;
+
+const MAX_SQLITE_VALUE_BYTES: i32 = 16 * 1024 * 1024;
 
 /// A project backed by one SQLite project file.
 #[derive(Debug)]
@@ -271,6 +273,7 @@ fn open_connection(path: &Path) -> Result<Connection> {
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(sqlite_error("open project database"))?;
+    configure_length_limit(&connection, MAX_SQLITE_VALUE_BYTES)?;
     connection
         .busy_timeout(Duration::from_secs(5))
         .map_err(sqlite_error("configure SQLite busy timeout"))?;
@@ -278,6 +281,13 @@ fn open_connection(path: &Path) -> Result<Connection> {
         .execute_batch("PRAGMA foreign_keys = ON; PRAGMA trusted_schema = OFF;")
         .map_err(sqlite_error("configure SQLite connection"))?;
     Ok(connection)
+}
+
+fn configure_length_limit(connection: &Connection, maximum: i32) -> Result<()> {
+    connection
+        .set_limit(Limit::SQLITE_LIMIT_LENGTH, maximum)
+        .map(|_| ())
+        .map_err(sqlite_error("configure SQLite value length limit"))
 }
 
 fn persist_new_project(connection: &mut Connection, project: &Project) -> Result<()> {
@@ -457,5 +467,21 @@ fn stored_domain_error(label: &'static str) -> impl FnOnce(Error) -> Error {
             ErrorKind::Storage,
             format!("stored {label} is invalid: {error}"),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sqlite_value_limit_rejects_oversized_results() {
+        let connection = Connection::open_in_memory().expect("open in-memory database");
+        configure_length_limit(&connection, 1_024).expect("configure test limit");
+
+        let result =
+            connection.query_row("SELECT zeroblob(1025)", [], |row| row.get::<_, Vec<u8>>(0));
+
+        assert!(result.is_err(), "oversized value unexpectedly loaded");
     }
 }

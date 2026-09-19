@@ -3,6 +3,9 @@
 Each project is one SQLite database. The backend enables foreign keys and disables
 trusted-schema features on every connection. A five-second busy timeout turns
 brief lock contention into bounded waiting rather than an immediate failure.
+SQLite's per-connection value-length limit is reduced to 16 MiB before migrations
+or queries run. This bounds allocations for strings, blobs, and result rows read
+from an untrusted project file while leaving ample room for project metadata.
 
 ## Schema version 1
 
