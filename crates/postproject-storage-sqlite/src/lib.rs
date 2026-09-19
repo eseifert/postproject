@@ -5,10 +5,6 @@
 
 #![forbid(unsafe_code)]
 
-#[allow(
-    dead_code,
-    reason = "wired into metadata persistence in the next change"
-)]
 mod metadata_codec;
 mod migrations;
 mod transaction;
@@ -21,9 +17,10 @@ use std::{
 
 use postproject_core::{
     Asset, AssetId, Error, ErrorKind, ExternalIdentifier, FileFacts, Fingerprint, IdentifierScheme,
-    Location, LocationAvailability, MediaRoot, MediaRootId, ObjectRef, Project, ProjectId,
-    ProjectRead, ProjectStore, Representation, RepresentationId, RepresentationKind, Result,
-    Timestamp,
+    Location, LocationAvailability, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
+    MetadataProperty, MetadataValue, ObjectRef, Project, ProjectId, ProjectRead, ProjectStore,
+    PropertyId, Representation, RepresentationId, RepresentationKind, Result, Timestamp,
+    VocabularyId,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
 
@@ -311,6 +308,126 @@ impl SqliteProject {
         .collect()
     }
 
+    /// Loads metadata attached to `target`, grouped by property and ordered by
+    /// each value's insertion position.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Storage`] for query failures or malformed encoded
+    /// values, or [`ErrorKind::Unsupported`] for an unknown target kind.
+    pub fn metadata(&self, target: ObjectRef) -> Result<Vec<MetadataAssertion>> {
+        let (target_kind, target_id) = encode_metadata_target(&target)?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT vocabulary, property, encoded_value
+                 FROM metadata_assertions
+                 WHERE target_kind = ?1 AND target_id = ?2
+                 ORDER BY vocabulary, property, position, id",
+            )
+            .map_err(sqlite_error("prepare metadata query"))?;
+        let rows = statement
+            .query_map(params![target_kind, target_id.as_slice()], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .map_err(sqlite_error("query metadata"))?;
+
+        rows.map(|row| {
+            let (vocabulary, property, encoded) = row.map_err(sqlite_error("read metadata row"))?;
+            decode_metadata_assertion(vocabulary, property, &encoded)
+        })
+        .collect()
+    }
+
+    /// Loads ordered repeated values for `property` on `target`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Storage`] for query failures or malformed encoded
+    /// values, or [`ErrorKind::Unsupported`] for an unknown target kind.
+    pub fn metadata_values(
+        &self,
+        target: ObjectRef,
+        property: &MetadataProperty,
+    ) -> Result<Vec<MetadataValue>> {
+        let (target_kind, target_id) = encode_metadata_target(&target)?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT encoded_value
+                 FROM metadata_assertions
+                 WHERE target_kind = ?1 AND target_id = ?2
+                   AND vocabulary = ?3 AND property = ?4
+                 ORDER BY position, id",
+            )
+            .map_err(sqlite_error("prepare metadata-value query"))?;
+        let rows = statement
+            .query_map(
+                params![
+                    target_kind,
+                    target_id.as_slice(),
+                    property.vocabulary().as_str(),
+                    property.property().as_str(),
+                ],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .map_err(sqlite_error("query metadata values"))?;
+
+        rows.map(|row| {
+            let encoded = row.map_err(sqlite_error("read metadata-value row"))?;
+            metadata_codec::decode(&encoded)
+        })
+        .collect()
+    }
+
+    /// Finds every assertion using `property` in stable target/value order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Storage`] for query failures, malformed targets, or
+    /// malformed encoded values.
+    pub fn query_by_metadata_property(
+        &self,
+        property: &MetadataProperty,
+    ) -> Result<Vec<MetadataMatch>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT target_kind, target_id, encoded_value
+                 FROM metadata_assertions
+                 WHERE vocabulary = ?1 AND property = ?2
+                 ORDER BY target_kind, target_id, position, id",
+            )
+            .map_err(sqlite_error("prepare metadata-property lookup"))?;
+        let rows = statement
+            .query_map(
+                params![property.vocabulary().as_str(), property.property().as_str(),],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
+            )
+            .map_err(sqlite_error("query metadata property"))?;
+
+        rows.map(|row| {
+            let (kind, id, encoded) = row.map_err(sqlite_error("read metadata match"))?;
+            let target = decode_metadata_target(kind, id)?;
+            let value = metadata_codec::decode(&encoded)?;
+            Ok(MetadataMatch::new(
+                target,
+                MetadataAssertion::new(property.clone(), value),
+            ))
+        })
+        .collect()
+    }
+
     /// Reports whether SQLite foreign-key enforcement is active on this connection.
     ///
     /// This is primarily useful for diagnostics and integration tests.
@@ -352,6 +469,25 @@ impl ProjectRead for SqliteProject {
         value: &str,
     ) -> Result<Vec<ObjectRef>> {
         SqliteProject::find_by_external_identifier(self, scheme, value)
+    }
+
+    fn metadata(&self, target: ObjectRef) -> Result<Vec<MetadataAssertion>> {
+        SqliteProject::metadata(self, target)
+    }
+
+    fn metadata_values(
+        &self,
+        target: ObjectRef,
+        property: &MetadataProperty,
+    ) -> Result<Vec<MetadataValue>> {
+        SqliteProject::metadata_values(self, target, property)
+    }
+
+    fn query_by_metadata_property(
+        &self,
+        property: &MetadataProperty,
+    ) -> Result<Vec<MetadataMatch>> {
+        SqliteProject::query_by_metadata_property(self, property)
     }
 }
 
@@ -573,6 +709,21 @@ fn decode_external_identifier(
         .map_err(stored_domain_error("external identifier"))
 }
 
+fn decode_metadata_assertion(
+    vocabulary: String,
+    property: String,
+    encoded: &[u8],
+) -> Result<MetadataAssertion> {
+    let vocabulary =
+        VocabularyId::new(vocabulary).map_err(stored_domain_error("metadata vocabulary"))?;
+    let property = PropertyId::new(property).map_err(stored_domain_error("metadata property"))?;
+    let value = metadata_codec::decode(encoded)?;
+    Ok(MetadataAssertion::new(
+        MetadataProperty::new(vocabulary, property),
+        value,
+    ))
+}
+
 pub(crate) fn encode_identifier_target(target: &ObjectRef) -> Result<(i64, &[u8; 16])> {
     match target {
         ObjectRef::Asset(id) => Ok((1, id.as_bytes())),
@@ -596,6 +747,35 @@ fn decode_identifier_target(kind: i64, id: Vec<u8>) -> Result<ObjectRef> {
         _ => Err(Error::new(
             ErrorKind::Storage,
             format!("stored external identifier target kind {kind} is invalid"),
+        )),
+    }
+}
+
+pub(crate) fn encode_metadata_target(target: &ObjectRef) -> Result<(i64, &[u8; 16])> {
+    match target {
+        ObjectRef::Project(id) => Ok((0, id.as_bytes())),
+        ObjectRef::Asset(id) => Ok((1, id.as_bytes())),
+        ObjectRef::Representation(id) => Ok((2, id.as_bytes())),
+        ObjectRef::Activity(id) => Ok((3, id.as_bytes())),
+        _ => Err(Error::new(
+            ErrorKind::Unsupported,
+            "metadata target kind is not supported by this schema",
+        )),
+    }
+}
+
+fn decode_metadata_target(kind: i64, id: Vec<u8>) -> Result<ObjectRef> {
+    let id = id_bytes(id, "metadata target")?;
+    match kind {
+        0 => Ok(ObjectRef::Project(ProjectId::from_bytes(id))),
+        1 => Ok(ObjectRef::Asset(AssetId::from_bytes(id))),
+        2 => Ok(ObjectRef::Representation(RepresentationId::from_bytes(id))),
+        3 => Ok(ObjectRef::Activity(
+            postproject_core::ActivityId::from_bytes(id),
+        )),
+        _ => Err(Error::new(
+            ErrorKind::Storage,
+            format!("stored metadata target kind {kind} is invalid"),
         )),
     }
 }

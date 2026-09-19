@@ -1,0 +1,221 @@
+//! Integration coverage for typed metadata persistence and mutation semantics.
+
+use std::fs;
+
+use postproject_core::{
+    ActivityId, AssetId, ErrorKind, MetadataField, MetadataProperty, MetadataValue, ObjectRef,
+    PropertyId, VocabularyId,
+};
+use postproject_media::prepare_original_media;
+use postproject_storage_sqlite::SqliteProject;
+use rusqlite::Connection;
+use tempfile::tempdir;
+
+fn property(vocabulary: &str, name: &str) -> MetadataProperty {
+    MetadataProperty::new(
+        VocabularyId::new(vocabulary).expect("valid vocabulary"),
+        PropertyId::new(name).expect("valid property"),
+    )
+}
+
+fn structured_contact() -> MetadataValue {
+    MetadataValue::structure(vec![
+        MetadataField::new(
+            PropertyId::new("name").unwrap(),
+            MetadataValue::language_string("Kameraabteilung", "de-DE").unwrap(),
+        ),
+        MetadataField::new(
+            PropertyId::new("url").unwrap(),
+            MetadataValue::uri("https://example.com/crew/camera").unwrap(),
+        ),
+    ])
+    .unwrap()
+}
+
+#[test]
+fn repeated_and_structured_metadata_round_trip_and_query() {
+    let directory = tempdir().expect("create temporary directory");
+    let project_path = directory.path().join("production.pproj");
+    let media_path = directory.path().join("A001.mov");
+    fs::write(&media_path, b"fixture media bytes").expect("write fixture media");
+    let prepared = prepare_original_media(&media_path, None, None).expect("prepare import");
+    let asset = ObjectRef::Asset(prepared.asset().id());
+    let representation = ObjectRef::Representation(prepared.representation().id());
+    let keywords = property("http://iptc.org/std/videometadatahub/1.0", "keywords");
+    let contact = property(
+        "http://iptc.org/std/videometadatahub/1.0",
+        "creatorContactInfo",
+    );
+    let application_note = property("com.example.editor/metadata", "note");
+    let structured_contact = structured_contact();
+
+    let mut project = SqliteProject::create(&project_path, None).expect("create project");
+    let project_target = ObjectRef::Project(project.project().id());
+    {
+        let mut transaction = project.begin_transaction().expect("begin transaction");
+        transaction
+            .import_original(&prepared)
+            .expect("import media");
+        transaction
+            .add_metadata_value(
+                asset,
+                &keywords,
+                &MetadataValue::string("interview").unwrap(),
+            )
+            .expect("add first keyword");
+        transaction
+            .add_metadata_value(asset, &keywords, &MetadataValue::string("night").unwrap())
+            .expect("add second keyword");
+        transaction
+            .add_metadata_value(asset, &contact, &structured_contact)
+            .expect("add structured contact");
+        transaction
+            .add_metadata_value(
+                representation,
+                &application_note,
+                &MetadataValue::string("camera original").unwrap(),
+            )
+            .expect("add representation metadata");
+        transaction
+            .add_metadata_value(
+                project_target,
+                &application_note,
+                &MetadataValue::string("production note").unwrap(),
+            )
+            .expect("add project metadata");
+        transaction.commit().expect("commit metadata");
+    }
+    drop(project);
+
+    let mut reopened = SqliteProject::open(&project_path).expect("reopen project");
+    assert_eq!(
+        reopened.metadata_values(asset, &keywords).unwrap(),
+        [
+            MetadataValue::string("interview").unwrap(),
+            MetadataValue::string("night").unwrap(),
+        ]
+    );
+    assert_eq!(
+        reopened.metadata_values(asset, &contact).unwrap(),
+        std::slice::from_ref(&structured_contact)
+    );
+    assert_eq!(reopened.metadata(asset).unwrap().len(), 3);
+    let matches = reopened
+        .query_by_metadata_property(&application_note)
+        .expect("query application property");
+    assert_eq!(matches.len(), 2);
+    assert_eq!(matches[0].target(), project_target);
+    assert_eq!(matches[1].target(), representation);
+
+    {
+        let mut transaction = reopened.begin_transaction().unwrap();
+        transaction
+            .replace_metadata_values(
+                asset,
+                &keywords,
+                &[
+                    MetadataValue::string("replacement-one").unwrap(),
+                    MetadataValue::string("replacement-two").unwrap(),
+                ],
+            )
+            .expect("replace repeated values");
+        transaction.commit().unwrap();
+    }
+    assert_eq!(
+        reopened.metadata_values(asset, &keywords).unwrap(),
+        [
+            MetadataValue::string("replacement-one").unwrap(),
+            MetadataValue::string("replacement-two").unwrap(),
+        ]
+    );
+}
+
+#[test]
+fn metadata_mutations_are_atomic_and_validate_targets() {
+    let directory = tempdir().expect("create temporary directory");
+    let project_path = directory.path().join("production.pproj");
+    let mut project = SqliteProject::create(&project_path, None).expect("create project");
+    let target = ObjectRef::Project(project.project().id());
+    let title = property("https://example.com/vocabulary", "title");
+    let value = MetadataValue::string("Documentary").unwrap();
+
+    {
+        let mut transaction = project.begin_transaction().unwrap();
+        transaction
+            .add_metadata_value(target, &title, &value)
+            .expect("stage metadata");
+        transaction.rollback().expect("roll back metadata");
+    }
+    assert!(project.metadata_values(target, &title).unwrap().is_empty());
+
+    {
+        let mut transaction = project.begin_transaction().unwrap();
+        transaction
+            .add_metadata_value(target, &title, &value)
+            .expect("stage metadata");
+        transaction.commit().expect("commit metadata");
+    }
+    {
+        let mut transaction = project.begin_transaction().unwrap();
+        transaction
+            .remove_metadata_property(target, &title)
+            .expect("stage removal");
+        transaction.rollback().expect("roll back removal");
+    }
+    assert_eq!(
+        project.metadata_values(target, &title).unwrap(),
+        std::slice::from_ref(&value)
+    );
+
+    let mut transaction = project.begin_transaction().unwrap();
+    assert_eq!(
+        transaction
+            .add_metadata_value(ObjectRef::Asset(AssetId::new()), &title, &value)
+            .expect_err("missing target")
+            .kind(),
+        ErrorKind::NotFound
+    );
+    assert_eq!(
+        transaction
+            .add_metadata_value(ObjectRef::Activity(ActivityId::new()), &title, &value)
+            .expect_err("activity persistence is not present")
+            .kind(),
+        ErrorKind::Unsupported
+    );
+    transaction.rollback().unwrap();
+}
+
+#[test]
+fn malformed_persisted_metadata_fails_safely() {
+    let directory = tempdir().expect("create temporary directory");
+    let project_path = directory.path().join("production.pproj");
+    let mut project = SqliteProject::create(&project_path, None).expect("create project");
+    let target = ObjectRef::Project(project.project().id());
+    let title = property("https://example.com/vocabulary", "title");
+    {
+        let mut transaction = project.begin_transaction().unwrap();
+        transaction
+            .add_metadata_value(target, &title, &MetadataValue::string("valid").unwrap())
+            .unwrap();
+        transaction.commit().unwrap();
+    }
+    drop(project);
+
+    let connection = Connection::open(&project_path).expect("open raw database");
+    connection
+        .execute(
+            "UPDATE metadata_assertions SET encoded_value = X'50504D5601FF'",
+            [],
+        )
+        .expect("corrupt encoded value");
+    drop(connection);
+
+    let reopened = SqliteProject::open(&project_path).expect("reopen project");
+    assert_eq!(
+        reopened
+            .metadata(target)
+            .expect_err("corrupt metadata must fail")
+            .kind(),
+        ErrorKind::Storage
+    );
+}

@@ -1,9 +1,9 @@
 //! Domain-shaped contracts implemented by persistence backends.
 
 use crate::{
-    Asset, AssetId, ExternalIdentifier, IdentifierScheme, Location, MediaRoot, ObjectRef,
-    OriginalMediaImport, Project, Representation, RepresentationId, Result, TransactionId,
-    TransactionState,
+    Asset, AssetId, ExternalIdentifier, IdentifierScheme, Location, MediaRoot, MetadataAssertion,
+    MetadataMatch, MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, Project,
+    Representation, RepresentationId, Result, TransactionId, TransactionState,
 };
 
 /// Read operations required from a project persistence backend.
@@ -57,6 +57,34 @@ pub trait ProjectRead {
         scheme: &IdentifierScheme,
         value: &str,
     ) -> Result<Vec<ObjectRef>>;
+
+    /// Loads all metadata assertions attached to `target` in deterministic order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the target kind is unsupported or persisted
+    /// data cannot be decoded safely.
+    fn metadata(&self, target: ObjectRef) -> Result<Vec<MetadataAssertion>>;
+
+    /// Loads every ordered value for one property on `target`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the target kind is unsupported or persisted
+    /// data cannot be decoded safely.
+    fn metadata_values(
+        &self,
+        target: ObjectRef,
+        property: &MetadataProperty,
+    ) -> Result<Vec<MetadataValue>>;
+
+    /// Finds every object carrying `property`, preserving value repetition.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when persisted data cannot be decoded safely.
+    fn query_by_metadata_property(&self, property: &MetadataProperty)
+    -> Result<Vec<MetadataMatch>>;
 }
 
 /// Transactional mutation operations required from a persistence backend.
@@ -113,6 +141,46 @@ pub trait ProjectStoreTransaction {
         &mut self,
         target: ObjectRef,
         identifier: &ExternalIdentifier,
+    ) -> Result<()>;
+
+    /// Appends one value to an object's metadata property.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, the target does
+    /// not exist or is unsupported, encoding fails, or persistence fails.
+    fn add_metadata_value(
+        &mut self,
+        target: ObjectRef,
+        property: &MetadataProperty,
+        value: &MetadataValue,
+    ) -> Result<()>;
+
+    /// Atomically replaces all values of one metadata property.
+    ///
+    /// An empty value slice removes the property.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, the target does
+    /// not exist or is unsupported, encoding fails, or persistence fails.
+    fn replace_metadata_values(
+        &mut self,
+        target: ObjectRef,
+        property: &MetadataProperty,
+        values: &[MetadataValue],
+    ) -> Result<()>;
+
+    /// Removes all values of one metadata property.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, the property is
+    /// absent, the target kind is unsupported, or persistence fails.
+    fn remove_metadata_property(
+        &mut self,
+        target: ObjectRef,
+        property: &MetadataProperty,
     ) -> Result<()>;
 
     /// Atomically makes every staged mutation durable.

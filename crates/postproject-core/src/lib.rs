@@ -28,8 +28,8 @@ pub use metadata::{
     DecimalValue, MAX_LANGUAGE_TAG_BYTES, MAX_METADATA_BINARY_BYTES, MAX_METADATA_COLLECTION_ITEMS,
     MAX_METADATA_DECIMAL_SCALE, MAX_METADATA_NESTING_DEPTH, MAX_METADATA_TEXT_BYTES,
     MAX_METADATA_TOTAL_BYTES, MAX_METADATA_URI_BYTES, MAX_PROPERTY_ID_BYTES,
-    MAX_VOCABULARY_ID_BYTES, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
-    MetadataValueKind, PropertyId, RationalValue, VocabularyId,
+    MAX_VOCABULARY_ID_BYTES, MetadataAssertion, MetadataField, MetadataMatch, MetadataProperty,
+    MetadataValue, MetadataValueKind, PropertyId, RationalValue, VocabularyId,
 };
 pub use model::{
     Asset, FileFacts, Fingerprint, Location, LocationAvailability, MediaRoot, OriginalMediaImport,

@@ -1,13 +1,13 @@
 //! Explicit SQLite-backed domain transactions.
 
 use postproject_core::{
-    Error, ErrorKind, ExternalIdentifier, Location, LocationAvailability, MediaRoot, ObjectRef,
-    OriginalMediaImport, Project, ProjectStoreTransaction, Result, TransactionId,
-    TransactionLifecycle, TransactionState,
+    Error, ErrorKind, ExternalIdentifier, Location, LocationAvailability, MediaRoot,
+    MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, Project,
+    ProjectStoreTransaction, Result, TransactionId, TransactionLifecycle, TransactionState,
 };
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 
-use crate::{encode_identifier_target, sqlite_error};
+use crate::{encode_identifier_target, encode_metadata_target, metadata_codec, sqlite_error};
 
 /// An explicit project mutation transaction.
 ///
@@ -235,6 +235,100 @@ impl<'project> SqliteTransaction<'project> {
         Ok(())
     }
 
+    /// Appends one ordered value to a metadata property.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the target does not exist,
+    /// [`ErrorKind::Unsupported`] for activity metadata before activities are
+    /// persisted, or a transaction/encoding/storage error.
+    pub fn add_metadata_value(
+        &mut self,
+        target: ObjectRef,
+        property: &MetadataProperty,
+        value: &MetadataValue,
+    ) -> Result<()> {
+        let encoded = metadata_codec::encode(value)?;
+        let (target_kind, target_id) = encode_metadata_target(&target)?;
+        let transaction = self.open_transaction()?;
+        ensure_metadata_target_exists(transaction, target_kind, target_id)?;
+        let position = next_metadata_position(transaction, target_kind, target_id, property)?;
+        insert_metadata_value(
+            transaction,
+            target_kind,
+            target_id,
+            property,
+            position,
+            &encoded,
+        )
+    }
+
+    /// Replaces all ordered values of a metadata property atomically.
+    ///
+    /// An empty slice removes all values without treating absence as an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the target does not exist,
+    /// [`ErrorKind::Unsupported`] for activity metadata before activities are
+    /// persisted, or a transaction/encoding/storage error.
+    pub fn replace_metadata_values(
+        &mut self,
+        target: ObjectRef,
+        property: &MetadataProperty,
+        values: &[MetadataValue],
+    ) -> Result<()> {
+        let encoded = values
+            .iter()
+            .map(metadata_codec::encode)
+            .collect::<Result<Vec<_>>>()?;
+        let (target_kind, target_id) = encode_metadata_target(&target)?;
+        let transaction = self.open_transaction()?;
+        ensure_metadata_target_exists(transaction, target_kind, target_id)?;
+        delete_metadata_property(transaction, target_kind, target_id, property)?;
+        for (position, value) in encoded.iter().enumerate() {
+            let position = i64::try_from(position).map_err(|error| {
+                Error::new(
+                    ErrorKind::Unsupported,
+                    format!("metadata value position cannot be stored: {error}"),
+                )
+            })?;
+            insert_metadata_value(
+                transaction,
+                target_kind,
+                target_id,
+                property,
+                position,
+                value,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Removes all values of one metadata property.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the property is absent,
+    /// [`ErrorKind::Unsupported`] for an unsupported target kind, or a
+    /// transaction/storage error.
+    pub fn remove_metadata_property(
+        &mut self,
+        target: ObjectRef,
+        property: &MetadataProperty,
+    ) -> Result<()> {
+        let (target_kind, target_id) = encode_metadata_target(&target)?;
+        let changed =
+            delete_metadata_property(self.open_transaction()?, target_kind, target_id, property)?;
+        if changed == 0 {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                "metadata property does not exist on target",
+            ));
+        }
+        Ok(())
+    }
+
     /// Atomically commits all staged mutations.
     ///
     /// # Errors
@@ -329,6 +423,32 @@ impl ProjectStoreTransaction for SqliteTransaction<'_> {
         SqliteTransaction::remove_external_identifier(self, target, identifier)
     }
 
+    fn add_metadata_value(
+        &mut self,
+        target: ObjectRef,
+        property: &MetadataProperty,
+        value: &MetadataValue,
+    ) -> Result<()> {
+        SqliteTransaction::add_metadata_value(self, target, property, value)
+    }
+
+    fn replace_metadata_values(
+        &mut self,
+        target: ObjectRef,
+        property: &MetadataProperty,
+        values: &[MetadataValue],
+    ) -> Result<()> {
+        SqliteTransaction::replace_metadata_values(self, target, property, values)
+    }
+
+    fn remove_metadata_property(
+        &mut self,
+        target: ObjectRef,
+        property: &MetadataProperty,
+    ) -> Result<()> {
+        SqliteTransaction::remove_metadata_property(self, target, property)
+    }
+
     fn commit(&mut self) -> Result<()> {
         SqliteTransaction::commit(self)
     }
@@ -396,6 +516,114 @@ fn identifier_target_exists(
             |row| row.get(0),
         )
         .map_err(sqlite_error("check external identifier target"))
+}
+
+fn ensure_metadata_target_exists(
+    transaction: &Transaction<'_>,
+    target_kind: i64,
+    target_id: &[u8; 16],
+) -> Result<()> {
+    let table = match target_kind {
+        0 => "projects",
+        1 => "assets",
+        2 => "representations",
+        3 => {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "activity metadata requires activity persistence",
+            ));
+        }
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "metadata target kind is not supported by this schema",
+            ));
+        }
+    };
+    let exists = transaction
+        .query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE id = ?1)"),
+            [target_id.as_slice()],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(sqlite_error("check metadata target"))?;
+    if !exists {
+        return Err(Error::new(
+            ErrorKind::NotFound,
+            "metadata target does not exist",
+        ));
+    }
+    Ok(())
+}
+
+fn next_metadata_position(
+    transaction: &Transaction<'_>,
+    target_kind: i64,
+    target_id: &[u8; 16],
+    property: &MetadataProperty,
+) -> Result<i64> {
+    transaction
+        .query_row(
+            "SELECT COALESCE(MAX(position) + 1, 0)
+             FROM metadata_assertions
+             WHERE target_kind = ?1 AND target_id = ?2
+               AND vocabulary = ?3 AND property = ?4",
+            params![
+                target_kind,
+                target_id.as_slice(),
+                property.vocabulary().as_str(),
+                property.property().as_str(),
+            ],
+            |row| row.get(0),
+        )
+        .map_err(sqlite_error("choose metadata value position"))
+}
+
+fn insert_metadata_value(
+    transaction: &Transaction<'_>,
+    target_kind: i64,
+    target_id: &[u8; 16],
+    property: &MetadataProperty,
+    position: i64,
+    encoded: &[u8],
+) -> Result<()> {
+    transaction
+        .execute(
+            "INSERT INTO metadata_assertions (
+                target_kind, target_id, vocabulary, property, position, encoded_value
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                target_kind,
+                target_id.as_slice(),
+                property.vocabulary().as_str(),
+                property.property().as_str(),
+                position,
+                encoded,
+            ],
+        )
+        .map(|_| ())
+        .map_err(mutation_error("persist metadata value"))
+}
+
+fn delete_metadata_property(
+    transaction: &Transaction<'_>,
+    target_kind: i64,
+    target_id: &[u8; 16],
+    property: &MetadataProperty,
+) -> Result<usize> {
+    transaction
+        .execute(
+            "DELETE FROM metadata_assertions
+             WHERE target_kind = ?1 AND target_id = ?2
+               AND vocabulary = ?3 AND property = ?4",
+            params![
+                target_kind,
+                target_id.as_slice(),
+                property.vocabulary().as_str(),
+                property.property().as_str(),
+            ],
+        )
+        .map_err(mutation_error("remove metadata property"))
 }
 
 fn mutation_error(context: &'static str) -> impl FnOnce(rusqlite::Error) -> Error {

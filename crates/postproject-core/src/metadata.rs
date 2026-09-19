@@ -619,6 +619,33 @@ pub struct MetadataAssertion {
     value: MetadataValue,
 }
 
+/// A metadata assertion together with the object carrying it.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct MetadataMatch {
+    target: ObjectRef,
+    assertion: MetadataAssertion,
+}
+
+impl MetadataMatch {
+    /// Creates a property-query result.
+    #[must_use]
+    pub const fn new(target: ObjectRef, assertion: MetadataAssertion) -> Self {
+        Self { target, assertion }
+    }
+
+    /// Returns the object carrying the assertion.
+    #[must_use]
+    pub const fn target(&self) -> ObjectRef {
+        self.target
+    }
+
+    /// Returns the matching assertion.
+    #[must_use]
+    pub const fn assertion(&self) -> &MetadataAssertion {
+        &self.assertion
+    }
+}
+
 impl MetadataAssertion {
     /// Creates an assertion. Repetition is represented by multiple assertions.
     #[must_use]
