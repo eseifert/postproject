@@ -86,9 +86,31 @@ strong_id!(
     MediaRootId
 );
 strong_id!(
-    /// Stable identity of a domain transaction, reserved for later journaling.
+    /// Stable identity of a production activity.
+    ActivityId
+);
+strong_id!(
+    /// Stable identity of one durable project revision.
+    RevisionId
+);
+strong_id!(
+    /// Stable identity of a domain transaction.
     TransactionId
 );
+
+/// A typed reference to an object that may carry extensible assertions.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum ObjectRef {
+    /// A project object.
+    Project(ProjectId),
+    /// A logical asset object.
+    Asset(AssetId),
+    /// A concrete asset representation.
+    Representation(RepresentationId),
+    /// A production activity.
+    Activity(ActivityId),
+}
 
 #[cfg(test)]
 mod tests {
@@ -113,6 +135,15 @@ mod tests {
 
         assert_eq!(project.as_bytes(), asset.as_bytes());
         assert_eq!(project.to_string(), asset.to_string());
+    }
+
+    #[test]
+    fn object_references_preserve_identity_level() {
+        let bytes = [9; 16];
+        assert_ne!(
+            ObjectRef::Asset(AssetId::from_bytes(bytes)),
+            ObjectRef::Representation(RepresentationId::from_bytes(bytes))
+        );
     }
 
     #[test]
