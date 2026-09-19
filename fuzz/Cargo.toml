@@ -44,5 +44,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "external_identifier_validation"
+path = "fuzz_targets/external_identifier_validation.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 members = ["."]
