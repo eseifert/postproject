@@ -23,7 +23,7 @@ use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     AssetId, AvailabilityIssue, AvailabilityIssueKind, Error, ErrorKind, EvidenceKind,
     ExternalIdentifier, IdentifierScheme, Locator, MAX_ACTIVITY_EDGES, MediaRoot, MetadataProperty,
-    MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProjectId, PropertyId,
+    MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId, PropertyId,
     RepresentationAvailability, RepresentationId, RepresentationResolution, ResolutionEvidence,
     ResourceId, ResourceResolutionState, RevisionContext, RevisionId, Timestamp, ToolIdentity,
     TransactionLifecycle, VocabularyId,
@@ -31,7 +31,7 @@ use postproject_core::{
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
 };
-use postproject_storage_sqlite::SqliteProject;
+use postproject_storage_sqlite::SqliteProduction;
 
 use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
@@ -82,7 +82,7 @@ const PP_EVIDENCE_MEDIA_ROOT_RELATION: u32 = 8;
 const PP_EVIDENCE_CONFLICTING_CANDIDATE: u32 = 9;
 const PP_EVIDENCE_DISCOVERY_ERROR: u32 = 10;
 
-const PP_OBJECT_PROJECT: u32 = 1;
+const PP_OBJECT_PRODUCTION: u32 = 1;
 const PP_OBJECT_ASSET: u32 = 2;
 const PP_OBJECT_REPRESENTATION: u32 = 3;
 const PP_OBJECT_RESOURCE: u32 = 4;
@@ -103,7 +103,7 @@ const PP_REVISION_ACTIVITY_INPUT_ADDED: u32 = 12;
 const PP_REVISION_ACTIVITY_OUTPUT_ADDED: u32 = 13;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 7;
+pub const ABI_VERSION: u32 = 8;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -173,19 +173,19 @@ pub struct PpRevisionEvent {
     pub role: *const c_char,
 }
 
-/// Opaque project handle owned by the C caller.
-pub struct PpProject {
-    state: Rc<ProjectState>,
+/// Opaque production handle owned by the C caller.
+pub struct PpProduction {
+    state: Rc<ProductionState>,
 }
 
-struct ProjectState {
-    inner: RefCell<SqliteProject>,
+struct ProductionState {
+    inner: RefCell<SqliteProduction>,
     transaction_open: Cell<bool>,
 }
 
 /// Opaque transaction handle owned by the C caller.
 pub struct PpTransaction {
-    state: Rc<ProjectState>,
+    state: Rc<ProductionState>,
     lifecycle: TransactionLifecycle,
     revision_context: RevisionContext,
     mutations: Vec<StagedMutation>,
@@ -260,83 +260,83 @@ pub extern "C" fn pp_abi_version() -> u32 {
     ABI_VERSION
 }
 
-/// Creates a new project file.
+/// Creates a new production file.
 ///
 /// # Safety
 ///
 /// `path` must point to a NUL-terminated byte string for the duration of the
-/// call. `display_name` may be null or must satisfy the same rule. `out_project`
+/// call. `display_name` may be null or must satisfy the same rule. `out_production`
 /// must be a writable pointer. `out_error` may be null or writable. Successful
-/// handles must be released exactly once with [`pp_project_release`].
+/// handles must be released exactly once with [`pp_production_release`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_create(
+pub unsafe extern "C" fn pp_production_create(
     path: *const c_char,
     display_name: *const c_char,
-    out_project: *mut *mut PpProject,
+    out_production: *mut *mut PpProduction,
     out_error: *mut *mut PpError,
 ) -> u32 {
     // SAFETY: The caller contract for each pointer is documented above. Helpers
     // validate nullability before dereferencing and borrow inputs only this call.
     unsafe {
-        initialize_output(out_project);
+        initialize_output(out_production);
         ffi_call(out_error, || {
-            if out_project.is_null() {
-                return Err(invalid_argument("out_project must not be null"));
+            if out_production.is_null() {
+                return Err(invalid_argument("out_production must not be null"));
             }
             let path = required_utf8(path, "path")?;
             if path.is_empty() {
                 return Err(invalid_argument("path must not be empty"));
             }
             let display_name = optional_utf8(display_name, "display_name")?.map(str::to_owned);
-            let project = SqliteProject::create(Path::new(path), display_name)?;
-            out_project.write(Box::into_raw(Box::new(project_handle(project))));
+            let production = SqliteProduction::create(Path::new(path), display_name)?;
+            out_production.write(Box::into_raw(Box::new(production_handle(production))));
             Ok(())
         })
     }
 }
 
-/// Opens an existing project file.
+/// Opens an existing production file.
 ///
 /// # Safety
 ///
 /// `path` must point to a NUL-terminated byte string for the duration of the
-/// call. `out_project` must be writable. `out_error` may be null or writable.
-/// Successful handles must be released exactly once with [`pp_project_release`].
+/// call. `out_production` must be writable. `out_error` may be null or writable.
+/// Successful handles must be released exactly once with [`pp_production_release`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_open(
+pub unsafe extern "C" fn pp_production_open(
     path: *const c_char,
-    out_project: *mut *mut PpProject,
+    out_production: *mut *mut PpProduction,
     out_error: *mut *mut PpError,
 ) -> u32 {
     // SAFETY: The caller contract for each pointer is documented above. Helpers
     // validate nullability before dereferencing and borrow inputs only this call.
     unsafe {
-        initialize_output(out_project);
+        initialize_output(out_production);
         ffi_call(out_error, || {
-            if out_project.is_null() {
-                return Err(invalid_argument("out_project must not be null"));
+            if out_production.is_null() {
+                return Err(invalid_argument("out_production must not be null"));
             }
             let path = required_utf8(path, "path")?;
             if path.is_empty() {
                 return Err(invalid_argument("path must not be empty"));
             }
-            let project = SqliteProject::open(Path::new(path))?;
-            out_project.write(Box::into_raw(Box::new(project_handle(project))));
+            let production = SqliteProduction::open(Path::new(path))?;
+            out_production.write(Box::into_raw(Box::new(production_handle(production))));
             Ok(())
         })
     }
 }
 
-/// Copies the stable project identity into caller-owned storage.
+/// Copies the stable production identity into caller-owned storage.
 ///
 /// # Safety
 ///
-/// `project` must be a live handle returned by this library. `out_id` must be
-/// writable. `out_error` may be null or writable. The project must not be used
+/// `production` must be a live handle returned by this library. `out_id` must be
+/// writable. `out_error` may be null or writable. The production must not be used
 /// concurrently by another thread during the call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_id(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_id(
+    production: *const PpProduction,
     out_id: *mut PpUuid,
     out_error: *mut *mut PpError,
 ) -> u32 {
@@ -344,32 +344,32 @@ pub unsafe extern "C" fn pp_project_id(
     // validity and synchronization are guaranteed by the caller contract.
     unsafe {
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             if out_id.is_null() {
                 return Err(invalid_argument("out_id must not be null"));
             }
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
-            out_id.write(uuid(inner.project().id()));
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            out_id.write(uuid(inner.production().id()));
             Ok(())
         })
     }
 }
 
-/// Reports whether a stable asset identity exists in a project.
+/// Reports whether a stable asset identity exists in a production.
 ///
 /// # Safety
 ///
-/// `project` must be a live handle returned by this library. `asset_id` must be
+/// `production` must be a live handle returned by this library. `asset_id` must be
 /// readable and `out_exists` writable. `out_error` may be null or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_asset_exists(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_asset_exists(
+    production: *const PpProduction,
     asset_id: *const PpUuid,
     out_exists: *mut u8,
     out_error: *mut *mut PpError,
@@ -381,20 +381,20 @@ pub unsafe extern "C" fn pp_project_asset_exists(
             out_exists.write(0);
         }
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             let asset_id = asset_id
                 .as_ref()
                 .ok_or_else(|| invalid_argument("asset_id must not be null"))?;
             if out_exists.is_null() {
                 return Err(invalid_argument("out_exists must not be null"));
             }
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let expected = AssetId::from_bytes(asset_id.bytes);
             let exists = inner.assets()?.iter().any(|asset| asset.id() == expected);
             out_exists.write(u8::from(exists));
@@ -410,11 +410,11 @@ pub unsafe extern "C" fn pp_project_asset_exists(
 ///
 /// # Safety
 ///
-/// `project` and `target` must be readable live values. `out_identifiers` must
+/// `production` and `target` must be readable live values. `out_identifiers` must
 /// be writable. `out_error` may be null or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_external_identifiers(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_external_identifiers(
+    production: *const PpProduction,
     target: *const PpObjectRef,
     out_identifiers: *mut *mut PpExternalIdentifierSet,
     out_error: *mut *mut PpError,
@@ -423,9 +423,9 @@ pub unsafe extern "C" fn pp_project_external_identifiers(
     unsafe {
         initialize_output(out_identifiers);
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             let target = target
                 .as_ref()
                 .ok_or_else(|| invalid_argument("target must not be null"))?;
@@ -433,11 +433,11 @@ pub unsafe extern "C" fn pp_project_external_identifiers(
                 return Err(invalid_argument("out_identifiers must not be null"));
             }
             let target = object_ref_from_abi(*target)?;
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let identifiers = inner
                 .external_identifiers(target)?
                 .into_iter()
@@ -455,12 +455,12 @@ pub unsafe extern "C" fn pp_project_external_identifiers(
 ///
 /// # Safety
 ///
-/// `project` must be live; `scheme` and `value` must be borrowed NUL-terminated
+/// `production` must be live; `scheme` and `value` must be borrowed NUL-terminated
 /// UTF-8 strings; `out_objects` must be writable; and `out_error` may be null or
 /// writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_find_by_external_identifier(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_find_by_external_identifier(
+    production: *const PpProduction,
     scheme: *const c_char,
     value: *const c_char,
     out_objects: *mut *mut PpObjectRefSet,
@@ -470,19 +470,19 @@ pub unsafe extern "C" fn pp_project_find_by_external_identifier(
     unsafe {
         initialize_output(out_objects);
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             if out_objects.is_null() {
                 return Err(invalid_argument("out_objects must not be null"));
             }
             let scheme = IdentifierScheme::new(required_utf8(scheme, "scheme")?)?;
             let value = required_utf8(value, "value")?;
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let objects = inner
                 .find_by_external_identifier(&scheme, value)?
                 .into_iter()
@@ -639,11 +639,11 @@ pub unsafe extern "C" fn pp_object_ref_set_release(objects: *mut PpObjectRefSet)
 ///
 /// # Safety
 ///
-/// `project` and `target` must be readable live values. `out_metadata` must be
+/// `production` and `target` must be readable live values. `out_metadata` must be
 /// writable and `out_error` may be null or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_metadata(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_metadata(
+    production: *const PpProduction,
     target: *const PpObjectRef,
     out_metadata: *mut *mut PpMetadataSet,
     out_error: *mut *mut PpError,
@@ -652,19 +652,19 @@ pub unsafe extern "C" fn pp_project_metadata(
     unsafe {
         initialize_output(out_metadata);
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             let target = target
                 .as_ref()
                 .ok_or_else(|| invalid_argument("target must not be null"))?;
             require_output(out_metadata, "out_metadata")?;
             let target = object_ref_from_abi(*target)?;
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let metadata = PpMetadataSet::from_assertions(target, &inner.metadata(target)?)?;
             out_metadata.write(Box::into_raw(Box::new(metadata)));
             Ok(())
@@ -676,11 +676,11 @@ pub unsafe extern "C" fn pp_project_metadata(
 ///
 /// # Safety
 ///
-/// `project` must be live, strings must be borrowed NUL-terminated UTF-8,
+/// `production` must be live, strings must be borrowed NUL-terminated UTF-8,
 /// `out_metadata` must be writable, and `out_error` may be null or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_find_metadata(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_find_metadata(
+    production: *const PpProduction,
     vocabulary: *const c_char,
     property: *const c_char,
     out_metadata: *mut *mut PpMetadataSet,
@@ -690,16 +690,16 @@ pub unsafe extern "C" fn pp_project_find_metadata(
     unsafe {
         initialize_output(out_metadata);
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             require_output(out_metadata, "out_metadata")?;
             let property = metadata_property_from_abi(vocabulary, property)?;
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let metadata =
                 PpMetadataSet::from_matches(&inner.query_by_metadata_property(&property)?)?;
             out_metadata.write(Box::into_raw(Box::new(metadata)));
@@ -785,11 +785,11 @@ pub unsafe extern "C" fn pp_metadata_set_release(metadata: *mut PpMetadataSet) {
 ///
 /// # Safety
 ///
-/// `project` must be live, `out_activities` must be writable, and `out_error`
+/// `production` must be live, `out_activities` must be writable, and `out_error`
 /// may be null or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_activities(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_activities(
+    production: *const PpProduction,
     out_activities: *mut *mut PpActivitySet,
     out_error: *mut *mut PpError,
 ) -> u32 {
@@ -797,15 +797,15 @@ pub unsafe extern "C" fn pp_project_activities(
     unsafe {
         initialize_output(out_activities);
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             require_output(out_activities, "out_activities")?;
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let activities = PpActivitySet::new(&inner.activities()?)?;
             out_activities.write(Box::into_raw(Box::new(activities)));
             Ok(())
@@ -817,19 +817,19 @@ pub unsafe extern "C" fn pp_project_activities(
 ///
 /// # Safety
 ///
-/// All pointers must follow the same rules as [`pp_project_activities`], and
+/// All pointers must follow the same rules as [`pp_production_activities`], and
 /// `representation_id` must be readable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_activities_producing(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_activities_producing(
+    production: *const PpProduction,
     representation_id: *const PpUuid,
     out_activities: *mut *mut PpActivitySet,
     out_error: *mut *mut PpError,
 ) -> u32 {
     // SAFETY: The shared helper validates every pointer before use.
     unsafe {
-        project_activities_for_representation(
-            project,
+        production_activities_for_representation(
+            production,
             representation_id,
             ActivityRelation::Producing,
             out_activities,
@@ -842,18 +842,18 @@ pub unsafe extern "C" fn pp_project_activities_producing(
 ///
 /// # Safety
 ///
-/// Pointer rules match [`pp_project_activities_producing`].
+/// Pointer rules match [`pp_production_activities_producing`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_activities_consuming(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_activities_consuming(
+    production: *const PpProduction,
     representation_id: *const PpUuid,
     out_activities: *mut *mut PpActivitySet,
     out_error: *mut *mut PpError,
 ) -> u32 {
     // SAFETY: The shared helper validates every pointer before use.
     unsafe {
-        project_activities_for_representation(
-            project,
+        production_activities_for_representation(
+            production,
             representation_id,
             ActivityRelation::Consuming,
             out_activities,
@@ -866,19 +866,19 @@ pub unsafe extern "C" fn pp_project_activities_consuming(
 ///
 /// # Safety
 ///
-/// `project` and `representation_id` must be readable live values,
+/// `production` and `representation_id` must be readable live values,
 /// `out_representations` must be writable, and `out_error` may be null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_provenance_ancestors(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_provenance_ancestors(
+    production: *const PpProduction,
     representation_id: *const PpUuid,
     out_representations: *mut *mut PpObjectRefSet,
     out_error: *mut *mut PpError,
 ) -> u32 {
     // SAFETY: The shared helper validates every pointer before use.
     unsafe {
-        project_provenance_relatives(
-            project,
+        production_provenance_relatives(
+            production,
             representation_id,
             ProvenanceDirection::Ancestors,
             out_representations,
@@ -891,18 +891,18 @@ pub unsafe extern "C" fn pp_project_provenance_ancestors(
 ///
 /// # Safety
 ///
-/// Pointer rules match [`pp_project_provenance_ancestors`].
+/// Pointer rules match [`pp_production_provenance_ancestors`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_provenance_descendants(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_provenance_descendants(
+    production: *const PpProduction,
     representation_id: *const PpUuid,
     out_representations: *mut *mut PpObjectRefSet,
     out_error: *mut *mut PpError,
 ) -> u32 {
     // SAFETY: The shared helper validates every pointer before use.
     unsafe {
-        project_provenance_relatives(
-            project,
+        production_provenance_relatives(
+            production,
             representation_id,
             ProvenanceDirection::Descendants,
             out_representations,
@@ -1194,11 +1194,11 @@ pub unsafe extern "C" fn pp_activity_set_release(activities: *mut PpActivitySet)
 ///
 /// # Safety
 ///
-/// `project` must be live, `out_revisions` must be writable, and `out_error`
+/// `production` must be live, `out_revisions` must be writable, and `out_error`
 /// may be null or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_latest_revision(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_latest_revision(
+    production: *const PpProduction,
     out_revisions: *mut *mut PpRevisionSet,
     out_error: *mut *mut PpError,
 ) -> u32 {
@@ -1206,15 +1206,15 @@ pub unsafe extern "C" fn pp_project_latest_revision(
     unsafe {
         initialize_output(out_revisions);
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             require_output(out_revisions, "out_revisions")?;
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let revisions: Vec<_> = inner.latest_revision()?.into_iter().collect();
             out_revisions.write(Box::into_raw(Box::new(PpRevisionSet::new(&revisions)?)));
             Ok(())
@@ -1226,10 +1226,10 @@ pub unsafe extern "C" fn pp_project_latest_revision(
 ///
 /// # Safety
 ///
-/// Pointer rules match [`pp_project_latest_revision`].
+/// Pointer rules match [`pp_production_latest_revision`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_changes_since(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_changes_since(
+    production: *const PpProduction,
     sequence: u64,
     limit: u32,
     out_revisions: *mut *mut PpRevisionSet,
@@ -1239,15 +1239,15 @@ pub unsafe extern "C" fn pp_project_changes_since(
     unsafe {
         initialize_output(out_revisions);
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             require_output(out_revisions, "out_revisions")?;
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let revisions = PpRevisionSet::new(&inner.changes_since(sequence, limit)?)?;
             out_revisions.write(Box::into_raw(Box::new(revisions)));
             Ok(())
@@ -1375,11 +1375,11 @@ pub unsafe extern "C" fn pp_revision_set_release(revisions: *mut PpRevisionSet) 
 ///
 /// # Safety
 ///
-/// `project` and `revision_id` must be readable live values,
+/// `production` and `revision_id` must be readable live values,
 /// `out_events` must be writable, and `out_error` may be null or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_revision_events(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_revision_events(
+    production: *const PpProduction,
     revision_id: *const PpUuid,
     out_events: *mut *mut PpRevisionEventSet,
     out_error: *mut *mut PpError,
@@ -1388,18 +1388,18 @@ pub unsafe extern "C" fn pp_project_revision_events(
     unsafe {
         initialize_output(out_events);
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             let revision_id = revision_id
                 .as_ref()
                 .ok_or_else(|| invalid_argument("revision_id must not be null"))?;
             require_output(out_events, "out_events")?;
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let events = inner.events_for_revision(RevisionId::from_bytes(revision_id.bytes))?;
             out_events.write(Box::into_raw(Box::new(PpRevisionEventSet::new(&events)?)));
             Ok(())
@@ -1835,18 +1835,18 @@ pub unsafe extern "C" fn pp_metadata_value_get_reference(
     }
 }
 
-/// Resolves every representation belonging to an asset without mutating the project.
+/// Resolves every representation belonging to an asset without mutating the production.
 ///
 /// The returned immutable result set owns all candidate URI and evidence-detail
 /// strings exposed by its accessors.
 ///
 /// # Safety
 ///
-/// `project` must be a live handle, `asset_id` must be readable, and
+/// `production` must be a live handle, `asset_id` must be readable, and
 /// `out_resolutions` must be writable. `out_error` may be null or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_resolve_asset(
-    project: *const PpProject,
+pub unsafe extern "C" fn pp_production_resolve_asset(
+    production: *const PpProduction,
     asset_id: *const PpUuid,
     out_resolutions: *mut *mut PpResolutionSet,
     out_error: *mut *mut PpError,
@@ -1856,9 +1856,9 @@ pub unsafe extern "C" fn pp_project_resolve_asset(
     unsafe {
         initialize_output(out_resolutions);
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             let asset_id = asset_id
                 .as_ref()
                 .ok_or_else(|| invalid_argument("asset_id must not be null"))?;
@@ -1866,11 +1866,11 @@ pub unsafe extern "C" fn pp_project_resolve_asset(
                 return Err(invalid_argument("out_resolutions must not be null"));
             }
 
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let asset_id = AssetId::from_bytes(asset_id.bytes);
             if !inner.assets()?.iter().any(|asset| asset.id() == asset_id) {
                 return Err(Error::new(
@@ -1888,7 +1888,7 @@ pub unsafe extern "C" fn pp_project_resolve_asset(
                     let resolution = resolver.resolve_resource(
                         &resource,
                         &locators,
-                        inner.project().media_roots(),
+                        inner.production().media_roots(),
                     )?;
                     resource_resolutions.push(resolution);
                 }
@@ -2190,38 +2190,38 @@ pub unsafe extern "C" fn pp_resolution_set_release(resolutions: *mut PpResolutio
 
 /// Begins an explicit transaction that stages mutations until commit.
 ///
-/// At most one transaction may be open for a project state. The returned handle
-/// keeps that state alive even if the original project handle is released.
+/// At most one transaction may be open for a production state. The returned handle
+/// keeps that state alive even if the original production handle is released.
 ///
 /// # Safety
 ///
-/// `project` must be a live handle returned by this library. `out_transaction`
+/// `production` must be a live handle returned by this library. `out_transaction`
 /// must be writable. `out_error` may be null or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_begin_transaction(
-    project: *mut PpProject,
+pub unsafe extern "C" fn pp_production_begin_transaction(
+    production: *mut PpProduction,
     out_transaction: *mut *mut PpTransaction,
     out_error: *mut *mut PpError,
 ) -> u32 {
     // SAFETY: The caller contract for each pointer is documented above. Outputs
-    // are initialized before validation and the project is borrowed only here.
+    // are initialized before validation and the production is borrowed only here.
     unsafe {
         initialize_output(out_transaction);
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             if out_transaction.is_null() {
                 return Err(invalid_argument("out_transaction must not be null"));
             }
-            if project.state.transaction_open.replace(true) {
+            if production.state.transaction_open.replace(true) {
                 return Err(Error::new(
                     ErrorKind::Conflict,
-                    "project already has an open transaction",
+                    "production already has an open transaction",
                 ));
             }
             out_transaction.write(Box::into_raw(Box::new(PpTransaction {
-                state: Rc::clone(&project.state),
+                state: Rc::clone(&production.state),
                 lifecycle: TransactionLifecycle::new(),
                 revision_context: RevisionContext::default(),
                 mutations: Vec::new(),
@@ -2736,21 +2736,21 @@ pub unsafe extern "C" fn pp_transaction_release(transaction: *mut PpTransaction)
     }));
 }
 
-/// Releases a project handle. Passing null is a no-op.
+/// Releases a production handle. Passing null is a no-op.
 ///
 /// # Safety
 ///
 /// A non-null pointer must have been returned by this library and not previously
 /// released. No other thread may use it during or after this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_project_release(project: *mut PpProject) {
-    if project.is_null() {
+pub unsafe extern "C" fn pp_production_release(production: *mut PpProduction) {
+    if production.is_null() {
         return;
     }
     let _ = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: Ownership of a live allocation is required by this function's
         // contract and is reconstructed exactly once here.
-        drop(unsafe { Box::from_raw(project) });
+        drop(unsafe { Box::from_raw(production) });
     }));
 }
 
@@ -2834,8 +2834,8 @@ enum ActivityRelation {
     Consuming,
 }
 
-unsafe fn project_activities_for_representation(
-    project: *const PpProject,
+unsafe fn production_activities_for_representation(
+    production: *const PpProduction,
     representation_id: *const PpUuid,
     relation: ActivityRelation,
     out_activities: *mut *mut PpActivitySet,
@@ -2845,18 +2845,18 @@ unsafe fn project_activities_for_representation(
     unsafe {
         initialize_output(out_activities);
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             let representation_id = representation_id
                 .as_ref()
                 .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
             require_output(out_activities, "out_activities")?;
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let representation_id = RepresentationId::from_bytes(representation_id.bytes);
             let activities = match relation {
                 ActivityRelation::Producing => inner.activities_producing(representation_id),
@@ -2874,8 +2874,8 @@ enum ProvenanceDirection {
     Descendants,
 }
 
-unsafe fn project_provenance_relatives(
-    project: *const PpProject,
+unsafe fn production_provenance_relatives(
+    production: *const PpProduction,
     representation_id: *const PpUuid,
     direction: ProvenanceDirection,
     out_representations: *mut *mut PpObjectRefSet,
@@ -2885,18 +2885,18 @@ unsafe fn project_provenance_relatives(
     unsafe {
         initialize_output(out_representations);
         ffi_call(out_error, || {
-            let project = project
+            let production = production
                 .as_ref()
-                .ok_or_else(|| invalid_argument("project must not be null"))?;
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
             let representation_id = representation_id
                 .as_ref()
                 .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
             require_output(out_representations, "out_representations")?;
-            let inner = project
+            let inner = production
                 .state
                 .inner
                 .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let representation_id = RepresentationId::from_bytes(representation_id.bytes);
             let related = match direction {
                 ProvenanceDirection::Ancestors => inner.ancestors(representation_id),
@@ -3141,7 +3141,9 @@ unsafe fn metadata_property_from_abi(
 
 fn object_ref_from_abi(value: PpObjectRef) -> Result<ObjectRef, Error> {
     match value.kind {
-        PP_OBJECT_PROJECT => Ok(ObjectRef::Project(ProjectId::from_bytes(value.id.bytes))),
+        PP_OBJECT_PRODUCTION => Ok(ObjectRef::Production(ProductionId::from_bytes(
+            value.id.bytes,
+        ))),
         PP_OBJECT_ASSET => Ok(ObjectRef::Asset(AssetId::from_bytes(value.id.bytes))),
         PP_OBJECT_REPRESENTATION => Ok(ObjectRef::Representation(RepresentationId::from_bytes(
             value.id.bytes,
@@ -3158,7 +3160,7 @@ fn object_ref_from_abi(value: PpObjectRef) -> Result<ObjectRef, Error> {
 
 pub(crate) fn object_ref_to_abi(value: ObjectRef) -> Result<PpObjectRef, Error> {
     let (kind, bytes) = match value {
-        ObjectRef::Project(id) => (PP_OBJECT_PROJECT, id.into_bytes()),
+        ObjectRef::Production(id) => (PP_OBJECT_PRODUCTION, id.into_bytes()),
         ObjectRef::Asset(id) => (PP_OBJECT_ASSET, id.into_bytes()),
         ObjectRef::Representation(id) => (PP_OBJECT_REPRESENTATION, id.into_bytes()),
         ObjectRef::Resource(id) => (PP_OBJECT_RESOURCE, id.into_bytes()),
@@ -3192,16 +3194,16 @@ const fn error_code(kind: ErrorKind) -> u32 {
     }
 }
 
-fn uuid(id: ProjectId) -> PpUuid {
+fn uuid(id: ProductionId) -> PpUuid {
     PpUuid {
         bytes: id.into_bytes(),
     }
 }
 
-fn project_handle(project: SqliteProject) -> PpProject {
-    PpProject {
-        state: Rc::new(ProjectState {
-            inner: RefCell::new(project),
+fn production_handle(production: SqliteProduction) -> PpProduction {
+    PpProduction {
+        state: Rc::new(ProductionState {
+            inner: RefCell::new(production),
             transaction_open: Cell::new(false),
         }),
     }
@@ -3393,12 +3395,12 @@ impl PpTransaction {
     fn commit(&mut self) -> Result<(), Error> {
         self.lifecycle.ensure_open()?;
         let result = (|| {
-            let mut project = self
+            let mut production = self
                 .state
                 .inner
                 .try_borrow_mut()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
-            let mut transaction = project.begin_transaction()?;
+                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let mut transaction = production.begin_transaction()?;
             transaction.set_revision_context(self.revision_context.clone())?;
             for mutation in &self.mutations {
                 match mutation {
@@ -3472,47 +3474,53 @@ mod tests {
     };
 
     #[test]
-    fn creates_reads_and_releases_project_handle() {
+    fn creates_reads_and_releases_production_handle() {
         let directory = tempfile::tempdir().expect("create directory");
         let path = CString::new(
             directory
                 .path()
-                .join("project.pproj")
+                .join("production.pproj")
                 .to_string_lossy()
                 .as_bytes(),
         )
         .expect("path has no NUL");
-        let mut project = ptr::null_mut();
+        let mut production = ptr::null_mut();
         let mut error = ptr::null_mut();
 
         // SAFETY: Test inputs and outputs follow the documented ABI contract.
         let status = unsafe {
-            pp_project_create(path.as_ptr(), ptr::null(), &raw mut project, &raw mut error)
+            pp_production_create(
+                path.as_ptr(),
+                ptr::null(),
+                &raw mut production,
+                &raw mut error,
+            )
         };
         assert_eq!(status, PP_OK);
-        assert!(!project.is_null());
+        assert!(!production.is_null());
         assert!(error.is_null());
 
         let mut id = PpUuid { bytes: [0; 16] };
-        // SAFETY: `project` is live and outputs are writable.
+        // SAFETY: `production` is live and outputs are writable.
         assert_eq!(
-            unsafe { pp_project_id(project, &raw mut id, &raw mut error) },
+            unsafe { pp_production_id(production, &raw mut id, &raw mut error) },
             PP_OK
         );
         assert_ne!(id.bytes, [0; 16]);
         // SAFETY: The live handle is released exactly once.
-        unsafe { pp_project_release(project) };
+        unsafe { pp_production_release(production) };
     }
 
     #[test]
     fn invalid_arguments_return_owned_error() {
-        let mut project = ptr::null_mut();
+        let mut production = ptr::null_mut();
         let mut error = ptr::null_mut();
 
         // SAFETY: Null is intentionally supplied where the API validates it.
-        let status = unsafe { pp_project_open(ptr::null(), &raw mut project, &raw mut error) };
+        let status =
+            unsafe { pp_production_open(ptr::null(), &raw mut production, &raw mut error) };
         assert_eq!(status, PP_ERROR_INVALID_ARGUMENT);
-        assert!(project.is_null());
+        assert!(production.is_null());
         assert!(!error.is_null());
         // SAFETY: `error` is a live library-owned error handle.
         assert_eq!(unsafe { pp_error_code(error) }, status);
@@ -3523,38 +3531,40 @@ mod tests {
     }
 
     #[test]
-    fn transaction_retains_project_state_and_commits_import() {
+    fn transaction_retains_production_state_and_commits_import() {
         let directory = tempfile::tempdir().expect("create directory");
-        let project_path = directory.path().join("project.pproj");
+        let production_path = directory.path().join("production.pproj");
         let media_path = directory.path().join("clip.mov");
         std::fs::write(&media_path, b"FFI transaction media").expect("write media");
-        let project_path = CString::new(project_path.to_string_lossy().as_bytes())
-            .expect("project path has no NUL");
+        let production_path = CString::new(production_path.to_string_lossy().as_bytes())
+            .expect("production path has no NUL");
         let media_path =
             CString::new(media_path.to_string_lossy().as_bytes()).expect("media path has no NUL");
-        let mut project = ptr::null_mut();
+        let mut production = ptr::null_mut();
         let mut transaction = ptr::null_mut();
         let mut error = ptr::null_mut();
 
         // SAFETY: Test inputs and outputs follow the documented ABI contract.
         assert_eq!(
             unsafe {
-                pp_project_create(
-                    project_path.as_ptr(),
+                pp_production_create(
+                    production_path.as_ptr(),
                     ptr::null(),
-                    &raw mut project,
+                    &raw mut production,
                     &raw mut error,
                 )
             },
             PP_OK
         );
-        // SAFETY: `project` is live and the transaction output is writable.
+        // SAFETY: `production` is live and the transaction output is writable.
         assert_eq!(
-            unsafe { pp_project_begin_transaction(project, &raw mut transaction, &raw mut error,) },
+            unsafe {
+                pp_production_begin_transaction(production, &raw mut transaction, &raw mut error)
+            },
             PP_OK
         );
         // SAFETY: The transaction retains shared ownership of the state.
-        unsafe { pp_project_release(project) };
+        unsafe { pp_production_release(production) };
 
         let mut asset_id = PpUuid { bytes: [0; 16] };
         // SAFETY: `transaction` is live and inputs/outputs satisfy the contract.
@@ -3578,10 +3588,10 @@ mod tests {
         // SAFETY: The live transaction is released exactly once.
         unsafe { pp_transaction_release(transaction) };
 
-        let reopened = SqliteProject::open(Path::new(
-            project_path.to_str().expect("project path is UTF-8"),
+        let reopened = SqliteProduction::open(Path::new(
+            production_path.to_str().expect("production path is UTF-8"),
         ))
-        .expect("reopen project");
+        .expect("reopen production");
         let assets = reopened.assets().expect("load committed assets");
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].id().into_bytes(), asset_id.bytes);
