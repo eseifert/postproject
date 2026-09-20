@@ -1,4 +1,11 @@
 pp_abi_version
+pp_activity_set_count
+pp_activity_set_get
+pp_activity_set_get_agent
+pp_activity_set_get_input
+pp_activity_set_get_output
+pp_activity_set_get_tool
+pp_activity_set_release
 pp_error_code
 pp_error_message
 pp_error_release
@@ -26,6 +33,9 @@ pp_metadata_value_struct_get
 pp_object_ref_set_count
 pp_object_ref_set_get
 pp_object_ref_set_release
+pp_project_activities
+pp_project_activities_consuming
+pp_project_activities_producing
 pp_project_asset_exists
 pp_project_begin_transaction
 pp_project_create
@@ -35,6 +45,8 @@ pp_project_find_metadata
 pp_project_id
 pp_project_metadata
 pp_project_open
+pp_project_provenance_ancestors
+pp_project_provenance_descendants
 pp_project_release
 pp_project_resolve_asset
 pp_resolution_set_get_candidate
@@ -51,6 +63,7 @@ pp_transaction_add_media_root
 pp_transaction_add_metadata_text
 pp_transaction_commit
 pp_transaction_confirm_locator
+pp_transaction_create_activity
 pp_transaction_import_media
 pp_transaction_release
 pp_transaction_remove_external_identifier

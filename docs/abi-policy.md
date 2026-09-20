@@ -1,14 +1,14 @@
 # ABI policy
 
-ABI version 5 is pre-release and may change during the 0.x series, with every
+ABI version 6 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
 
 ## Types and ownership
 
-Projects, transactions, resolution sets, external-identifier sets,
-object-reference sets, and errors are opaque handles. A
+Projects, transactions, resolution sets, activity sets, external-identifier
+sets, object-reference sets, and errors are opaque handles. A
 successful creation/open call transfers one project ownership reference to the
 caller, which releases it exactly once with `pp_project_release`. Failed calls
 optionally transfer an error object, released exactly once with

@@ -85,7 +85,7 @@ const PP_OBJECT_RESOURCE: u32 = 4;
 const PP_OBJECT_ACTIVITY: u32 = 5;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 5;
+pub const ABI_VERSION: u32 = 6;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]

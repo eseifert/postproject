@@ -15,6 +15,8 @@ All notable changes to PostProject will be documented here. The project uses
   not promised.
 - Replaced the flat native media-resolution result with ABI version 5's nested
   representation availability, resource results, and availability issues.
+- Added ABI version 6 activity creation, inspection, direct provenance queries,
+  and ancestry/descendant traversal with C++17 value wrappers.
 
 ### Added
 
