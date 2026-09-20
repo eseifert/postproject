@@ -741,6 +741,104 @@ pub unsafe extern "C" fn pp_project_activities(
     }
 }
 
+/// Loads activities that produce one representation.
+///
+/// # Safety
+///
+/// All pointers must follow the same rules as [`pp_project_activities`], and
+/// `representation_id` must be readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_activities_producing(
+    project: *const PpProject,
+    representation_id: *const PpUuid,
+    out_activities: *mut *mut PpActivitySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The shared helper validates every pointer before use.
+    unsafe {
+        project_activities_for_representation(
+            project,
+            representation_id,
+            ActivityRelation::Producing,
+            out_activities,
+            out_error,
+        )
+    }
+}
+
+/// Loads activities that consume one representation.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_project_activities_producing`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_activities_consuming(
+    project: *const PpProject,
+    representation_id: *const PpUuid,
+    out_activities: *mut *mut PpActivitySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The shared helper validates every pointer before use.
+    unsafe {
+        project_activities_for_representation(
+            project,
+            representation_id,
+            ActivityRelation::Consuming,
+            out_activities,
+            out_error,
+        )
+    }
+}
+
+/// Loads every transitive provenance ancestor as representation references.
+///
+/// # Safety
+///
+/// `project` and `representation_id` must be readable live values,
+/// `out_representations` must be writable, and `out_error` may be null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_provenance_ancestors(
+    project: *const PpProject,
+    representation_id: *const PpUuid,
+    out_representations: *mut *mut PpObjectRefSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The shared helper validates every pointer before use.
+    unsafe {
+        project_provenance_relatives(
+            project,
+            representation_id,
+            ProvenanceDirection::Ancestors,
+            out_representations,
+            out_error,
+        )
+    }
+}
+
+/// Loads every transitive provenance descendant as representation references.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_project_provenance_ancestors`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_provenance_descendants(
+    project: *const PpProject,
+    representation_id: *const PpUuid,
+    out_representations: *mut *mut PpObjectRefSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The shared helper validates every pointer before use.
+    unsafe {
+        project_provenance_relatives(
+            project,
+            representation_id,
+            ProvenanceDirection::Descendants,
+            out_representations,
+            out_error,
+        )
+    }
+}
+
 /// Returns the number of activities in a result set. Null returns zero.
 ///
 /// # Safety
@@ -2218,6 +2316,95 @@ unsafe fn ffi_call(
             unsafe { write_error(out_error, PP_ERROR_INTERNAL, &message) };
             PP_ERROR_INTERNAL
         }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ActivityRelation {
+    Producing,
+    Consuming,
+}
+
+unsafe fn project_activities_for_representation(
+    project: *const PpProject,
+    representation_id: *const PpUuid,
+    relation: ActivityRelation,
+    out_activities: *mut *mut PpActivitySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and all pointers checked before use.
+    unsafe {
+        initialize_output(out_activities);
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            let representation_id = representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+            require_output(out_activities, "out_activities")?;
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let representation_id = RepresentationId::from_bytes(representation_id.bytes);
+            let activities = match relation {
+                ActivityRelation::Producing => inner.activities_producing(representation_id),
+                ActivityRelation::Consuming => inner.activities_consuming(representation_id),
+            }?;
+            out_activities.write(Box::into_raw(Box::new(PpActivitySet::new(&activities)?)));
+            Ok(())
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ProvenanceDirection {
+    Ancestors,
+    Descendants,
+}
+
+unsafe fn project_provenance_relatives(
+    project: *const PpProject,
+    representation_id: *const PpUuid,
+    direction: ProvenanceDirection,
+    out_representations: *mut *mut PpObjectRefSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and all pointers checked before use.
+    unsafe {
+        initialize_output(out_representations);
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            let representation_id = representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+            require_output(out_representations, "out_representations")?;
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let representation_id = RepresentationId::from_bytes(representation_id.bytes);
+            let related = match direction {
+                ProvenanceDirection::Ancestors => inner.ancestors(representation_id),
+                ProvenanceDirection::Descendants => inner.descendants(representation_id),
+            }?;
+            let objects = related
+                .into_iter()
+                .map(|id| PpObjectRef {
+                    kind: PP_OBJECT_REPRESENTATION,
+                    id: PpUuid {
+                        bytes: id.into_bytes(),
+                    },
+                })
+                .collect();
+            out_representations.write(Box::into_raw(Box::new(PpObjectRefSet { objects })));
+            Ok(())
+        })
     }
 }
 

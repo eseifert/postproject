@@ -216,6 +216,18 @@ PP_API pp_error_code_t pp_metadata_value_get_reference(
 PP_API pp_error_code_t pp_project_activities(
     const pp_project_t *project, pp_activity_set_t **out_activities,
     pp_error_t **out_error);
+PP_API pp_error_code_t pp_project_activities_producing(
+    const pp_project_t *project, const pp_uuid_t *representation_id,
+    pp_activity_set_t **out_activities, pp_error_t **out_error);
+PP_API pp_error_code_t pp_project_activities_consuming(
+    const pp_project_t *project, const pp_uuid_t *representation_id,
+    pp_activity_set_t **out_activities, pp_error_t **out_error);
+PP_API pp_error_code_t pp_project_provenance_ancestors(
+    const pp_project_t *project, const pp_uuid_t *representation_id,
+    pp_object_ref_set_t **out_representations, pp_error_t **out_error);
+PP_API pp_error_code_t pp_project_provenance_descendants(
+    const pp_project_t *project, const pp_uuid_t *representation_id,
+    pp_object_ref_set_t **out_representations, pp_error_t **out_error);
 PP_API uint64_t pp_activity_set_count(const pp_activity_set_t *activities);
 PP_API pp_error_code_t pp_activity_set_get(
     const pp_activity_set_t *activities, uint64_t index, pp_uuid_t *out_id,
