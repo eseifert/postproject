@@ -825,6 +825,120 @@ pub unsafe extern "C" fn pp_activity_set_get(
     }
 }
 
+/// Reads the optional tool identity for one activity.
+///
+/// Every returned string is borrowed. All outputs are null when no tool was
+/// recorded; version and URI may independently be null for a present tool.
+///
+/// # Safety
+///
+/// `activities` must be live. Every output must be writable and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_activity_set_get_tool(
+    activities: *const PpActivitySet,
+    index: u64,
+    out_name: *mut *const c_char,
+    out_version: *mut *const c_char,
+    out_uri: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_const_output(out_name);
+        initialize_const_output(out_version);
+        initialize_const_output(out_uri);
+        ffi_call(out_error, || {
+            require_output(out_name, "out_name")?;
+            require_output(out_version, "out_version")?;
+            require_output(out_uri, "out_uri")?;
+            let activities = activities
+                .as_ref()
+                .ok_or_else(|| invalid_argument("activities must not be null"))?;
+            let activity = item_at(&activities.activities, index, "activity")?;
+            if let Some(tool) = &activity.tool {
+                out_name.write(tool.name.as_ptr());
+                out_version.write(
+                    tool.version
+                        .as_ref()
+                        .map_or(ptr::null(), |value| value.as_ptr()),
+                );
+                out_uri.write(
+                    tool.uri
+                        .as_ref()
+                        .map_or(ptr::null(), |value| value.as_ptr()),
+                );
+            }
+            Ok(())
+        })
+    }
+}
+
+/// Reads the optional agent identity for one activity.
+///
+/// Every returned string is borrowed and nullable. A present agent has a name,
+/// an external identifier, or both.
+///
+/// # Safety
+///
+/// `activities` must be live. Every output must be writable and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_activity_set_get_agent(
+    activities: *const PpActivitySet,
+    index: u64,
+    out_name: *mut *const c_char,
+    out_identifier_scheme: *mut *const c_char,
+    out_identifier_value: *mut *const c_char,
+    out_identifier_qualifier: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_const_output(out_name);
+        initialize_const_output(out_identifier_scheme);
+        initialize_const_output(out_identifier_value);
+        initialize_const_output(out_identifier_qualifier);
+        ffi_call(out_error, || {
+            require_output(out_name, "out_name")?;
+            require_output(out_identifier_scheme, "out_identifier_scheme")?;
+            require_output(out_identifier_value, "out_identifier_value")?;
+            require_output(out_identifier_qualifier, "out_identifier_qualifier")?;
+            let activities = activities
+                .as_ref()
+                .ok_or_else(|| invalid_argument("activities must not be null"))?;
+            let activity = item_at(&activities.activities, index, "activity")?;
+            if let Some(agent) = &activity.agent {
+                out_name.write(
+                    agent
+                        .name
+                        .as_ref()
+                        .map_or(ptr::null(), |value| value.as_ptr()),
+                );
+                out_identifier_scheme.write(
+                    agent
+                        .identifier_scheme
+                        .as_ref()
+                        .map_or(ptr::null(), |value| value.as_ptr()),
+                );
+                out_identifier_value.write(
+                    agent
+                        .identifier_value
+                        .as_ref()
+                        .map_or(ptr::null(), |value| value.as_ptr()),
+                );
+                out_identifier_qualifier.write(
+                    agent
+                        .identifier_qualifier
+                        .as_ref()
+                        .map_or(ptr::null(), |value| value.as_ptr()),
+                );
+            }
+            Ok(())
+        })
+    }
+}
+
 /// Releases an activity result set. Null is a no-op.
 ///
 /// # Safety

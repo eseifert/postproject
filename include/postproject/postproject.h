@@ -223,6 +223,13 @@ PP_API pp_error_code_t pp_activity_set_get(
     int64_t *out_started_at_unix_micros, uint8_t *out_has_finished_at,
     int64_t *out_finished_at_unix_micros, uint64_t *out_input_count,
     uint64_t *out_output_count, pp_error_t **out_error);
+PP_API pp_error_code_t pp_activity_set_get_tool(
+    const pp_activity_set_t *activities, uint64_t index, const char **out_name,
+    const char **out_version, const char **out_uri, pp_error_t **out_error);
+PP_API pp_error_code_t pp_activity_set_get_agent(
+    const pp_activity_set_t *activities, uint64_t index, const char **out_name,
+    const char **out_identifier_scheme, const char **out_identifier_value,
+    const char **out_identifier_qualifier, pp_error_t **out_error);
 PP_API void pp_activity_set_release(pp_activity_set_t *activities);
 /* Resolution is read-only. Borrowed candidate URI and evidence-detail strings
  * remain valid until pp_resolution_set_release(). */
