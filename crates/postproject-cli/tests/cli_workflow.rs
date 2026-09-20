@@ -335,3 +335,49 @@ fn records_and_queries_provenance() {
         directory.path(),
     );
 }
+
+#[test]
+fn reads_revision_pages_and_semantic_events() {
+    let directory = tempfile::tempdir().expect("create test directory");
+    let project = directory.path().join("revisions.pproj");
+    let original = directory.path().join("original.mov");
+    fs::write(&original, b"revision source fixture").expect("write source fixture");
+    let project_path = project.to_str().expect("UTF-8 project path");
+
+    run_json(&["init", project_path]);
+    assert!(run_json(&["revisions", "latest", project_path]).is_null());
+    run_json(&[
+        "media",
+        "add",
+        project_path,
+        original.to_str().expect("UTF-8 media path"),
+    ]);
+
+    let revisions = run_json(&[
+        "revisions",
+        "since",
+        project_path,
+        "--after",
+        "0",
+        "--limit",
+        "1",
+    ]);
+    let revisions = revisions.as_array().expect("revision array");
+    assert_eq!(revisions.len(), 1);
+    assert_eq!(revisions[0]["sequence"], 1);
+    assert!(revisions[0]["transaction_id"].is_string());
+    let revision_id = revisions[0]["id"].as_str().expect("revision ID");
+
+    let latest = run_json(&["revisions", "latest", project_path]);
+    assert_eq!(latest["id"], revision_id);
+    let events = run_json(&["revisions", "events", project_path, revision_id]);
+    let events = events.as_array().expect("revision event array");
+    assert_eq!(events.len(), 5);
+    assert_eq!(events[0]["position"], 0);
+    assert_eq!(events[0]["kind"], "asset_imported");
+    assert_eq!(events[1]["kind"], "representation_added");
+    assert_eq!(events[2]["kind"], "resource_added");
+    assert_eq!(events[3]["kind"], "representation_resource_added");
+    assert_eq!(events[3]["structural_position"], 0);
+    assert_eq!(events[4]["kind"], "locator_added");
+}
