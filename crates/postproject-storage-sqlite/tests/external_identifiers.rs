@@ -3,10 +3,10 @@
 use std::fs;
 
 use postproject_core::{
-    AssetId, ErrorKind, ExternalIdentifier, IdentifierScheme, ObjectRef, ProjectId,
+    AssetId, ErrorKind, ExternalIdentifier, IdentifierScheme, ObjectRef, ProductionId,
 };
 use postproject_media::prepare_original_media;
-use postproject_storage_sqlite::SqliteProject;
+use postproject_storage_sqlite::SqliteProduction;
 use tempfile::tempdir;
 
 fn identifier(
@@ -21,7 +21,7 @@ fn identifier(
 #[test]
 fn multiple_external_identifiers_round_trip_and_support_exact_lookup() {
     let directory = tempdir().expect("create temporary directory");
-    let project_path = directory.path().join("production.pproj");
+    let production_path = directory.path().join("production.pproj");
     let media_path = directory.path().join("A001.mov");
     fs::write(&media_path, b"fixture media bytes").expect("write fixture media");
     let prepared = prepare_original_media(&media_path, None, None).expect("prepare import");
@@ -43,9 +43,10 @@ fn multiple_external_identifiers_round_trip_and_support_exact_lookup() {
     let vendor_id = identifier(&vendor_scheme, "  Camera A / 0007  ", None);
     let storage_id = identifier(&vendor_scheme, "storage-object-7", Some("resource"));
 
-    let mut project = SqliteProject::create(&project_path, None).expect("create project");
+    let mut production =
+        SqliteProduction::create(&production_path, None).expect("create production");
     {
-        let mut transaction = project.begin_transaction().expect("begin transaction");
+        let mut transaction = production.begin_transaction().expect("begin transaction");
         transaction
             .import_original(&prepared)
             .expect("stage original import");
@@ -63,9 +64,9 @@ fn multiple_external_identifiers_round_trip_and_support_exact_lookup() {
             .expect("attach storage identifier");
         transaction.commit().expect("commit transaction");
     }
-    drop(project);
+    drop(production);
 
-    let reopened = SqliteProject::open(&project_path).expect("reopen project");
+    let reopened = SqliteProduction::open(&production_path).expect("reopen production");
     let asset_identifiers = reopened
         .external_identifiers(asset)
         .expect("load asset identifiers");
@@ -102,17 +103,18 @@ fn multiple_external_identifiers_round_trip_and_support_exact_lookup() {
 #[test]
 fn identifier_mutations_are_atomic_and_validate_targets() {
     let directory = tempdir().expect("create temporary directory");
-    let project_path = directory.path().join("production.pproj");
+    let production_path = directory.path().join("production.pproj");
     let media_path = directory.path().join("clip.mov");
     fs::write(&media_path, b"fixture media bytes").expect("write fixture media");
     let prepared = prepare_original_media(&media_path, None, None).expect("prepare import");
     let target = ObjectRef::Asset(prepared.asset().id());
     let scheme = IdentifierScheme::new("com.example.asset").expect("valid scheme");
     let external_id = identifier(&scheme, "asset-42", None);
-    let mut project = SqliteProject::create(&project_path, None).expect("create project");
+    let mut production =
+        SqliteProduction::create(&production_path, None).expect("create production");
 
     {
-        let mut transaction = project.begin_transaction().expect("begin transaction");
+        let mut transaction = production.begin_transaction().expect("begin transaction");
         transaction
             .import_original(&prepared)
             .expect("stage original import");
@@ -120,21 +122,21 @@ fn identifier_mutations_are_atomic_and_validate_targets() {
     }
 
     {
-        let mut transaction = project.begin_transaction().expect("begin transaction");
+        let mut transaction = production.begin_transaction().expect("begin transaction");
         transaction
             .add_external_identifier(target, &external_id)
             .expect("stage identifier");
         transaction.rollback().expect("roll back identifier");
     }
     assert!(
-        project
+        production
             .external_identifiers(target)
             .expect("load identifiers")
             .is_empty()
     );
 
     {
-        let mut transaction = project.begin_transaction().expect("begin transaction");
+        let mut transaction = production.begin_transaction().expect("begin transaction");
         transaction
             .add_external_identifier(target, &external_id)
             .expect("stage identifier");
@@ -149,20 +151,20 @@ fn identifier_mutations_are_atomic_and_validate_targets() {
     }
 
     {
-        let mut transaction = project.begin_transaction().expect("begin transaction");
+        let mut transaction = production.begin_transaction().expect("begin transaction");
         transaction
             .remove_external_identifier(target, &external_id)
             .expect("stage removal");
         transaction.rollback().expect("roll back removal");
     }
     assert_eq!(
-        project
+        production
             .external_identifiers(target)
             .expect("load identifiers"),
         std::slice::from_ref(&external_id)
     );
 
-    let mut transaction = project.begin_transaction().expect("begin transaction");
+    let mut transaction = production.begin_transaction().expect("begin transaction");
     assert_eq!(
         transaction
             .add_external_identifier(ObjectRef::Asset(AssetId::new()), &external_id)
@@ -172,7 +174,7 @@ fn identifier_mutations_are_atomic_and_validate_targets() {
     );
     assert_eq!(
         transaction
-            .add_external_identifier(ObjectRef::Project(ProjectId::new()), &external_id)
+            .add_external_identifier(ObjectRef::Production(ProductionId::new()), &external_id)
             .expect_err("unsupported target must fail")
             .kind(),
         ErrorKind::Unsupported

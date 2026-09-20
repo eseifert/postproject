@@ -8,7 +8,7 @@ use postproject_core::{
     RepresentationKind, Resource, ResourceId, RevisionContext, RevisionEventKind, Timestamp,
     VocabularyId,
 };
-use postproject_storage_sqlite::SqliteProject;
+use postproject_storage_sqlite::SqliteProduction;
 use tempfile::tempdir;
 
 fn import(label: u8) -> OriginalMediaImport {
@@ -54,13 +54,18 @@ fn imported_media_creates_a_durable_contextual_revision() {
     let representation_id = media.representation().id();
     let resource_id = media.resources()[0].id();
     let locator_id = media.locators()[0].id();
-    let mut project = SqliteProject::create(&path, None).expect("create project");
-    assert_eq!(project.latest_revision().expect("query journal"), None);
-    assert!(project.changes_since(0, 10).expect("query feed").is_empty());
+    let mut production = SqliteProduction::create(&path, None).expect("create production");
+    assert_eq!(production.latest_revision().expect("query journal"), None);
+    assert!(
+        production
+            .changes_since(0, 10)
+            .expect("query feed")
+            .is_empty()
+    );
 
     let transaction_id;
     {
-        let mut transaction = project.begin_transaction().expect("begin transaction");
+        let mut transaction = production.begin_transaction().expect("begin transaction");
         transaction_id = transaction.id();
         transaction
             .set_revision_context(
@@ -82,7 +87,7 @@ fn imported_media_creates_a_durable_contextual_revision() {
         transaction.commit().expect("commit import");
     }
 
-    let revision = project
+    let revision = production
         .latest_revision()
         .expect("query latest revision")
         .expect("revision exists");
@@ -90,11 +95,11 @@ fn imported_media_creates_a_durable_contextual_revision() {
     assert_eq!(revision.transaction_id(), transaction_id);
     assert_eq!(revision.origin().expect("origin").name(), "Editorial host");
     assert_eq!(revision.message(), Some("Import camera original"));
-    let page = project.changes_since(0, 1).expect("query page");
+    let page = production.changes_since(0, 1).expect("query page");
     assert_eq!(page.len(), 1);
     assert_eq!(page[0], revision);
 
-    let events = project
+    let events = production
         .events_for_revision(revision.id())
         .expect("load revision events");
     assert_eq!(events.len(), 5);
@@ -132,8 +137,8 @@ fn imported_media_creates_a_durable_contextual_revision() {
                 && event.position() == u32::try_from(position).expect("small position"))
     );
 
-    drop(project);
-    let reopened = SqliteProject::open(path).expect("reopen project");
+    drop(production);
+    let reopened = SqliteProduction::open(path).expect("reopen production");
     assert_eq!(
         reopened.latest_revision().expect("query reopened journal"),
         Some(revision)
@@ -143,25 +148,25 @@ fn imported_media_creates_a_durable_contextual_revision() {
 #[test]
 fn revision_queries_reject_invalid_bounds_and_missing_ids() {
     let directory = tempdir().expect("create temporary directory");
-    let project = SqliteProject::create(directory.path().join("production.pproj"), None)
-        .expect("create project");
+    let production = SqliteProduction::create(directory.path().join("production.pproj"), None)
+        .expect("create production");
 
     assert_eq!(
-        project
+        production
             .changes_since(0, 0)
             .expect_err("zero page size must fail")
             .kind(),
         ErrorKind::InvalidArgument
     );
     assert_eq!(
-        project
+        production
             .changes_since(0, 1_001)
             .expect_err("excessive page size must fail")
             .kind(),
         ErrorKind::InvalidArgument
     );
     assert_eq!(
-        project
+        production
             .events_for_revision(postproject_core::RevisionId::new())
             .expect_err("missing revision must fail")
             .kind(),
@@ -182,9 +187,9 @@ fn journal_decodes_every_non_import_event_kind() {
     let source_id = source.representation().id();
     let output_id = output.representation().id();
     let target = ObjectRef::Asset(source.asset().id());
-    let mut project = SqliteProject::create(path, None).expect("create project");
+    let mut production = SqliteProduction::create(path, None).expect("create production");
     {
-        let mut transaction = project
+        let mut transaction = production
             .begin_transaction()
             .expect("begin import transaction");
         transaction.import_original(&source).expect("import source");
@@ -218,7 +223,7 @@ fn journal_decodes_every_non_import_event_kind() {
     .expect("valid activity");
 
     {
-        let mut transaction = project
+        let mut transaction = production
             .begin_transaction()
             .expect("begin mutation transaction");
         transaction.add_media_root(root).expect("add media root");
@@ -240,10 +245,10 @@ fn journal_decodes_every_non_import_event_kind() {
         transaction.commit().expect("commit mutations");
     }
 
-    let page = project.changes_since(1, 10).expect("load second page");
+    let page = production.changes_since(1, 10).expect("load second page");
     assert_eq!(page.len(), 1);
     assert_eq!(page[0].sequence(), 2);
-    let events = project
+    let events = production
         .events_for_revision(page[0].id())
         .expect("load mutation events");
     assert_eq!(events.len(), 8);
@@ -297,23 +302,25 @@ fn journal_decodes_every_non_import_event_kind() {
 #[test]
 fn only_successful_nonempty_transactions_advance_the_feed() {
     let directory = tempdir().expect("create temporary directory");
-    let mut project = SqliteProject::create(directory.path().join("production.pproj"), None)
-        .expect("create project");
+    let mut production = SqliteProduction::create(directory.path().join("production.pproj"), None)
+        .expect("create production");
 
-    project
+    production
         .begin_transaction()
         .expect("begin empty transaction")
         .commit()
         .expect("commit empty transaction");
     {
-        let mut transaction = project.begin_transaction().expect("begin rollback");
+        let mut transaction = production.begin_transaction().expect("begin rollback");
         transaction
             .import_original(&import(40))
             .expect("stage import");
         transaction.rollback().expect("roll back import");
     }
     {
-        let mut transaction = project.begin_transaction().expect("begin failed mutation");
+        let mut transaction = production
+            .begin_transaction()
+            .expect("begin failed mutation");
         let missing_identifier = ExternalIdentifier::new(
             IdentifierScheme::new("com.example.missing").expect("valid scheme"),
             "missing",
@@ -330,21 +337,21 @@ fn only_successful_nonempty_transactions_advance_the_feed() {
         transaction.commit().expect("commit after failed mutation");
     }
     assert!(
-        project
+        production
             .changes_since(0, 10)
             .expect("query empty feed")
             .is_empty()
     );
 
     for label in [50, 60, 70] {
-        let mut transaction = project.begin_transaction().expect("begin import");
+        let mut transaction = production.begin_transaction().expect("begin import");
         transaction
             .import_original(&import(label))
             .expect("stage import");
         transaction.commit().expect("commit import");
     }
 
-    let first_page = project.changes_since(0, 2).expect("load first page");
+    let first_page = production.changes_since(0, 2).expect("load first page");
     assert_eq!(
         first_page
             .iter()
@@ -352,7 +359,7 @@ fn only_successful_nonempty_transactions_advance_the_feed() {
             .collect::<Vec<_>>(),
         [1, 2]
     );
-    let second_page = project.changes_since(2, 2).expect("load second page");
+    let second_page = production.changes_since(2, 2).expect("load second page");
     assert_eq!(
         second_page
             .iter()
@@ -361,13 +368,13 @@ fn only_successful_nonempty_transactions_advance_the_feed() {
         [3]
     );
     assert!(
-        project
+        production
             .changes_since(3, 2)
             .expect("load feed end")
             .is_empty()
     );
     assert!(
-        project
+        production
             .changes_since(u64::MAX, 2)
             .expect("load beyond storage range")
             .is_empty()

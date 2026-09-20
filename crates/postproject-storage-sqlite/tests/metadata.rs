@@ -7,7 +7,7 @@ use postproject_core::{
     PropertyId, VocabularyId,
 };
 use postproject_media::prepare_original_media;
-use postproject_storage_sqlite::SqliteProject;
+use postproject_storage_sqlite::SqliteProduction;
 use rusqlite::Connection;
 use tempfile::tempdir;
 
@@ -35,7 +35,7 @@ fn structured_contact() -> MetadataValue {
 #[test]
 fn repeated_and_structured_metadata_round_trip_and_query() {
     let directory = tempdir().expect("create temporary directory");
-    let project_path = directory.path().join("production.pproj");
+    let production_path = directory.path().join("production.pproj");
     let media_path = directory.path().join("A001.mov");
     fs::write(&media_path, b"fixture media bytes").expect("write fixture media");
     let prepared = prepare_original_media(&media_path, None, None).expect("prepare import");
@@ -50,10 +50,11 @@ fn repeated_and_structured_metadata_round_trip_and_query() {
     let application_note = property("com.example.editor/metadata", "note");
     let structured_contact = structured_contact();
 
-    let mut project = SqliteProject::create(&project_path, None).expect("create project");
-    let project_target = ObjectRef::Project(project.project().id());
+    let mut production =
+        SqliteProduction::create(&production_path, None).expect("create production");
+    let production_target = ObjectRef::Production(production.production().id());
     {
-        let mut transaction = project.begin_transaction().expect("begin transaction");
+        let mut transaction = production.begin_transaction().expect("begin transaction");
         transaction
             .import_original(&prepared)
             .expect("import media");
@@ -86,16 +87,16 @@ fn repeated_and_structured_metadata_round_trip_and_query() {
             .expect("add resource metadata");
         transaction
             .add_metadata_value(
-                project_target,
+                production_target,
                 &application_note,
                 &MetadataValue::string("production note").unwrap(),
             )
-            .expect("add project metadata");
+            .expect("add production metadata");
         transaction.commit().expect("commit metadata");
     }
-    drop(project);
+    drop(production);
 
-    let mut reopened = SqliteProject::open(&project_path).expect("reopen project");
+    let mut reopened = SqliteProduction::open(&production_path).expect("reopen production");
     assert_eq!(
         reopened.metadata_values(asset, &keywords).unwrap(),
         [
@@ -112,7 +113,7 @@ fn repeated_and_structured_metadata_round_trip_and_query() {
         .query_by_metadata_property(&application_note)
         .expect("query application property");
     assert_eq!(matches.len(), 3);
-    assert_eq!(matches[0].target(), project_target);
+    assert_eq!(matches[0].target(), production_target);
     assert_eq!(matches[1].target(), representation);
     assert_eq!(matches[2].target(), resource);
 
@@ -142,41 +143,47 @@ fn repeated_and_structured_metadata_round_trip_and_query() {
 #[test]
 fn metadata_mutations_are_atomic_and_validate_targets() {
     let directory = tempdir().expect("create temporary directory");
-    let project_path = directory.path().join("production.pproj");
-    let mut project = SqliteProject::create(&project_path, None).expect("create project");
-    let target = ObjectRef::Project(project.project().id());
+    let production_path = directory.path().join("production.pproj");
+    let mut production =
+        SqliteProduction::create(&production_path, None).expect("create production");
+    let target = ObjectRef::Production(production.production().id());
     let title = property("https://example.com/vocabulary", "title");
     let value = MetadataValue::string("Documentary").unwrap();
 
     {
-        let mut transaction = project.begin_transaction().unwrap();
+        let mut transaction = production.begin_transaction().unwrap();
         transaction
             .add_metadata_value(target, &title, &value)
             .expect("stage metadata");
         transaction.rollback().expect("roll back metadata");
     }
-    assert!(project.metadata_values(target, &title).unwrap().is_empty());
+    assert!(
+        production
+            .metadata_values(target, &title)
+            .unwrap()
+            .is_empty()
+    );
 
     {
-        let mut transaction = project.begin_transaction().unwrap();
+        let mut transaction = production.begin_transaction().unwrap();
         transaction
             .add_metadata_value(target, &title, &value)
             .expect("stage metadata");
         transaction.commit().expect("commit metadata");
     }
     {
-        let mut transaction = project.begin_transaction().unwrap();
+        let mut transaction = production.begin_transaction().unwrap();
         transaction
             .remove_metadata_property(target, &title)
             .expect("stage removal");
         transaction.rollback().expect("roll back removal");
     }
     assert_eq!(
-        project.metadata_values(target, &title).unwrap(),
+        production.metadata_values(target, &title).unwrap(),
         std::slice::from_ref(&value)
     );
 
-    let mut transaction = project.begin_transaction().unwrap();
+    let mut transaction = production.begin_transaction().unwrap();
     assert_eq!(
         transaction
             .add_metadata_value(ObjectRef::Asset(AssetId::new()), &title, &value)
@@ -197,20 +204,21 @@ fn metadata_mutations_are_atomic_and_validate_targets() {
 #[test]
 fn malformed_persisted_metadata_fails_safely() {
     let directory = tempdir().expect("create temporary directory");
-    let project_path = directory.path().join("production.pproj");
-    let mut project = SqliteProject::create(&project_path, None).expect("create project");
-    let target = ObjectRef::Project(project.project().id());
+    let production_path = directory.path().join("production.pproj");
+    let mut production =
+        SqliteProduction::create(&production_path, None).expect("create production");
+    let target = ObjectRef::Production(production.production().id());
     let title = property("https://example.com/vocabulary", "title");
     {
-        let mut transaction = project.begin_transaction().unwrap();
+        let mut transaction = production.begin_transaction().unwrap();
         transaction
             .add_metadata_value(target, &title, &MetadataValue::string("valid").unwrap())
             .unwrap();
         transaction.commit().unwrap();
     }
-    drop(project);
+    drop(production);
 
-    let connection = Connection::open(&project_path).expect("open raw database");
+    let connection = Connection::open(&production_path).expect("open raw database");
     connection
         .execute(
             "UPDATE metadata_assertions SET encoded_value = X'50504D5601FF'",
@@ -219,7 +227,7 @@ fn malformed_persisted_metadata_fails_safely() {
         .expect("corrupt encoded value");
     drop(connection);
 
-    let reopened = SqliteProject::open(&project_path).expect("reopen project");
+    let reopened = SqliteProduction::open(&production_path).expect("reopen production");
     assert_eq!(
         reopened
             .metadata(target)

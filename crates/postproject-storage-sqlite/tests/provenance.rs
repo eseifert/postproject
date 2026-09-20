@@ -7,7 +7,7 @@ use postproject_core::{
     OriginalMediaImport, PropertyId, Representation, RepresentationId, RepresentationKind,
     Resource, ResourceId, Timestamp, ToolIdentity, VocabularyId,
 };
-use postproject_storage_sqlite::SqliteProject;
+use postproject_storage_sqlite::SqliteProduction;
 use tempfile::tempdir;
 
 fn import(label: u8) -> (OriginalMediaImport, RepresentationId) {
@@ -57,7 +57,7 @@ fn activity(id: ActivityId, input: RepresentationId, output: RepresentationId) -
 fn activity_metadata_is_atomic_with_activity_creation() {
     let directory = tempdir().expect("create temporary directory");
     let path = directory.path().join("production.pproj");
-    let mut project = SqliteProject::create(&path, None).expect("create project");
+    let mut production = SqliteProduction::create(&path, None).expect("create production");
     let (source, source_id) = import(1);
     let (proxy, proxy_id) = import(2);
     let activity_id = ActivityId::new();
@@ -103,7 +103,7 @@ fn activity_metadata_is_atomic_with_activity_creation() {
     );
     let value = MetadataValue::string("editorial-proxy").expect("valid value");
     {
-        let mut transaction = project.begin_transaction().expect("begin transaction");
+        let mut transaction = production.begin_transaction().expect("begin transaction");
         transaction.import_original(&source).expect("import source");
         transaction.import_original(&proxy).expect("import proxy");
         transaction
@@ -115,7 +115,7 @@ fn activity_metadata_is_atomic_with_activity_creation() {
         transaction.commit().expect("commit provenance");
     }
 
-    let reopened = SqliteProject::open(&path).expect("reopen project");
+    let reopened = SqliteProduction::open(&path).expect("reopen production");
     assert_eq!(
         reopened.activities().expect("load activities"),
         std::slice::from_ref(&activity)
@@ -144,12 +144,12 @@ fn activity_metadata_is_atomic_with_activity_creation() {
 fn invalid_activities_leave_no_partial_rows() {
     let directory = tempdir().expect("create temporary directory");
     let path = directory.path().join("production.pproj");
-    let mut project = SqliteProject::create(path, None).expect("create project");
+    let mut production = SqliteProduction::create(path, None).expect("create production");
     let (source, source_id) = import(3);
     let (proxy, proxy_id) = import(4);
     let (delivery, delivery_id) = import(5);
     {
-        let mut transaction = project.begin_transaction().expect("begin transaction");
+        let mut transaction = production.begin_transaction().expect("begin transaction");
         transaction.import_original(&source).expect("import source");
         transaction.import_original(&proxy).expect("import proxy");
         transaction
@@ -168,7 +168,7 @@ fn invalid_activities_leave_no_partial_rows() {
         PropertyId::new("note").expect("valid property"),
     );
     let value = MetadataValue::string("invalid").expect("valid value");
-    let mut transaction = project.begin_transaction().expect("begin transaction");
+    let mut transaction = production.begin_transaction().expect("begin transaction");
     assert_eq!(
         transaction
             .create_activity(&activity(rejected_id, source_id, missing))
@@ -197,15 +197,15 @@ fn invalid_activities_leave_no_partial_rows() {
     drop(transaction);
 
     assert_eq!(
-        project.ancestors(delivery_id).expect("load ancestry"),
+        production.ancestors(delivery_id).expect("load ancestry"),
         [source_id, proxy_id]
     );
     assert_eq!(
-        project.descendants(source_id).expect("load descendants"),
+        production.descendants(source_id).expect("load descendants"),
         [proxy_id, delivery_id]
     );
     assert_eq!(
-        project
+        production
             .ancestors(RepresentationId::new())
             .expect_err("missing representation must fail")
             .kind(),
@@ -217,12 +217,12 @@ fn invalid_activities_leave_no_partial_rows() {
 fn rollback_discards_activity_rows() {
     let directory = tempdir().expect("create temporary directory");
     let path = directory.path().join("production.pproj");
-    let mut project = SqliteProject::create(path, None).expect("create project");
+    let mut production = SqliteProduction::create(path, None).expect("create production");
     let (source, source_id) = import(6);
     let (proxy, proxy_id) = import(7);
     let activity_id = ActivityId::new();
     {
-        let mut transaction = project.begin_transaction().expect("begin transaction");
+        let mut transaction = production.begin_transaction().expect("begin transaction");
         transaction.import_original(&source).expect("import source");
         transaction.import_original(&proxy).expect("import proxy");
         transaction
@@ -236,7 +236,7 @@ fn rollback_discards_activity_rows() {
         PropertyId::new("note").expect("valid property"),
     );
     let value = MetadataValue::string("absent").expect("valid value");
-    let mut transaction = project.begin_transaction().expect("begin transaction");
+    let mut transaction = production.begin_transaction().expect("begin transaction");
     assert_eq!(
         transaction
             .add_metadata_value(ObjectRef::Activity(activity_id), &property, &value)
