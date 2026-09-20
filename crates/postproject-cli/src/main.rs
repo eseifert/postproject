@@ -10,8 +10,8 @@ use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, EvidenceKind, ExternalIdentifier,
     IdentifierScheme, Locator, LocatorAvailability, MetadataAssertion, MetadataField,
-    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity, ProjectId,
-    ProjectStoreTransaction, PropertyId, Representation, RepresentationAvailability,
+    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity, ProductionId,
+    ProductionStoreTransaction, PropertyId, Representation, RepresentationAvailability,
     RepresentationId, RepresentationKind, RepresentationResolution, ResolutionEvidence, Resource,
     ResourceId, ResourceResolution, ResourceResolutionState, Revision, RevisionContext,
     RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity, VocabularyId,
@@ -19,7 +19,7 @@ use postproject_core::{
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
 };
-use postproject_storage_sqlite::SqliteProject;
+use postproject_storage_sqlite::SqliteProduction;
 use serde::Serialize;
 
 #[derive(Debug, Parser)]
@@ -35,9 +35,9 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Create a project file.
+    /// Create a production file.
     Init(InitArgs),
-    /// Inspect and manage project media.
+    /// Inspect and manage production media.
     Media(MediaArgs),
     /// Manage resolver search roots.
     Root(RootArgs),
@@ -53,9 +53,9 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct InitArgs {
-    /// Project file to create.
-    project: PathBuf,
-    /// Optional project display name.
+    /// Production file to create.
+    production: PathBuf,
+    /// Optional production display name.
     #[arg(long)]
     name: Option<String>,
 }
@@ -71,7 +71,7 @@ enum MediaCommand {
     /// Import an original media file.
     Add(MediaAddArgs),
     /// List logical media assets.
-    List(ProjectArgs),
+    List(ProductionArgs),
     /// Show an asset, its representations, resources, and locators.
     Show(MediaAssetArgs),
     /// Resolve an asset under configured media roots.
@@ -80,7 +80,7 @@ enum MediaCommand {
 
 #[derive(Debug, Args)]
 struct MediaAddArgs {
-    project: PathBuf,
+    production: PathBuf,
     file: PathBuf,
     /// Optional asset display name.
     #[arg(long)]
@@ -88,19 +88,19 @@ struct MediaAddArgs {
 }
 
 #[derive(Debug, Args)]
-struct ProjectArgs {
-    project: PathBuf,
+struct ProductionArgs {
+    production: PathBuf,
 }
 
 #[derive(Debug, Args)]
 struct MediaAssetArgs {
-    project: PathBuf,
+    production: PathBuf,
     asset_id: String,
 }
 
 #[derive(Debug, Args)]
 struct MediaResolveArgs {
-    project: PathBuf,
+    production: PathBuf,
     asset_id: String,
     /// Confirm one URI returned by this resolution and persist it.
     #[arg(long, value_name = "URI")]
@@ -121,7 +121,7 @@ enum RootCommand {
 
 #[derive(Debug, Args)]
 struct RootAddArgs {
-    project: PathBuf,
+    production: PathBuf,
     directory: PathBuf,
     #[arg(long)]
     label: Option<String>,
@@ -157,7 +157,7 @@ enum IdentifierTargetKind {
 
 #[derive(Debug, Args)]
 struct IdentifierTargetArgs {
-    project: PathBuf,
+    production: PathBuf,
     #[arg(value_enum)]
     target_kind: IdentifierTargetKind,
     target_id: String,
@@ -175,7 +175,7 @@ struct IdentifierMutationArgs {
 
 #[derive(Debug, Args)]
 struct IdentifierFindArgs {
-    project: PathBuf,
+    production: PathBuf,
     scheme: String,
     value: String,
 }
@@ -200,7 +200,7 @@ enum MetadataCommand {
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum MetadataTargetKind {
-    Project,
+    Production,
     Asset,
     Representation,
     Resource,
@@ -209,7 +209,7 @@ enum MetadataTargetKind {
 
 #[derive(Debug, Args)]
 struct MetadataTargetArgs {
-    project: PathBuf,
+    production: PathBuf,
     #[arg(value_enum)]
     target_kind: MetadataTargetKind,
     target_id: String,
@@ -237,7 +237,7 @@ struct MetadataAddTextArgs {
 
 #[derive(Debug, Args)]
 struct MetadataFindArgs {
-    project: PathBuf,
+    production: PathBuf,
     vocabulary: String,
     property: String,
 }
@@ -253,7 +253,7 @@ enum ActivityCommand {
     /// Record a completed production activity.
     Add(Box<ActivityAddArgs>),
     /// List production activities with their inputs and outputs.
-    List(ProjectArgs),
+    List(ProductionArgs),
     /// List activities that produced a representation.
     Producing(ActivityRepresentationArgs),
     /// List activities that consume a representation.
@@ -266,7 +266,7 @@ enum ActivityCommand {
 
 #[derive(Debug, Args)]
 struct ActivityAddArgs {
-    project: PathBuf,
+    production: PathBuf,
     /// Namespaced activity kind, such as `postproject:transcode`.
     kind: String,
     /// Consumed representation, optionally followed by `=ROLE`.
@@ -303,7 +303,7 @@ struct ActivityAddArgs {
 
 #[derive(Debug, Args)]
 struct ActivityRepresentationArgs {
-    project: PathBuf,
+    production: PathBuf,
     representation_id: String,
 }
 
@@ -316,8 +316,8 @@ struct RevisionsArgs {
 #[derive(Debug, Subcommand)]
 enum RevisionsCommand {
     /// Show the newest committed revision.
-    Latest(ProjectArgs),
-    /// List revisions after a project-local sequence cursor.
+    Latest(ProductionArgs),
+    /// List revisions after a production-local sequence cursor.
     Since(RevisionsSinceArgs),
     /// List the ordered semantic events belonging to one revision.
     Events(RevisionEventsArgs),
@@ -325,7 +325,7 @@ enum RevisionsCommand {
 
 #[derive(Debug, Args)]
 struct RevisionsSinceArgs {
-    project: PathBuf,
+    production: PathBuf,
     /// Return revisions with a sequence greater than this cursor.
     #[arg(long, default_value_t = 0)]
     after: u64,
@@ -336,7 +336,7 @@ struct RevisionsSinceArgs {
 
 #[derive(Debug, Args)]
 struct RevisionEventsArgs {
-    project: PathBuf,
+    production: PathBuf,
     revision_id: String,
 }
 
@@ -365,7 +365,7 @@ impl FromStr for ActivityEdgeArg {
 }
 
 #[derive(Debug, Serialize)]
-struct ProjectView {
+struct ProductionView {
     id: String,
     path: String,
     schema_version: u32,
@@ -743,17 +743,18 @@ fn execute(cli: Cli) -> Result<()> {
 }
 
 fn init(args: InitArgs, json: bool) -> Result<()> {
-    let project = SqliteProject::create(&args.project, args.name).context("create project")?;
-    let view = ProjectView {
-        id: project.project().id().to_string(),
-        path: project.path().display().to_string(),
-        schema_version: project.project().schema_version(),
-        display_name: project.project().display_name().map(str::to_owned),
+    let production =
+        SqliteProduction::create(&args.production, args.name).context("create production")?;
+    let view = ProductionView {
+        id: production.production().id().to_string(),
+        path: production.path().display().to_string(),
+        schema_version: production.production().schema_version(),
+        display_name: production.production().display_name().map(str::to_owned),
     };
     if json {
         print_json(&view)
     } else {
-        println!("created project {} at {}", view.id, view.path);
+        println!("created production {} at {}", view.id, view.path);
         Ok(())
     }
 }
@@ -769,8 +770,8 @@ fn media_add(args: MediaAddArgs, json: bool) -> Result<()> {
         locator_id: prepared.locators()[0].id().to_string(),
         uri: prepared.locators()[0].uri().to_owned(),
     };
-    let mut project = SqliteProject::open(&args.project).context("open project")?;
-    let mut transaction = project
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let mut transaction = production
         .begin_transaction()
         .context("begin import transaction")?;
     set_cli_revision_context(&mut transaction, "Import media")?;
@@ -787,11 +788,11 @@ fn media_add(args: MediaAddArgs, json: bool) -> Result<()> {
     }
 }
 
-fn media_list(args: &ProjectArgs, json: bool) -> Result<()> {
-    let project = SqliteProject::open(&args.project).context("open project")?;
+fn media_list(args: &ProductionArgs, json: bool) -> Result<()> {
+    let production = SqliteProduction::open(&args.production).context("open production")?;
     let mut views = Vec::new();
-    for asset in project.assets().context("load assets")? {
-        let representation_count = project
+    for asset in production.assets().context("load assets")? {
+        let representation_count = production
             .representations(asset.id())
             .context("load asset representations")?
             .len();
@@ -819,10 +820,10 @@ fn media_list(args: &ProjectArgs, json: bool) -> Result<()> {
 }
 
 fn media_show(args: &MediaAssetArgs, json: bool) -> Result<()> {
-    let project = SqliteProject::open(&args.project).context("open project")?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
     let asset_id = parse_asset_id(&args.asset_id)?;
-    let asset = find_asset(&project, asset_id)?;
-    let view = asset_view(&project, &asset)?;
+    let asset = find_asset(&production, asset_id)?;
+    let view = asset_view(&production, &asset)?;
 
     if json {
         print_json(&view)
@@ -860,8 +861,8 @@ fn root_add(args: RootAddArgs, json: bool) -> Result<()> {
         priority: root.priority(),
         enabled: root.is_enabled(),
     };
-    let mut project = SqliteProject::open(&args.project).context("open project")?;
-    let mut transaction = project
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let mut transaction = production
         .begin_transaction()
         .context("begin root transaction")?;
     set_cli_revision_context(&mut transaction, "Add media root")?;
@@ -884,8 +885,9 @@ fn identifier_mutate(args: IdentifierMutationArgs, remove: bool, json: bool) -> 
     let identifier = ExternalIdentifier::new(scheme, args.value, args.qualifier)
         .context("validate external identifier")?;
     let view = external_identifier_view(target, &identifier);
-    let mut project = SqliteProject::open(&args.target.project).context("open project")?;
-    let mut transaction = project
+    let mut production =
+        SqliteProduction::open(&args.target.production).context("open production")?;
+    let mut transaction = production
         .begin_transaction()
         .context("begin identifier transaction")?;
     set_cli_revision_context(
@@ -926,8 +928,8 @@ fn identifier_mutate(args: IdentifierMutationArgs, remove: bool, json: bool) -> 
 
 fn identifier_list(args: &IdentifierTargetArgs, json: bool) -> Result<()> {
     let target = parse_identifier_target(args.target_kind, &args.target_id)?;
-    let project = SqliteProject::open(&args.project).context("open project")?;
-    let views: Vec<_> = project
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let views: Vec<_> = production
         .external_identifiers(target)
         .context("load external identifiers")?
         .iter()
@@ -951,8 +953,8 @@ fn identifier_list(args: &IdentifierTargetArgs, json: bool) -> Result<()> {
 
 fn identifier_find(args: IdentifierFindArgs, json: bool) -> Result<()> {
     let scheme = IdentifierScheme::new(args.scheme).context("validate identifier scheme")?;
-    let project = SqliteProject::open(&args.project).context("open project")?;
-    let views: Vec<_> = project
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let views: Vec<_> = production
         .find_by_external_identifier(&scheme, &args.value)
         .context("find external identifier")?
         .into_iter()
@@ -979,8 +981,9 @@ fn metadata_add_text(args: MetadataAddTextArgs, json: bool) -> Result<()> {
     .context("validate metadata text")?;
     let assertion = MetadataAssertion::new(property.clone(), value.clone());
     let view = metadata_assertion_view(target, &assertion)?;
-    let mut project = SqliteProject::open(&args.target.project).context("open project")?;
-    let mut transaction = project
+    let mut production =
+        SqliteProduction::open(&args.target.production).context("open production")?;
+    let mut transaction = production
         .begin_transaction()
         .context("begin metadata transaction")?;
     set_cli_revision_context(&mut transaction, "Add metadata")?;
@@ -1002,8 +1005,8 @@ fn metadata_add_text(args: MetadataAddTextArgs, json: bool) -> Result<()> {
 
 fn metadata_list(args: &MetadataTargetArgs, json: bool) -> Result<()> {
     let target = parse_metadata_target(args.target_kind, &args.target_id)?;
-    let project = SqliteProject::open(&args.project).context("open project")?;
-    let views = project
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let views = production
         .metadata(target)
         .context("load metadata")?
         .iter()
@@ -1023,8 +1026,9 @@ fn metadata_remove(args: MetadataPropertyArgs, json: bool) -> Result<()> {
         vocabulary: property.vocabulary().as_str().to_owned(),
         property: property.property().as_str().to_owned(),
     };
-    let mut project = SqliteProject::open(&args.target.project).context("open project")?;
-    let mut transaction = project
+    let mut production =
+        SqliteProduction::open(&args.target.production).context("open production")?;
+    let mut transaction = production
         .begin_transaction()
         .context("begin metadata transaction")?;
     set_cli_revision_context(&mut transaction, "Remove metadata")?;
@@ -1048,8 +1052,8 @@ fn metadata_remove(args: MetadataPropertyArgs, json: bool) -> Result<()> {
 
 fn metadata_find(args: MetadataFindArgs, json: bool) -> Result<()> {
     let property = parse_metadata_property(args.vocabulary, args.property)?;
-    let project = SqliteProject::open(&args.project).context("open project")?;
-    let views = project
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let views = production
         .query_by_metadata_property(&property)
         .context("query metadata property")?
         .iter()
@@ -1059,9 +1063,9 @@ fn metadata_find(args: MetadataFindArgs, json: bool) -> Result<()> {
     print_metadata_assertions(&views, json)
 }
 
-fn activity_list(args: &ProjectArgs, json: bool) -> Result<()> {
-    let project = SqliteProject::open(&args.project).context("open project")?;
-    let views: Vec<_> = project
+fn activity_list(args: &ProductionArgs, json: bool) -> Result<()> {
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let views: Vec<_> = production
         .activities()
         .context("load activities")?
         .iter()
@@ -1077,10 +1081,10 @@ fn activity_lookup(
     json: bool,
 ) -> Result<()> {
     let representation_id = parse_representation_id(&args.representation_id)?;
-    let project = SqliteProject::open(&args.project).context("open project")?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
     let activities = match lookup {
-        ActivityLookup::Producing => project.activities_producing(representation_id),
-        ActivityLookup::Consuming => project.activities_consuming(representation_id),
+        ActivityLookup::Producing => production.activities_producing(representation_id),
+        ActivityLookup::Consuming => production.activities_consuming(representation_id),
     }
     .context("query representation activities")?;
     let views: Vec<_> = activities.iter().map(activity_view).collect();
@@ -1111,10 +1115,10 @@ fn activity_relatives(
     json: bool,
 ) -> Result<()> {
     let representation_id = parse_representation_id(&args.representation_id)?;
-    let project = SqliteProject::open(&args.project).context("open project")?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
     let representation_ids = match direction {
-        ProvenanceDirection::Ancestors => project.ancestors(representation_id),
-        ProvenanceDirection::Descendants => project.descendants(representation_id),
+        ProvenanceDirection::Ancestors => production.ancestors(representation_id),
+        ProvenanceDirection::Descendants => production.descendants(representation_id),
     }
     .context("traverse provenance")?;
     let views: Vec<_> = representation_ids
@@ -1181,8 +1185,8 @@ fn activity_add(args: ActivityAddArgs, json: bool) -> Result<()> {
         activity = activity.with_agent(agent);
     }
     let view = activity_view(&activity);
-    let mut project = SqliteProject::open(&args.project).context("open project")?;
-    let mut transaction = project
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let mut transaction = production
         .begin_transaction()
         .context("begin activity transaction")?;
     set_cli_revision_context(&mut transaction, "Record activity")?;
@@ -1241,9 +1245,9 @@ fn activity_view(activity: &Activity) -> ActivityView {
     }
 }
 
-fn revisions_latest(args: &ProjectArgs, json: bool) -> Result<()> {
-    let project = SqliteProject::open(&args.project).context("open project")?;
-    let revision = project
+fn revisions_latest(args: &ProductionArgs, json: bool) -> Result<()> {
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let revision = production
         .latest_revision()
         .context("load latest revision")?
         .as_ref()
@@ -1260,8 +1264,8 @@ fn revisions_latest(args: &ProjectArgs, json: bool) -> Result<()> {
 }
 
 fn revisions_since(args: &RevisionsSinceArgs, json: bool) -> Result<()> {
-    let project = SqliteProject::open(&args.project).context("open project")?;
-    let revisions = project
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let revisions = production
         .changes_since(args.after, args.limit)
         .context("load revision page")?;
     let views: Vec<_> = revisions.iter().map(revision_view).collect();
@@ -1277,8 +1281,8 @@ fn revisions_since(args: &RevisionsSinceArgs, json: bool) -> Result<()> {
 
 fn revisions_events(args: &RevisionEventsArgs, json: bool) -> Result<()> {
     let revision_id = RevisionId::from_str(&args.revision_id).context("parse revision ID")?;
-    let project = SqliteProject::open(&args.project).context("open project")?;
-    let events = project
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let events = production
         .events_for_revision(revision_id)
         .context("load revision events")?;
     let views = events
@@ -1443,26 +1447,26 @@ fn print_metadata_assertions(views: &[MetadataAssertionView], json: bool) -> Res
 }
 
 fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
-    let mut project = SqliteProject::open(&args.project).context("open project")?;
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
     let asset_id = parse_asset_id(&args.asset_id)?;
-    find_asset(&project, asset_id)?;
-    let representations = project
+    find_asset(&production, asset_id)?;
+    let representations = production
         .representations(asset_id)
         .context("load asset representations")?;
     let resolver = MediaResolver::default();
     let mut resolutions = Vec::new();
     for representation in &representations {
-        let resources = project
+        let resources = production
             .resources(representation.id())
             .context("load representation resources")?;
         let mut resource_resolutions = Vec::with_capacity(resources.len());
         for resource in &resources {
-            let locators = project
+            let locators = production
                 .locators(resource.id())
                 .context("load resource locators")?;
             resource_resolutions.push(
                 resolver
-                    .resolve_resource(resource, &locators, project.project().media_roots())
+                    .resolve_resource(resource, &locators, production.production().media_roots())
                     .context("resolve representation resource")?,
             );
         }
@@ -1493,7 +1497,7 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
         }
         let locator = prepare_confirmed_locator(matching[0], uri.to_owned())
             .context("prepare confirmed locator")?;
-        let mut transaction = project
+        let mut transaction = production
             .begin_transaction()
             .context("begin confirmation transaction")?;
         set_cli_revision_context(&mut transaction, "Confirm media locator")?;
@@ -1557,9 +1561,9 @@ fn parse_identifier_target(kind: IdentifierTargetKind, value: &str) -> Result<Ob
 
 fn parse_metadata_target(kind: MetadataTargetKind, value: &str) -> Result<ObjectRef> {
     match kind {
-        MetadataTargetKind::Project => ProjectId::from_str(value)
-            .map(ObjectRef::Project)
-            .context("parse project ID"),
+        MetadataTargetKind::Production => ProductionId::from_str(value)
+            .map(ObjectRef::Production)
+            .context("parse production ID"),
         MetadataTargetKind::Asset => AssetId::from_str(value)
             .map(ObjectRef::Asset)
             .context("parse asset ID"),
@@ -1598,8 +1602,8 @@ fn external_identifier_view(
 
 fn object_ref_view(target: ObjectRef) -> Result<ObjectRefView> {
     match target {
-        ObjectRef::Project(id) => Ok(ObjectRefView {
-            kind: "project",
+        ObjectRef::Production(id) => Ok(ObjectRefView {
+            kind: "production",
             id: id.to_string(),
         }),
         ObjectRef::Asset(id) => Ok(ObjectRefView {
@@ -1739,8 +1743,8 @@ fn metadata_field_view(field: &MetadataField) -> Result<MetadataFieldView> {
     })
 }
 
-fn find_asset(project: &SqliteProject, asset_id: AssetId) -> Result<Asset> {
-    project
+fn find_asset(production: &SqliteProduction, asset_id: AssetId) -> Result<Asset> {
+    production
         .assets()
         .context("load assets")?
         .into_iter()
@@ -1748,18 +1752,18 @@ fn find_asset(project: &SqliteProject, asset_id: AssetId) -> Result<Asset> {
         .with_context(|| format!("asset does not exist: {asset_id}"))
 }
 
-fn asset_view(project: &SqliteProject, asset: &Asset) -> Result<AssetView> {
+fn asset_view(production: &SqliteProduction, asset: &Asset) -> Result<AssetView> {
     let mut representations = Vec::new();
-    for representation in project
+    for representation in production
         .representations(asset.id())
         .context("load asset representations")?
     {
         let mut resources = Vec::new();
-        for resource in project
+        for resource in production
             .resources(representation.id())
             .context("load representation resources")?
         {
-            let locators = project
+            let locators = production
                 .locators(resource.id())
                 .context("load resource locators")?;
             resources.push(resource_view(&resource, &locators));
@@ -1886,7 +1890,7 @@ impl From<&ResolutionEvidence> for EvidenceView {
 }
 
 fn set_cli_revision_context(
-    transaction: &mut impl ProjectStoreTransaction,
+    transaction: &mut impl ProductionStoreTransaction,
     message: &str,
 ) -> Result<()> {
     let origin = OriginIdentity::new(
