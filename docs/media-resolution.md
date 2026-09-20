@@ -2,20 +2,21 @@
 
 ## Fingerprints
 
-Fingerprint format version 1 uses BLAKE3. Files up to and including 1 MiB store
-the standard 32-byte BLAKE3 hash of every content byte under algorithm identifier
-`pp-blake3-full-file`. Larger files store a digest over a domain separator, file
-size, and 64 KiB regions at deterministic beginning, middle, and end offsets under
-`pp-blake3-sampled-regions`.
+Resource fingerprint format version 1 uses BLAKE3. Files up to and including
+1 MiB store the standard 32-byte BLAKE3 hash of every content byte. Larger files
+store a strategy-versioned digest over the file size and 64 KiB regions at
+deterministic beginning, middle, and end offsets.
 
 The sampled format is designed for relocation candidate verification, not as a
 collision-proof or adversarial content identifier. The resolver must expose it as
 partial-fingerprint evidence. A caller can later request a full-file hash when
 stronger verification is required.
 
-Fingerprinting rejects symbolic links and non-regular files. It compares file size
-and modification time before and after reading, failing rather than persisting a
-result when the file appears to change during calculation.
+Fingerprinting rejects symbolic links and non-regular files. It compares file
+size and modification time before and after reading, failing rather than
+persisting a result when the file appears to change during calculation. These
+are resource fingerprints; structure-aware representation fingerprints are a
+separate domain and may use different strategies.
 
 ## Resolution policy
 
