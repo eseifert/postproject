@@ -7,7 +7,7 @@ import unittest
 import weakref
 from pathlib import Path
 
-from postproject import OriginIdentity, Production, RevisionContext
+from postproject import InvalidArgumentError, OriginIdentity, Production, RevisionContext
 
 
 LIBRARY_PATH = os.environ.get("POSTPROJECT_LIBRARY")
@@ -97,6 +97,38 @@ class ProductionTests(unittest.TestCase):
     def test_embedded_nul_is_rejected_before_native_call(self) -> None:
         with self.assertRaisesRegex(ValueError, "NUL"):
             Production.open("invalid\0path.pproj", library_path=LIBRARY_PATH)
+
+    def test_revision_summaries_are_copied_and_paginated(self) -> None:
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            self.assertIsNone(production.latest_revision())
+            with production.transaction(
+                origin=OriginIdentity("python-test", "1.0"),
+                message="First import",
+            ) as transaction:
+                transaction.import_media(self.media_path)
+
+            first = production.latest_revision()
+            self.assertIsNotNone(first)
+            assert first is not None
+            self.assertEqual(first.sequence, 1)
+            self.assertEqual(first.message, "First import")
+            self.assertEqual(first.origin, OriginIdentity("python-test", "1.0"))
+
+            with production.transaction() as transaction:
+                transaction.import_media(self.media_path, "Second")
+
+            page = production.changes_since(0, 1)
+            self.assertEqual(page, (first,))
+            second_page = production.changes_since(page[-1].sequence, 1)
+            self.assertEqual(len(second_page), 1)
+            self.assertEqual(second_page[0].sequence, 2)
+            self.assertIsNone(second_page[0].origin)
+            self.assertIsNone(second_page[0].message)
+
+            with self.assertRaises(InvalidArgumentError):
+                production.changes_since(0, 0)
 
 
 if __name__ == "__main__":
