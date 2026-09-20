@@ -1,6 +1,6 @@
 //! Exact rational time values shared by media structures and adapters.
 
-use std::cmp::Ordering;
+use std::{cmp::Ordering, fmt, str::FromStr};
 
 use crate::{Error, ErrorKind, Result};
 
@@ -41,6 +41,40 @@ impl RationalRate {
     #[must_use]
     pub const fn denominator(self) -> u32 {
         self.denominator
+    }
+}
+
+impl fmt::Display for RationalRate {
+    /// Formats the normalized rate as `numerator/denominator`.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}/{}", self.numerator, self.denominator)
+    }
+}
+
+impl FromStr for RationalRate {
+    type Err = Error;
+
+    /// Parses the canonical `numerator/denominator` representation.
+    fn from_str(value: &str) -> Result<Self> {
+        let (numerator, denominator) = value.split_once('/').ok_or_else(|| {
+            Error::new(
+                ErrorKind::InvalidArgument,
+                "rational rate must use numerator/denominator syntax",
+            )
+        })?;
+        let numerator = numerator.parse::<u32>().map_err(|_| {
+            Error::new(
+                ErrorKind::InvalidArgument,
+                "rational rate numerator must be an unsigned integer",
+            )
+        })?;
+        let denominator = denominator.parse::<u32>().map_err(|_| {
+            Error::new(
+                ErrorKind::InvalidArgument,
+                "rational rate denominator must be an unsigned integer",
+            )
+        })?;
+        Self::new(numerator, denominator)
     }
 }
 
@@ -116,6 +150,34 @@ impl RationalTime {
     }
 }
 
+impl fmt::Display for RationalTime {
+    /// Formats the value and normalized rate as `value@numerator/denominator`.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}@{}", self.value, self.rate)
+    }
+}
+
+impl FromStr for RationalTime {
+    type Err = Error;
+
+    /// Parses the canonical `value@numerator/denominator` representation.
+    fn from_str(value: &str) -> Result<Self> {
+        let (value, rate) = value.split_once('@').ok_or_else(|| {
+            Error::new(
+                ErrorKind::InvalidArgument,
+                "rational time must use value@numerator/denominator syntax",
+            )
+        })?;
+        let value = value.parse::<i64>().map_err(|_| {
+            Error::new(
+                ErrorKind::InvalidArgument,
+                "rational time value must be a signed integer",
+            )
+        })?;
+        Ok(Self::new(value, rate.parse()?))
+    }
+}
+
 /// A half-open time range with a non-negative duration.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct TimeRange {
@@ -171,6 +233,28 @@ impl TimeRange {
             .checked_add(self.duration.value())
             .ok_or_else(arithmetic_overflow)?;
         Ok(RationalTime::new(value, self.start.rate()))
+    }
+}
+
+impl fmt::Display for TimeRange {
+    /// Formats the range as `start+duration` using canonical rational times.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}+{}", self.start, self.duration)
+    }
+}
+
+impl FromStr for TimeRange {
+    type Err = Error;
+
+    /// Parses the canonical `start+duration` representation.
+    fn from_str(value: &str) -> Result<Self> {
+        let (start, duration) = value.split_once('+').ok_or_else(|| {
+            Error::new(
+                ErrorKind::InvalidArgument,
+                "time range must use start+duration syntax",
+            )
+        })?;
+        Self::new(start.parse()?, duration.parse()?)
     }
 }
 
@@ -254,5 +338,28 @@ mod tests {
         )
         .expect("valid range");
         assert!(range.end_exclusive().is_err());
+    }
+
+    #[test]
+    fn canonical_text_round_trips_common_rational_rates() {
+        for text in ["24/1", "25/1", "30000/1001", "60000/1001"] {
+            let rate: RationalRate = text.parse().expect("parse common rate");
+            assert_eq!(rate.to_string(), text);
+        }
+
+        let time: RationalTime = "-1001@30000/1001".parse().expect("parse time");
+        assert_eq!(time.to_string(), "-1001@30000/1001");
+        let range: TimeRange = "-1001@30000/1001+2002@30000/1001"
+            .parse()
+            .expect("parse range");
+        assert_eq!(range.to_string(), "-1001@30000/1001+2002@30000/1001");
+    }
+
+    #[test]
+    fn canonical_text_rejects_ambiguous_or_invalid_values() {
+        assert!("23.976".parse::<RationalRate>().is_err());
+        assert!("1@0/1".parse::<RationalTime>().is_err());
+        assert!("1@24/1+-1@24/1".parse::<TimeRange>().is_err());
+        assert!("1@24/1+1@25/1".parse::<TimeRange>().is_err());
     }
 }
