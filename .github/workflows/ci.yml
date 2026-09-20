@@ -133,16 +133,19 @@ jobs:
         include:
           - os: ubuntu-latest
             link_library: libpostproject.so
+            python_library: libpostproject.so
             static_library: libpostproject.a
             runtime_library: ""
             artifact: linux-x86_64
           - os: macos-latest
             link_library: libpostproject.dylib
+            python_library: libpostproject.dylib
             static_library: libpostproject.a
             runtime_library: ""
             artifact: macos-native
           - os: windows-latest
             link_library: postproject.dll.lib
+            python_library: postproject.dll
             static_library: postproject.lib
             runtime_library: postproject.dll
             artifact: windows-x86_64
@@ -152,6 +155,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked -p postproject-ffi
+      - name: Test Python binding against native library
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/python/src
+          POSTPROJECT_LIBRARY: ${{ github.workspace }}/target/release/${{ matrix.python_library }}
+        run: python -m unittest discover -s python/tests -v
       - name: Install native package
         shell: bash
         env:
