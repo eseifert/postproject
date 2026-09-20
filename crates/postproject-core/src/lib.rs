@@ -58,7 +58,9 @@ pub use resource::{
     FileFacts, Locator, LocatorAvailability, RepresentationFingerprint, Resource,
     ResourceFingerprint,
 };
-pub use revision::{MAX_REVISION_MESSAGE_BYTES, OriginIdentity, Revision};
+pub use revision::{
+    MAX_REVISION_MESSAGE_BYTES, OriginIdentity, Revision, RevisionEvent, RevisionEventKind,
+};
 pub use storage::{ProjectRead, ProjectStore, ProjectStoreTransaction};
 pub use time::{RationalRate, RationalTime, TimeRange};
 pub use transaction::{TransactionLifecycle, TransactionState};

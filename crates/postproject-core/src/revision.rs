@@ -1,6 +1,10 @@
 //! Durable semantic revision values for project-local change feeds.
 
-use crate::{Error, ErrorKind, Result, RevisionId, Timestamp, ToolIdentity, TransactionId};
+use crate::{
+    ActivityId, ActivityKind, ActivityRole, AssetId, Error, ErrorKind, ExternalIdentifier,
+    LocatorId, MediaRootId, MetadataProperty, ObjectRef, RepresentationId, ResourceId, Result,
+    RevisionId, Timestamp, ToolIdentity, TransactionId,
+};
 
 /// Maximum UTF-8 byte length of a revision message.
 pub const MAX_REVISION_MESSAGE_BYTES: usize = 4_096;
@@ -52,6 +56,141 @@ pub struct Revision {
     committed_at: Timestamp,
     origin: Option<OriginIdentity>,
     message: Option<String>,
+}
+
+/// One semantic mutation recorded in a durable revision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RevisionEventKind {
+    /// A logical asset and its import aggregate were created.
+    AssetImported {
+        /// Imported logical asset.
+        asset_id: AssetId,
+    },
+    /// A representation was attached to an asset.
+    RepresentationAdded {
+        /// Owning logical asset.
+        asset_id: AssetId,
+        /// Added representation.
+        representation_id: RepresentationId,
+    },
+    /// A storage resource was created.
+    ResourceAdded {
+        /// Added resource.
+        resource_id: ResourceId,
+    },
+    /// A resource was attached to a representation's content structure.
+    RepresentationResourceAdded {
+        /// Owning representation.
+        representation_id: RepresentationId,
+        /// Attached resource.
+        resource_id: ResourceId,
+        /// Stable structural position within the representation.
+        position: u32,
+    },
+    /// A resource locator was added or explicitly confirmed.
+    LocatorAdded {
+        /// Located resource.
+        resource_id: ResourceId,
+        /// Added locator.
+        locator_id: LocatorId,
+    },
+    /// A resolver media root was added.
+    MediaRootAdded {
+        /// Added media root.
+        media_root_id: MediaRootId,
+    },
+    /// An exact external identifier attachment was added.
+    ExternalIdentifierAdded {
+        /// Object receiving the identifier.
+        target: ObjectRef,
+        /// Added external identifier.
+        identifier: ExternalIdentifier,
+    },
+    /// An exact external identifier attachment was removed.
+    ExternalIdentifierRemoved {
+        /// Object losing the identifier.
+        target: ObjectRef,
+        /// Removed external identifier.
+        identifier: ExternalIdentifier,
+    },
+    /// One metadata property's values were appended or replaced.
+    MetadataAddedOrReplaced {
+        /// Object whose metadata changed.
+        target: ObjectRef,
+        /// Property that consumers should re-query.
+        property: MetadataProperty,
+    },
+    /// One metadata property was removed.
+    MetadataRemoved {
+        /// Object whose metadata changed.
+        target: ObjectRef,
+        /// Removed property.
+        property: MetadataProperty,
+    },
+    /// A production activity was created.
+    ActivityCreated {
+        /// Added activity.
+        activity_id: ActivityId,
+        /// Extensible activity kind.
+        kind: ActivityKind,
+    },
+    /// A production activity input edge was added.
+    ActivityInputAdded {
+        /// Owning activity.
+        activity_id: ActivityId,
+        /// Consumed representation.
+        representation_id: RepresentationId,
+        /// Optional semantic edge role.
+        role: Option<ActivityRole>,
+    },
+    /// A production activity output edge was added.
+    ActivityOutputAdded {
+        /// Owning activity.
+        activity_id: ActivityId,
+        /// Produced representation.
+        representation_id: RepresentationId,
+        /// Optional semantic edge role.
+        role: Option<ActivityRole>,
+    },
+}
+
+/// One deterministically ordered semantic event within a revision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RevisionEvent {
+    revision_id: RevisionId,
+    position: u32,
+    kind: RevisionEventKind,
+}
+
+impl RevisionEvent {
+    /// Creates an event at its stable zero-based revision position.
+    #[must_use]
+    pub const fn new(revision_id: RevisionId, position: u32, kind: RevisionEventKind) -> Self {
+        Self {
+            revision_id,
+            position,
+            kind,
+        }
+    }
+
+    /// Returns the revision that owns the event.
+    #[must_use]
+    pub const fn revision_id(&self) -> RevisionId {
+        self.revision_id
+    }
+
+    /// Returns the zero-based stable position within the revision.
+    #[must_use]
+    pub const fn position(&self) -> u32 {
+        self.position
+    }
+
+    /// Returns the semantic mutation payload.
+    #[must_use]
+    pub const fn kind(&self) -> &RevisionEventKind {
+        &self.kind
+    }
 }
 
 impl Revision {
@@ -179,5 +318,37 @@ mod tests {
         assert!(create(1, Some(String::new())).is_err());
         assert!(create(1, Some("bad\0message".to_owned())).is_err());
         assert!(create(1, Some("x".repeat(MAX_REVISION_MESSAGE_BYTES + 1))).is_err());
+    }
+
+    #[test]
+    fn events_identify_semantic_targets_in_stable_order() {
+        let revision_id = RevisionId::new();
+        let asset_id = AssetId::new();
+        let representation_id = RepresentationId::new();
+        let events = [
+            RevisionEvent::new(
+                revision_id,
+                0,
+                RevisionEventKind::AssetImported { asset_id },
+            ),
+            RevisionEvent::new(
+                revision_id,
+                1,
+                RevisionEventKind::RepresentationAdded {
+                    asset_id,
+                    representation_id,
+                },
+            ),
+        ];
+
+        assert_eq!(events[0].revision_id(), revision_id);
+        assert_eq!(events[1].position(), 1);
+        assert!(matches!(
+            events[1].kind(),
+            RevisionEventKind::RepresentationAdded {
+                representation_id: id,
+                ..
+            } if *id == representation_id
+        ));
     }
 }
