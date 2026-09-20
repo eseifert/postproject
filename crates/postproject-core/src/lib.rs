@@ -46,7 +46,7 @@ pub use model::{
 pub use provenance::{
     Activity, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     MAX_ACTIVITY_EDGES, MAX_ACTIVITY_KIND_BYTES, MAX_ACTIVITY_ROLE_BYTES,
-    MAX_PROVENANCE_NAME_BYTES, MAX_TOOL_VERSION_BYTES, ToolIdentity,
+    MAX_PROVENANCE_NAME_BYTES, MAX_PROVENANCE_URI_BYTES, MAX_TOOL_VERSION_BYTES, ToolIdentity,
 };
 pub use resolution::{
     AvailabilityIssue, AvailabilityIssueKind, Confidence, EvidenceKind, RepresentationAvailability,

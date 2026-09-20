@@ -15,6 +15,8 @@ pub const MAX_ACTIVITY_ROLE_BYTES: usize = 128;
 pub const MAX_PROVENANCE_NAME_BYTES: usize = 256;
 /// Maximum UTF-8 byte length of an optional tool version.
 pub const MAX_TOOL_VERSION_BYTES: usize = 128;
+/// Maximum UTF-8 byte length of an optional tool or vendor URI.
+pub const MAX_PROVENANCE_URI_BYTES: usize = 4_096;
 /// Maximum number of input or output edges on one activity.
 pub const MAX_ACTIVITY_EDGES: usize = 100_000;
 
@@ -90,6 +92,15 @@ impl ToolIdentity {
             validate_text("tool version", version, MAX_TOOL_VERSION_BYTES)?;
         }
         let uri = uri.map(|value| normalize_uri(value, "tool")).transpose()?;
+        if uri
+            .as_ref()
+            .is_some_and(|value| value.len() > MAX_PROVENANCE_URI_BYTES)
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                format!("tool URI must not exceed {MAX_PROVENANCE_URI_BYTES} UTF-8 bytes"),
+            ));
+        }
         Ok(Self { name, version, uri })
     }
 
@@ -453,6 +464,11 @@ mod tests {
         assert!(ToolIdentity::new("", None, None).is_err());
         assert!(ToolIdentity::new("tool", Some(String::new()), None).is_err());
         assert!(ToolIdentity::new("tool", None, Some("relative".to_owned())).is_err());
+        let oversized_uri = format!(
+            "https://example.com/{}",
+            "x".repeat(MAX_PROVENANCE_URI_BYTES)
+        );
+        assert!(ToolIdentity::new("tool", None, Some(oversized_uri)).is_err());
         assert!(AgentIdentity::new(None, None).is_err());
         assert!(AgentIdentity::new(Some("bad\0name".to_owned()), None).is_err());
     }
