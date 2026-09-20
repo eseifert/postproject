@@ -2,7 +2,7 @@
 
 Boundary-heavy inputs have dedicated `cargo-fuzz` targets:
 
-- `project_opening` writes arbitrary bytes as a project file and exercises safe
+- `production_opening` writes arbitrary bytes as a production file and exercises safe
   migration/opening failure paths;
 - `fingerprint_input` exercises algorithm, version, and opaque-value validation;
 - `c_abi_strings` passes arbitrary NUL-terminated bytes through the C string and
@@ -13,7 +13,7 @@ Install `cargo-fuzz`, then run one target with a nightly Rust toolchain:
 
 ```sh
 cargo install cargo-fuzz
-cargo +nightly fuzz run project_opening -- -max_total_time=60
+cargo +nightly fuzz run production_opening -- -max_total_time=60
 ```
 
 List all targets with `cargo +nightly fuzz list`. Corpora and crash artifacts are

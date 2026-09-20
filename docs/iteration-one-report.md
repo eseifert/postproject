@@ -5,7 +5,7 @@ Date: 2026-09-19
 ## Delivered capability
 
 The first release candidate proves durable media identity and relinking across
-applications. It creates and reopens SQLite project files, imports original
+applications. It creates and reopens SQLite production files, imports original
 media inside explicit transactions, persists stable UUID identities, file facts,
 versioned BLAKE3 fingerprints, representations, locations, and ordered media
 roots, then deterministically resolves moved media with inspectable evidence.
@@ -30,7 +30,7 @@ installed CMake package without Cargo.
   confirmation, error propagation, and RAII ownership.
 - The exported Linux symbol set is checked against an explicit allowlist.
 - AddressSanitizer and UndefinedBehaviorSanitizer run the native workflows on
-  Linux. Four documented fuzz targets cover project opening, fingerprint input,
+  Linux. Four documented fuzz targets cover production opening, fingerprint input,
   C strings/errors, and ID parsing.
 - Formatting, Clippy with warnings denied, rustdoc with warnings denied, locked
   dependency builds, an explicit Rust 1.85 minimum-version compile,
@@ -55,7 +55,7 @@ installed CMake package without Cargo.
 Criterion covers all four required scale-sensitive operations. A 2026-09-19
 quick run on an AMD Ryzen 7 4800H, Linux 7.2.5, Rust 1.98.1, and Btrfs measured
 approximately 70.5 ms to import/fingerprint 1,000 small files, 312 µs to open a
-10,000-asset project, 10.3 ms to resolve among 3,000 candidates, and 252 µs to
+10,000-asset production, 10.3 ms to resolve among 3,000 candidates, and 252 µs to
 commit one prepared import. These quick-mode values are informational, not
 performance gates; full intervals and methodology are in `docs/benchmarks.md`.
 
@@ -79,7 +79,7 @@ performance gates; full intervals and methodology are in `docs/benchmarks.md`.
 ## Recommended next iteration
 
 Keep the current identity, transaction, and C ABI boundaries while adding typed
-metadata namespaces, derived-media lineage, artifact/job records, a project
+metadata namespaces, derived-media lineage, artifact/job records, a production
 revision journal and event feed, optional filesystem indexing, and one additional
 binding such as Python or GObject. PostgreSQL/server experiments should follow
 the backend-neutral contracts without expanding the local SQLite schema into a

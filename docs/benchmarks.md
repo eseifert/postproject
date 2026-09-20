@@ -4,7 +4,7 @@ Iteration-one benchmarks are informational baselines built with Criterion. They
 cover the four scale-sensitive workflows named in the acceptance criteria:
 
 - fingerprinting and importing 1,000 small files in one transaction;
-- opening a SQLite project that contains 10,000 assets;
+- opening a SQLite production that contains 10,000 assets;
 - resolving relocated media beneath a root containing 3,000 decoys;
 - committing repeated single-import transactions.
 
@@ -33,7 +33,7 @@ produced these Criterion intervals:
 | Workload | Observed interval |
 | --- | ---: |
 | Import and fingerprint 1,000 small files | 70.221–70.524 ms |
-| Open a project containing 10,000 assets | 304.48–313.36 µs |
+| Open a production containing 10,000 assets | 304.48–313.36 µs |
 | Resolve beneath a root with 3,000 candidates | 10.313–10.366 ms |
 | Commit one prepared import | 247.74–252.96 µs |
 

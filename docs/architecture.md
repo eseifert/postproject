@@ -7,9 +7,9 @@ and domain-oriented service contracts. It has no dependency on SQLite, C/C++, Qt
 or any editor. Every other component may depend on core; core never depends on an
 adapter.
 
-`postproject-storage-sqlite` owns project-file migrations and transactional
-persistence. It implements the core `ProjectRead`, `ProjectStore`, and
-`ProjectStoreTransaction` contracts, which describe domain operations rather
+`postproject-storage-sqlite` owns production-file migrations and transactional
+persistence. It implements the core `ProductionRead`, `ProductionStore`, and
+`ProductionStoreTransaction` contracts, which describe domain operations rather
 than generic row CRUD. A later backend can implement the same boundary without
 exposing its connection or query model.
 

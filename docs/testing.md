@@ -21,7 +21,7 @@ minimum supported Rust version independently of the stable-toolchain test matrix
 
 Tests use real temporary SQLite databases and filesystems, a checked-in schema-0
 migration fixture, and the complete multi-asset relocation scenario. Dedicated
-fuzz targets cover project opening, fingerprint input, C strings/errors, and ID
+fuzz targets cover production opening, fingerprint input, C strings/errors, and ID
 parsing outside standard CI. Tests must not require network access, user locale,
 or wall-clock timing.
 
@@ -37,7 +37,7 @@ compares the exported dynamic symbols against `tests/abi/expected-symbols.txt`.
 The native package matrix installs the platform library, optional static archive,
 C and C++ headers, CMake package files, and `pkg-config` metadata into temporary
 prefixes on Linux, macOS, and Windows. It then configures a separate C11/C++17
-CMake project against each prefix, builds with warnings denied, and runs
+CMake production against each prefix, builds with warnings denied, and runs
 lifecycle, identity, transaction commit/rollback, relocation,
 structured-evidence, confirmation, move-ownership, and error-propagation checks.
 The consumer configuration and build never invokes Cargo. Each platform package
@@ -47,15 +47,15 @@ The native sanitizer job rebuilds both consumers with AddressSanitizer and
 UndefinedBehaviorSanitizer, enables leak detection, and runs their real lifecycle
 and transaction workflows against the release shared library.
 
-The CLI integration test creates a project, imports media, removes the known
+The CLI integration test creates a production, imports media, removes the known
 file, discovers two byte-identical candidates under a configured root, verifies
 an explicit ambiguous representation and resource result, confirms one
-candidate, and reopens the project to observe the persisted locator. Commands
+candidate, and reopens the production to observe the persisted locator. Commands
 exchange JSON in this test so the machine-readable contract is exercised
 alongside the domain workflow.
 
 The storage E2E test moves a three-file media directory, verifies every known
 locator is offline, resolves two unique resources, refuses to choose between two
 byte-identical candidates for the third, explicitly confirms all choices in one
-transaction, reopens the project, and resolves from persisted locators with no
+transaction, reopens the production, and resolves from persisted locators with no
 roots supplied.

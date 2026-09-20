@@ -30,8 +30,8 @@ stages. Full hashes produce exact resolution; sampled fingerprints produce
 probable resolution. If no fingerprint exists, a matching filename is required
 and file size strengthens the evidence. Equally credible candidates produce
 `Ambiguous` and require explicit confirmation. Confirmation adds a new locator
-for the selected resource inside a project transaction; the resolver itself
-never mutates project state.
+for the selected resource inside a production transaction; the resolver itself
+never mutates production state.
 
 Representation availability is then aggregated from its content structure.
 Every required member online is `Online`; a mix of online and offline required

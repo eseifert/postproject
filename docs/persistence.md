@@ -1,15 +1,15 @@
 # Persistence
 
-Each project is one SQLite database. The backend enables foreign keys and disables
+Each production is one SQLite database. The backend enables foreign keys and disables
 trusted-schema features on every connection. A five-second busy timeout turns
 brief lock contention into bounded waiting rather than an immediate failure.
 SQLite's per-connection value-length limit is reduced to 16 MiB before migrations
 or queries run. This bounds allocations for strings, blobs, and result rows read
-from an untrusted project file while leaving ample room for project metadata.
+from an untrusted production file while leaving ample room for production metadata.
 
 ## Schema version 1
 
-The current development schema stores a singleton project record plus assets,
+The current development schema stores a singleton production record plus assets,
 representations, content structures, resources, memberships, locators, typed
 fingerprints, media roots, metadata assertions, and external identifiers.
 Image-sequence descriptors and their known missing frames are stored compactly;
@@ -33,14 +33,14 @@ records every applied numbered migration and its timestamp. Each migration runs
 inside an immediate SQLite transaction. A failed statement therefore leaves both
 the prior schema and version intact. Opening a newer unsupported schema fails
 without modifying it. Earlier development layouts are unsupported. The current
-initial migration is the canonical schema because no external project files
+initial migration is the canonical schema because no external production files
 were published for the discarded layouts.
 
-Project creation reserves a new file without overwriting any existing path, runs
-migrations, then inserts project identity and metadata in one transaction. Normal
-SQLite transaction durability applies. Backup tooling should copy a closed project
+Production creation reserves a new file without overwriting any existing path, runs
+migrations, then inserts production identity and metadata in one transaction. Normal
+SQLite transaction durability applies. Backup tooling should copy a closed production
 or use SQLite's online backup API once that API is exposed; copying only the main
-file while a project is open may omit WAL state.
+file while a production is open may omit WAL state.
 
 The backend currently builds a bundled SQLite for reproducible developer and CI
 builds. SQLite errors are wrapped as domain storage or migration errors rather than

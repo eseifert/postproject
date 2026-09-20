@@ -1,25 +1,25 @@
 # ABI policy
 
-ABI version 6 is pre-release and may change during the 0.x series, with every
+ABI version 8 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
 
 ## Types and ownership
 
-Projects, transactions, resolution sets, activity sets, external-identifier
+Productions, transactions, resolution sets, activity sets, external-identifier
 sets, object-reference sets, and errors are opaque handles. A
-successful creation/open call transfers one project ownership reference to the
-caller, which releases it exactly once with `pp_project_release`. Failed calls
+successful creation/open call transfers one production ownership reference to the
+caller, which releases it exactly once with `pp_production_release`. Failed calls
 optionally transfer an error object, released exactly once with
 `pp_error_release`. Release functions accept null as a no-op; releasing the same
 non-null pointer twice is invalid.
 
-A project permits one open transaction at a time. Import and media-root mutations
+A production permits one open transaction at a time. Import and media-root mutations
 are prepared and staged in memory, then persisted together by
 `pp_transaction_commit`. Rollback or release of an open transaction discards all
-staged work. A transaction retains the underlying project state, so its handle
-remains valid if the originating project handle is released. Closed transaction
+staged work. A transaction retains the underlying production state, so its handle
+remains valid if the originating production handle is released. Closed transaction
 handles may only be released.
 
 `pp_uuid_t` contains exactly 16 network-order UUID bytes. `pp_object_ref_t`
@@ -37,7 +37,7 @@ codes are the contract; message wording is diagnostic and may evolve.
 ## Panics and threading
 
 Every exported operation contains Rust unwinding with `catch_unwind`. Panics are
-translated to `PP_ERROR_INTERNAL`; no panic may cross the C boundary. Project and
+translated to `PP_ERROR_INTERNAL`; no panic may cross the C boundary. Production and
 transaction handles are not currently safe for concurrent access. Callers must
 externally serialize use and must not release a handle while another thread uses
 it.
@@ -50,7 +50,7 @@ types, allocation APIs, and standard-library layouts never cross the ABI.
 ## C++ wrapper
 
 `postproject.hpp` is a header-only C++17 wrapper over the authoritative C API.
-It owns project and transaction handles with RAII, makes both wrappers move-only,
+It owns production and transaction handles with RAII, makes both wrappers move-only,
 and converts failed status codes to `postproject::Error`. Destruction of an open
 transaction invokes the C release behavior and therefore discards staged work.
 The exception retains the stable `ErrorCode` and copies diagnostic text before
@@ -59,7 +59,7 @@ embedded NUL bytes are rejected before calling C.
 
 ## Resolution results
 
-`pp_project_resolve_asset` returns an immutable opaque set containing one result
+`pp_production_resolve_asset` returns an immutable opaque set containing one result
 per representation. Each representation reports aggregate availability,
 ordered resource results, and availability issues such as offline required
 resources or missing sequence frames. Fixed-width states, issue kinds, frames,
@@ -70,7 +70,7 @@ valid until `pp_resolution_set_release`. The C++ wrapper copies these into
 `ResolutionCandidate`, and `Evidence` values, so their lifetime is independent
 of the C handle.
 
-Resolution never mutates a project. A caller explicitly stages a selected
+Resolution never mutates a production. A caller explicitly stages a selected
 candidate using `pp_transaction_confirm_locator`, and only transaction commit
 makes that location durable. The caller is responsible for passing a URI from
 the result it reviewed; the API validates the URI and resource identity at

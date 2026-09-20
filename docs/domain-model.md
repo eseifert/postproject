@@ -1,6 +1,6 @@
 # Domain model
 
-- A **Project** is a durable container with a globally unique identity and media
+- A **Production** is a durable container with a globally unique identity and media
   roots.
 - An **Asset** is the logical identity of production media. It is never a path.
 - A **Representation** is an original, proxy, optimized, or derived realization
