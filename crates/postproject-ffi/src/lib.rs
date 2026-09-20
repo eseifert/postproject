@@ -5,6 +5,7 @@
 //! shipped `postproject.h` rather than depending on Rust declarations.
 
 mod metadata;
+mod provenance;
 
 use std::{
     any::Any,
@@ -30,6 +31,7 @@ use postproject_storage_sqlite::SqliteProject;
 
 use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
+pub use provenance::PpActivitySet;
 
 const PP_OK: u32 = 0;
 const PP_ERROR_INVALID_ARGUMENT: u32 = 1;
@@ -703,6 +705,139 @@ pub unsafe extern "C" fn pp_metadata_set_release(metadata: *mut PpMetadataSet) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: Ownership is transferred back exactly once by contract.
         drop(unsafe { Box::from_raw(metadata) });
+    }));
+}
+
+/// Loads every production activity in deterministic identity order.
+///
+/// # Safety
+///
+/// `project` must be live, `out_activities` must be writable, and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_activities(
+    project: *const PpProject,
+    out_activities: *mut *mut PpActivitySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before use and output ownership is explicit.
+    unsafe {
+        initialize_output(out_activities);
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            require_output(out_activities, "out_activities")?;
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let activities = PpActivitySet::new(&inner.activities()?)?;
+            out_activities.write(Box::into_raw(Box::new(activities)));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the number of activities in a result set. Null returns zero.
+///
+/// # Safety
+///
+/// `activities` must be null or a live result-set handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_activity_set_count(activities: *const PpActivitySet) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null handle is live by the caller contract.
+        unsafe { activities.as_ref() }.map_or(0, |set| {
+            u64::try_from(set.activities.len()).unwrap_or(u64::MAX)
+        })
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one activity's identity, kind, timing, and edge counts.
+///
+/// Strings are borrowed until the result set is released. Optional timestamps
+/// have explicit presence flags and zero values when absent.
+///
+/// # Safety
+///
+/// `activities` must be live. Every output must be writable and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "flat C output parameters are ABI-safe"
+)]
+pub unsafe extern "C" fn pp_activity_set_get(
+    activities: *const PpActivitySet,
+    index: u64,
+    out_id: *mut PpUuid,
+    out_kind: *mut *const c_char,
+    out_has_started_at: *mut u8,
+    out_started_at_unix_micros: *mut i64,
+    out_has_finished_at: *mut u8,
+    out_finished_at_unix_micros: *mut i64,
+    out_input_count: *mut u64,
+    out_output_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_uuid(out_id);
+        initialize_const_output(out_kind);
+        initialize_value(out_has_started_at, 0);
+        initialize_value(out_started_at_unix_micros, 0);
+        initialize_value(out_has_finished_at, 0);
+        initialize_value(out_finished_at_unix_micros, 0);
+        initialize_value(out_input_count, 0);
+        initialize_value(out_output_count, 0);
+        ffi_call(out_error, || {
+            require_output(out_id, "out_id")?;
+            require_output(out_kind, "out_kind")?;
+            require_output(out_has_started_at, "out_has_started_at")?;
+            require_output(out_started_at_unix_micros, "out_started_at_unix_micros")?;
+            require_output(out_has_finished_at, "out_has_finished_at")?;
+            require_output(out_finished_at_unix_micros, "out_finished_at_unix_micros")?;
+            require_output(out_input_count, "out_input_count")?;
+            require_output(out_output_count, "out_output_count")?;
+            let activities = activities
+                .as_ref()
+                .ok_or_else(|| invalid_argument("activities must not be null"))?;
+            let activity = item_at(&activities.activities, index, "activity")?;
+            out_id.write(PpUuid {
+                bytes: activity.id.into_bytes(),
+            });
+            out_kind.write(activity.kind.as_ptr());
+            if let Some(value) = activity.started_at_unix_micros {
+                out_has_started_at.write(1);
+                out_started_at_unix_micros.write(value);
+            }
+            if let Some(value) = activity.finished_at_unix_micros {
+                out_has_finished_at.write(1);
+                out_finished_at_unix_micros.write(value);
+            }
+            out_input_count.write(activity.input_count);
+            out_output_count.write(activity.output_count);
+            Ok(())
+        })
+    }
+}
+
+/// Releases an activity result set. Null is a no-op.
+///
+/// # Safety
+///
+/// A non-null handle must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_activity_set_release(activities: *mut PpActivitySet) {
+    if activities.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership is transferred back exactly once by contract.
+        drop(unsafe { Box::from_raw(activities) });
     }));
 }
 

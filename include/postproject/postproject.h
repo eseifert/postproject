@@ -26,6 +26,7 @@ typedef struct pp_external_identifier_set pp_external_identifier_set_t;
 typedef struct pp_object_ref_set pp_object_ref_set_t;
 typedef struct pp_metadata_set pp_metadata_set_t;
 typedef struct pp_metadata_value pp_metadata_value_t;
+typedef struct pp_activity_set pp_activity_set_t;
 typedef struct pp_error pp_error_t;
 
 typedef struct pp_uuid {
@@ -210,6 +211,19 @@ PP_API pp_error_code_t pp_metadata_value_struct_get(
 PP_API pp_error_code_t pp_metadata_value_get_reference(
     const pp_metadata_value_t *value, pp_object_ref_t *out_reference,
     pp_error_t **out_error);
+/* Activity strings are borrowed until pp_activity_set_release(). Optional
+ * timestamps use explicit presence flags and zero values when absent. */
+PP_API pp_error_code_t pp_project_activities(
+    const pp_project_t *project, pp_activity_set_t **out_activities,
+    pp_error_t **out_error);
+PP_API uint64_t pp_activity_set_count(const pp_activity_set_t *activities);
+PP_API pp_error_code_t pp_activity_set_get(
+    const pp_activity_set_t *activities, uint64_t index, pp_uuid_t *out_id,
+    const char **out_kind, uint8_t *out_has_started_at,
+    int64_t *out_started_at_unix_micros, uint8_t *out_has_finished_at,
+    int64_t *out_finished_at_unix_micros, uint64_t *out_input_count,
+    uint64_t *out_output_count, pp_error_t **out_error);
+PP_API void pp_activity_set_release(pp_activity_set_t *activities);
 /* Resolution is read-only. Borrowed candidate URI and evidence-detail strings
  * remain valid until pp_resolution_set_release(). */
 PP_API pp_error_code_t pp_project_resolve_asset(
