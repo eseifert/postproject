@@ -6,7 +6,7 @@ import ctypes
 import os
 from pathlib import Path
 
-from ._abi import configure_api
+from ._abi import Error, configure_api
 from ._errors import ERROR_TYPES, PostProjectError
 
 ABI_VERSION = 7
@@ -19,7 +19,6 @@ class NativeLibrary:
     def __init__(self, path: str | os.PathLike[str] | None = None) -> None:
         self.path = _library_path(path)
         self.lib = ctypes.CDLL(str(self.path))
-        self._configure_common_signatures()
         configure_api(self.lib)
         version = int(self.lib.pp_abi_version())
         if version != ABI_VERSION:
@@ -27,25 +26,15 @@ class NativeLibrary:
                 f"PostProject ABI {version} is incompatible with required ABI {ABI_VERSION}"
             )
 
-    def _configure_common_signatures(self) -> None:
-        self.lib.pp_abi_version.argtypes = []
-        self.lib.pp_abi_version.restype = ctypes.c_uint32
-        self.lib.pp_error_code.argtypes = [ctypes.c_void_p]
-        self.lib.pp_error_code.restype = ctypes.c_uint32
-        self.lib.pp_error_message.argtypes = [ctypes.c_void_p]
-        self.lib.pp_error_message.restype = ctypes.c_char_p
-        self.lib.pp_error_release.argtypes = [ctypes.c_void_p]
-        self.lib.pp_error_release.restype = None
-
-    def check(self, status: int, error: ctypes.c_void_p) -> None:
+    def check(self, status: int, error: ctypes.POINTER(Error)) -> None:
         """Release an optional native error and raise its Python equivalent."""
 
         if status == 0:
-            if error.value:
+            if error:
                 self.lib.pp_error_release(error)
             return
         message = "PostProject operation failed"
-        if error.value:
+        if error:
             raw_message = self.lib.pp_error_message(error)
             if raw_message:
                 message = raw_message.decode("utf-8", errors="replace")

@@ -28,11 +28,15 @@ class GenerateAbiTests(unittest.TestCase):
         )
         self.assertEqual(GENERATOR.render_symbols(self.header), expected)
 
-    def test_python_output_is_deterministic_and_valid(self) -> None:
+    def test_python_output_matches_committed_module(self) -> None:
         first = GENERATOR.render_python(self.header, str(self.header_path.relative_to(ROOT)))
         second = GENERATOR.render_python(self.header, str(self.header_path.relative_to(ROOT)))
         self.assertEqual(first, second)
         compile(first, "_abi.py", "exec")
+        committed = (ROOT / "python" / "src" / "postproject" / "_abi.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(first, committed)
 
     def test_unsupported_declaration_fails_loudly(self) -> None:
         source = """
