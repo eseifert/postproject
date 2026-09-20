@@ -9,7 +9,7 @@ from pathlib import Path
 from ._abi import Error, configure_api
 from ._errors import ERROR_TYPES, PostProjectError
 
-ABI_VERSION = 7
+ABI_VERSION = 8
 LIBRARY_ENVIRONMENT_VARIABLE = "POSTPROJECT_LIBRARY"
 
 

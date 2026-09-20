@@ -13,7 +13,7 @@ from ._native import ABI_VERSION, NativeLibrary
 from ._model import (
     AssetId,
     OriginIdentity,
-    ProjectId,
+    ProductionId,
     Revision,
     RevisionContext,
     RevisionId,
@@ -30,7 +30,7 @@ __all__ = [
     "NotFoundError",
     "OriginIdentity",
     "PostProjectError",
-    "ProjectId",
+    "ProductionId",
     "Revision",
     "RevisionContext",
     "RevisionId",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import ctypes
 
 
-class Project(ctypes.Structure):
+class Production(ctypes.Structure):
     pass
 
 
@@ -75,7 +75,7 @@ AvailabilityIssueKind = ctypes.c_uint32
 EvidenceKind = ctypes.c_uint32
 
 
-PP_OBJECT_PROJECT = 1
+PP_OBJECT_PRODUCTION = 1
 PP_OBJECT_ASSET = 2
 PP_OBJECT_REPRESENTATION = 3
 PP_OBJECT_RESOURCE = 4
@@ -224,25 +224,25 @@ EXPORTED_SYMBOLS = (
     "pp_object_ref_set_count",
     "pp_object_ref_set_get",
     "pp_object_ref_set_release",
-    "pp_project_activities",
-    "pp_project_activities_consuming",
-    "pp_project_activities_producing",
-    "pp_project_asset_exists",
-    "pp_project_begin_transaction",
-    "pp_project_changes_since",
-    "pp_project_create",
-    "pp_project_external_identifiers",
-    "pp_project_find_by_external_identifier",
-    "pp_project_find_metadata",
-    "pp_project_id",
-    "pp_project_latest_revision",
-    "pp_project_metadata",
-    "pp_project_open",
-    "pp_project_provenance_ancestors",
-    "pp_project_provenance_descendants",
-    "pp_project_release",
-    "pp_project_resolve_asset",
-    "pp_project_revision_events",
+    "pp_production_activities",
+    "pp_production_activities_consuming",
+    "pp_production_activities_producing",
+    "pp_production_asset_exists",
+    "pp_production_begin_transaction",
+    "pp_production_changes_since",
+    "pp_production_create",
+    "pp_production_external_identifiers",
+    "pp_production_find_by_external_identifier",
+    "pp_production_find_metadata",
+    "pp_production_id",
+    "pp_production_latest_revision",
+    "pp_production_metadata",
+    "pp_production_open",
+    "pp_production_provenance_ancestors",
+    "pp_production_provenance_descendants",
+    "pp_production_release",
+    "pp_production_resolve_asset",
+    "pp_production_revision_events",
     "pp_resolution_set_get_candidate",
     "pp_resolution_set_get_candidate_evidence",
     "pp_resolution_set_get_issue",
@@ -278,18 +278,18 @@ def configure_api(lib: ctypes.CDLL) -> None:
 
     lib.pp_abi_version.argtypes = []
     lib.pp_abi_version.restype = ctypes.c_uint32
-    lib.pp_project_create.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Project)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_create.restype = ErrorCode
-    lib.pp_project_open.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Project)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_open.restype = ErrorCode
-    lib.pp_project_id.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_id.restype = ErrorCode
-    lib.pp_project_asset_exists.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_asset_exists.restype = ErrorCode
-    lib.pp_project_external_identifiers.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.POINTER(ExternalIdentifierSet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_external_identifiers.restype = ErrorCode
-    lib.pp_project_find_by_external_identifier.argtypes = [ctypes.POINTER(Project), ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(ObjectRefSet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_find_by_external_identifier.restype = ErrorCode
+    lib.pp_production_create.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Production)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_create.restype = ErrorCode
+    lib.pp_production_open.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Production)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_open.restype = ErrorCode
+    lib.pp_production_id.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_id.restype = ErrorCode
+    lib.pp_production_asset_exists.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_asset_exists.restype = ErrorCode
+    lib.pp_production_external_identifiers.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.POINTER(ExternalIdentifierSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_external_identifiers.restype = ErrorCode
+    lib.pp_production_find_by_external_identifier.argtypes = [ctypes.POINTER(Production), ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(ObjectRefSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_find_by_external_identifier.restype = ErrorCode
     lib.pp_external_identifier_set_count.argtypes = [ctypes.POINTER(ExternalIdentifierSet)]
     lib.pp_external_identifier_set_count.restype = ctypes.c_uint64
     lib.pp_external_identifier_set_get.argtypes = [ctypes.POINTER(ExternalIdentifierSet), ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.POINTER(Error))]
@@ -302,10 +302,10 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_object_ref_set_get.restype = ErrorCode
     lib.pp_object_ref_set_release.argtypes = [ctypes.POINTER(ObjectRefSet)]
     lib.pp_object_ref_set_release.restype = None
-    lib.pp_project_metadata.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.POINTER(MetadataSet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_metadata.restype = ErrorCode
-    lib.pp_project_find_metadata.argtypes = [ctypes.POINTER(Project), ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(MetadataSet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_find_metadata.restype = ErrorCode
+    lib.pp_production_metadata.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.POINTER(MetadataSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_metadata.restype = ErrorCode
+    lib.pp_production_find_metadata.argtypes = [ctypes.POINTER(Production), ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(MetadataSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_find_metadata.restype = ErrorCode
     lib.pp_metadata_set_count.argtypes = [ctypes.POINTER(MetadataSet)]
     lib.pp_metadata_set_count.restype = ctypes.c_uint64
     lib.pp_metadata_set_get.argtypes = [ctypes.POINTER(MetadataSet), ctypes.c_uint64, ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.POINTER(MetadataValue)), ctypes.POINTER(ctypes.POINTER(Error))]
@@ -342,16 +342,16 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_metadata_value_struct_get.restype = ErrorCode
     lib.pp_metadata_value_get_reference.argtypes = [ctypes.POINTER(MetadataValue), ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_metadata_value_get_reference.restype = ErrorCode
-    lib.pp_project_activities.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(ctypes.POINTER(ActivitySet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_activities.restype = ErrorCode
-    lib.pp_project_activities_producing.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ActivitySet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_activities_producing.restype = ErrorCode
-    lib.pp_project_activities_consuming.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ActivitySet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_activities_consuming.restype = ErrorCode
-    lib.pp_project_provenance_ancestors.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ObjectRefSet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_provenance_ancestors.restype = ErrorCode
-    lib.pp_project_provenance_descendants.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ObjectRefSet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_provenance_descendants.restype = ErrorCode
+    lib.pp_production_activities.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ctypes.POINTER(ActivitySet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_activities.restype = ErrorCode
+    lib.pp_production_activities_producing.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ActivitySet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_activities_producing.restype = ErrorCode
+    lib.pp_production_activities_consuming.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ActivitySet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_activities_consuming.restype = ErrorCode
+    lib.pp_production_provenance_ancestors.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ObjectRefSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_provenance_ancestors.restype = ErrorCode
+    lib.pp_production_provenance_descendants.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ObjectRefSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_provenance_descendants.restype = ErrorCode
     lib.pp_activity_set_count.argtypes = [ctypes.POINTER(ActivitySet)]
     lib.pp_activity_set_count.restype = ctypes.c_uint64
     lib.pp_activity_set_get.argtypes = [ctypes.POINTER(ActivitySet), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
@@ -366,26 +366,26 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_activity_set_get_output.restype = ErrorCode
     lib.pp_activity_set_release.argtypes = [ctypes.POINTER(ActivitySet)]
     lib.pp_activity_set_release.restype = None
-    lib.pp_project_latest_revision.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(ctypes.POINTER(RevisionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_latest_revision.restype = ErrorCode
-    lib.pp_project_changes_since.argtypes = [ctypes.POINTER(Project), ctypes.c_uint64, ctypes.c_uint32, ctypes.POINTER(ctypes.POINTER(RevisionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_changes_since.restype = ErrorCode
+    lib.pp_production_latest_revision.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ctypes.POINTER(RevisionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_latest_revision.restype = ErrorCode
+    lib.pp_production_changes_since.argtypes = [ctypes.POINTER(Production), ctypes.c_uint64, ctypes.c_uint32, ctypes.POINTER(ctypes.POINTER(RevisionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_changes_since.restype = ErrorCode
     lib.pp_revision_set_count.argtypes = [ctypes.POINTER(RevisionSet)]
     lib.pp_revision_set_count.restype = ctypes.c_uint64
     lib.pp_revision_set_get.argtypes = [ctypes.POINTER(RevisionSet), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_revision_set_get.restype = ErrorCode
     lib.pp_revision_set_release.argtypes = [ctypes.POINTER(RevisionSet)]
     lib.pp_revision_set_release.restype = None
-    lib.pp_project_revision_events.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(RevisionEventSet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_revision_events.restype = ErrorCode
+    lib.pp_production_revision_events.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(RevisionEventSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_revision_events.restype = ErrorCode
     lib.pp_revision_event_set_count.argtypes = [ctypes.POINTER(RevisionEventSet)]
     lib.pp_revision_event_set_count.restype = ctypes.c_uint64
     lib.pp_revision_event_set_get.argtypes = [ctypes.POINTER(RevisionEventSet), ctypes.c_uint64, ctypes.POINTER(RevisionEvent), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_revision_event_set_get.restype = ErrorCode
     lib.pp_revision_event_set_release.argtypes = [ctypes.POINTER(RevisionEventSet)]
     lib.pp_revision_event_set_release.restype = None
-    lib.pp_project_resolve_asset.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ResolutionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_resolve_asset.restype = ErrorCode
+    lib.pp_production_resolve_asset.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ResolutionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_resolve_asset.restype = ErrorCode
     lib.pp_resolution_set_representation_count.argtypes = [ctypes.POINTER(ResolutionSet)]
     lib.pp_resolution_set_representation_count.restype = ctypes.c_uint64
     lib.pp_resolution_set_get_representation.argtypes = [ctypes.POINTER(ResolutionSet), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(RepresentationAvailability), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
@@ -404,10 +404,10 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_resolution_set_get_candidate_evidence.restype = ErrorCode
     lib.pp_resolution_set_release.argtypes = [ctypes.POINTER(ResolutionSet)]
     lib.pp_resolution_set_release.restype = None
-    lib.pp_project_begin_transaction.argtypes = [ctypes.POINTER(Project), ctypes.POINTER(ctypes.POINTER(Transaction)), ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_project_begin_transaction.restype = ErrorCode
-    lib.pp_project_release.argtypes = [ctypes.POINTER(Project)]
-    lib.pp_project_release.restype = None
+    lib.pp_production_begin_transaction.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ctypes.POINTER(Transaction)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_begin_transaction.restype = ErrorCode
+    lib.pp_production_release.argtypes = [ctypes.POINTER(Production)]
+    lib.pp_production_release.restype = None
     lib.pp_transaction_set_revision_context.argtypes = [ctypes.POINTER(Transaction), ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_set_revision_context.restype = ErrorCode
     lib.pp_transaction_import_media.argtypes = [ctypes.POINTER(Transaction), ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]

@@ -14,8 +14,8 @@ class _TypedId:
         return str(self.value)
 
 
-class ProjectId(_TypedId):
-    """Stable identity of one PostProject project."""
+class ProductionId(_TypedId):
+    """Stable identity of one PostProject production."""
 
     __slots__ = ()
 
@@ -57,7 +57,7 @@ class RevisionContext:
 
 @dataclass(frozen=True, slots=True)
 class Revision:
-    """One committed project mutation transaction."""
+    """One committed production mutation transaction."""
 
     id: RevisionId
     sequence: int
