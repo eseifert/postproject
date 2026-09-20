@@ -27,7 +27,7 @@ pub use content::{
 };
 pub use error::{Error, ErrorKind, Result};
 pub use id::{
-    ActivityId, AssetId, LocatorId, MediaRootId, ObjectRef, ProjectId, RepresentationId,
+    ActivityId, AssetId, LocatorId, MediaRootId, ObjectRef, ProductionId, RepresentationId,
     ResourceId, RevisionId, TransactionId,
 };
 pub use identifier::{
@@ -42,7 +42,8 @@ pub use metadata::{
     MetadataValue, MetadataValueKind, PropertyId, RationalValue, VocabularyId,
 };
 pub use model::{
-    Asset, MediaRoot, OriginalMediaImport, Project, Representation, RepresentationKind, Timestamp,
+    Asset, MediaRoot, OriginalMediaImport, Production, Representation, RepresentationKind,
+    Timestamp,
 };
 pub use provenance::{
     Activity, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
@@ -62,6 +63,6 @@ pub use revision::{
     MAX_REVISION_MESSAGE_BYTES, MAX_REVISION_PAGE_SIZE, OriginIdentity, Revision, RevisionContext,
     RevisionEvent, RevisionEventKind,
 };
-pub use storage::{ProjectRead, ProjectStore, ProjectStoreTransaction};
+pub use storage::{ProductionRead, ProductionStore, ProductionStoreTransaction};
 pub use time::{RationalRate, RationalTime, TimeRange};
 pub use transaction::{TransactionLifecycle, TransactionState};

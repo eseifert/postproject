@@ -66,8 +66,8 @@ macro_rules! strong_id {
 }
 
 strong_id!(
-    /// Stable identity of a project.
-    ProjectId
+    /// Stable identity of a production.
+    ProductionId
 );
 strong_id!(
     /// Stable logical identity of an asset.
@@ -94,7 +94,7 @@ strong_id!(
     ActivityId
 );
 strong_id!(
-    /// Stable identity of one durable project revision.
+    /// Stable identity of one durable production revision.
     RevisionId
 );
 strong_id!(
@@ -106,8 +106,8 @@ strong_id!(
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum ObjectRef {
-    /// A project object.
-    Project(ProjectId),
+    /// A production object.
+    Production(ProductionId),
     /// A logical asset object.
     Asset(AssetId),
     /// A concrete asset representation.
@@ -126,9 +126,9 @@ mod tests {
 
     proptest! {
         #[test]
-        fn project_id_byte_and_text_round_trips(bytes in any::<[u8; 16]>()) {
-            let id = ProjectId::from_bytes(bytes);
-            prop_assert_eq!(ProjectId::from_str(&id.to_string()), Ok(id));
+        fn production_id_byte_and_text_round_trips(bytes in any::<[u8; 16]>()) {
+            let id = ProductionId::from_bytes(bytes);
+            prop_assert_eq!(ProductionId::from_str(&id.to_string()), Ok(id));
             prop_assert_eq!(id.into_bytes(), bytes);
         }
     }
@@ -136,13 +136,13 @@ mod tests {
     #[test]
     fn identifier_types_are_not_interchangeable() {
         let bytes = [7; 16];
-        let project = ProjectId::from_bytes(bytes);
+        let production = ProductionId::from_bytes(bytes);
         let asset = AssetId::from_bytes(bytes);
         let resource = ResourceId::from_bytes(bytes);
         let locator = LocatorId::from_bytes(bytes);
 
-        assert_eq!(project.as_bytes(), asset.as_bytes());
-        assert_eq!(project.to_string(), asset.to_string());
+        assert_eq!(production.as_bytes(), asset.as_bytes());
+        assert_eq!(production.to_string(), asset.to_string());
         assert_eq!(resource.as_bytes(), locator.as_bytes());
     }
 

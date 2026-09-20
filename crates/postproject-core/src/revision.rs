@@ -1,4 +1,4 @@
-//! Durable semantic revision values for project-local change feeds.
+//! Durable semantic revision values for production-local change feeds.
 
 use crate::{
     ActivityId, ActivityKind, ActivityRole, AssetId, Error, ErrorKind, ExternalIdentifier,
@@ -49,7 +49,7 @@ impl OriginIdentity {
     }
 }
 
-/// One committed project mutation transaction in local sequence order.
+/// One committed production mutation transaction in local sequence order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Revision {
     id: RevisionId,
@@ -265,7 +265,7 @@ impl Revision {
         self.id
     }
 
-    /// Returns the monotonically increasing project-local sequence.
+    /// Returns the monotonically increasing production-local sequence.
     #[must_use]
     pub const fn sequence(&self) -> u64 {
         self.sequence

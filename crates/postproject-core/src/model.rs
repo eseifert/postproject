@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    AssetId, ContentStructure, Error, ErrorKind, Locator, MediaRootId, ProjectId,
+    AssetId, ContentStructure, Error, ErrorKind, Locator, MediaRootId, ProductionId,
     RepresentationFingerprint, RepresentationId, Resource, Result, uri::normalize_uri,
 };
 
@@ -57,19 +57,19 @@ impl Timestamp {
 
 /// A persistent container for production state.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Project {
-    id: ProjectId,
+pub struct Production {
+    id: ProductionId,
     schema_version: u32,
     created_at: Timestamp,
     display_name: Option<String>,
     media_roots: Vec<MediaRoot>,
 }
 
-impl Project {
-    /// Creates an in-memory project value.
+impl Production {
+    /// Creates an in-memory production value.
     #[must_use]
     pub fn new(
-        id: ProjectId,
+        id: ProductionId,
         schema_version: u32,
         created_at: Timestamp,
         display_name: Option<String>,
@@ -83,19 +83,19 @@ impl Project {
         }
     }
 
-    /// Returns the project's stable identity.
+    /// Returns the production's stable identity.
     #[must_use]
-    pub const fn id(&self) -> ProjectId {
+    pub const fn id(&self) -> ProductionId {
         self.id
     }
 
-    /// Returns the persistence schema version used to load this project.
+    /// Returns the persistence schema version used to load this production.
     #[must_use]
     pub const fn schema_version(&self) -> u32 {
         self.schema_version
     }
 
-    /// Returns when the project was created.
+    /// Returns when the production was created.
     #[must_use]
     pub const fn created_at(&self) -> Timestamp {
         self.created_at
@@ -433,16 +433,17 @@ mod tests {
     fn media_roots_have_deterministic_priority_order() {
         let first_id = MediaRootId::from_bytes([1; 16]);
         let second_id = MediaRootId::from_bytes([2; 16]);
-        let mut project = Project::new(ProjectId::new(), 1, Timestamp::from_unix_micros(0), None);
-        project.set_media_roots(vec![
+        let mut production =
+            Production::new(ProductionId::new(), 1, Timestamp::from_unix_micros(0), None);
+        production.set_media_roots(vec![
             MediaRoot::new(second_id, "file:///b", None, 10, true).expect("valid root"),
             MediaRoot::new(first_id, "file:///a", None, 10, true).expect("valid root"),
             MediaRoot::new(MediaRootId::new(), "file:///top", None, 0, true).expect("valid root"),
         ]);
 
-        assert_eq!(project.media_roots()[0].priority(), 0);
-        assert_eq!(project.media_roots()[1].id(), first_id);
-        assert_eq!(project.media_roots()[2].id(), second_id);
+        assert_eq!(production.media_roots()[0].priority(), 0);
+        assert_eq!(production.media_roots()[1].id(), first_id);
+        assert_eq!(production.media_roots()[2].id(), second_id);
     }
 
     #[test]

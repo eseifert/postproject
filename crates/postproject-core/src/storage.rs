@@ -3,17 +3,17 @@
 use crate::{
     Activity, Asset, AssetId, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot,
     MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, Project, Representation, RepresentationId, Resource, ResourceId, Result,
-    Revision, RevisionContext, RevisionEvent, RevisionId, TransactionId, TransactionState,
+    OriginalMediaImport, Production, Representation, RepresentationId, Resource, ResourceId,
+    Result, Revision, RevisionContext, RevisionEvent, RevisionId, TransactionId, TransactionState,
 };
 
-/// Read operations required from a project persistence backend.
+/// Read operations required from a production persistence backend.
 ///
 /// The contract returns domain values and deliberately contains no generic CRUD,
 /// query language, connection, or database-row concepts.
-pub trait ProjectRead {
-    /// Returns the loaded project metadata and configured media roots.
-    fn project(&self) -> &Project;
+pub trait ProductionRead {
+    /// Returns the loaded production metadata and configured media roots.
+    fn production(&self) -> &Production;
 
     /// Loads all assets in deterministic order.
     ///
@@ -160,7 +160,7 @@ pub trait ProjectRead {
 }
 
 /// Transactional mutation operations required from a persistence backend.
-pub trait ProjectStoreTransaction {
+pub trait ProductionStoreTransaction {
     /// Returns this transaction's stable identity.
     fn id(&self) -> TransactionId;
 
@@ -286,12 +286,12 @@ pub trait ProjectStoreTransaction {
     fn rollback(&mut self) -> Result<()>;
 }
 
-/// A project persistence backend with explicit domain transactions.
-pub trait ProjectStore: ProjectRead {
+/// A production persistence backend with explicit domain transactions.
+pub trait ProductionStore: ProductionRead {
     /// Backend-specific transaction implementation borrowing this store.
-    type Transaction<'project>: ProjectStoreTransaction
+    type Transaction<'production>: ProductionStoreTransaction
     where
-        Self: 'project;
+        Self: 'production;
 
     /// Begins a transaction for domain mutations.
     ///
