@@ -1,9 +1,9 @@
 # Standards boundaries
 
-> PostProject provides media identity, representations, locations, metadata
-> persistence, provenance, and project-local revision semantics. It
-> interoperates with industry vocabularies and exchange standards rather than
-> attempting to replace them.
+> PostProject provides persistent production knowledge: media identity,
+> compound representations and resources, locators, metadata, provenance, and
+> project-local revision semantics. It maps that knowledge to established
+> interoperability contracts rather than attempting to replace them.
 
 PostProject is a carrier, query, and persistence layer. It does not claim
 normative compliance with SMPTE UMID, IPTC Video Metadata Hub, EBUCore,
@@ -16,6 +16,7 @@ In particular:
 - vocabulary and property identities remain explicit and extensible;
 - production provenance records activities with inputs and outputs;
 - rational time is a reusable value, not a timeline model;
+- OpenAssetIO remains an adapter boundary rather than a core dependency;
 - C2PA trust and signing remain a separate cryptographic layer;
 - no identifier causes an automatic network lookup.
 
