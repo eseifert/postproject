@@ -19,8 +19,8 @@ use std::{
 use postproject_core::{
     AssetId, Error, ErrorKind, EvidenceKind, ExternalIdentifier, IdentifierScheme, Locator,
     MediaRoot, MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, ProjectId,
-    PropertyId, RepresentationId, Resolution, ResolutionEvidence, ResolutionState, ResourceId,
-    TransactionLifecycle, VocabularyId,
+    PropertyId, RepresentationId, ResolutionEvidence, ResourceId, ResourceResolution,
+    ResourceResolutionState, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
@@ -1107,13 +1107,12 @@ pub unsafe extern "C" fn pp_project_resolve_asset(
             for representation in inner.representations(asset_id)? {
                 for resource in inner.resources(representation.id())? {
                     let locators = inner.locators(resource.id())?;
-                    let resolution = resolver.resolve(
-                        representation.id(),
+                    let resolution = resolver.resolve_resource(
                         &resource,
                         &locators,
                         inner.project().media_roots(),
                     )?;
-                    resolutions.push((resource.id(), resolution));
+                    resolutions.push((representation.id(), resolution));
                 }
             }
             out_resolutions.write(Box::into_raw(Box::new(PpResolutionSet::new(resolutions))));
@@ -2028,13 +2027,13 @@ unsafe fn write_copy<T: Copy>(output: *mut T, value: T, label: &str) -> Result<(
 }
 
 impl PpResolutionSet {
-    fn new(resolutions: Vec<(ResourceId, Resolution)>) -> Self {
+    fn new(resolutions: Vec<(RepresentationId, ResourceResolution)>) -> Self {
         Self {
             resolutions: resolutions
                 .into_iter()
-                .map(|(resource_id, resolution)| AbiResolution {
-                    representation_id: resolution.representation_id(),
-                    resource_id,
+                .map(|(representation_id, resolution)| AbiResolution {
+                    representation_id,
+                    resource_id: resolution.resource_id(),
                     state: resolution_state(resolution.state()),
                     candidates: resolution
                         .candidates()
@@ -2093,14 +2092,14 @@ impl TryFrom<ExternalIdentifier> for AbiExternalIdentifier {
     }
 }
 
-const fn resolution_state(state: ResolutionState) -> u32 {
+const fn resolution_state(state: ResourceResolutionState) -> u32 {
     match state {
-        ResolutionState::OnlineAtKnownLocation => PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATION,
-        ResolutionState::ResolvedExact => PP_RESOLUTION_RESOLVED_EXACT,
-        ResolutionState::ResolvedProbable => PP_RESOLUTION_RESOLVED_PROBABLE,
-        ResolutionState::Missing => PP_RESOLUTION_MISSING,
-        ResolutionState::Ambiguous => PP_RESOLUTION_AMBIGUOUS,
-        ResolutionState::Error => PP_RESOLUTION_ERROR,
+        ResourceResolutionState::OnlineAtKnownLocator => PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATION,
+        ResourceResolutionState::ResolvedExact => PP_RESOLUTION_RESOLVED_EXACT,
+        ResourceResolutionState::ResolvedProbable => PP_RESOLUTION_RESOLVED_PROBABLE,
+        ResourceResolutionState::Offline => PP_RESOLUTION_MISSING,
+        ResourceResolutionState::Ambiguous => PP_RESOLUTION_AMBIGUOUS,
+        ResourceResolutionState::Error => PP_RESOLUTION_ERROR,
         _ => 0,
     }
 }
