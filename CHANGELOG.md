@@ -34,6 +34,8 @@ All notable changes to PostProject will be documented here. The project uses
 - Activity-based provenance with extensible kinds and edge roles, bounded tool
   and agent identity, atomic SQLite schema version 2 persistence, cycle
   prevention, deterministic reload, and ancestry/descendant queries.
+- Exact rational-time comparison, lossless checked rescaling, half-open ranges,
+  and deterministic text round-trips for common integer and fractional rates.
 - CLI commands for attaching, removing, listing, and finding external
   identifiers with structured JSON output.
 - Initial workspace and engineering-policy scaffolding.

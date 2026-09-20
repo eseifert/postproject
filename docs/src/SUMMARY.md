@@ -9,6 +9,7 @@
 - [External identifiers](concepts/external-identifiers.md)
 - [Metadata assertions](concepts/metadata.md)
 - [Production provenance](concepts/provenance.md)
+- [Rational time and ranges](concepts/rational-time.md)
 - [Standards boundaries](concepts/standards-boundaries.md)
 
 # For application users
