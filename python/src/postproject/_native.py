@@ -6,6 +6,7 @@ import ctypes
 import os
 from pathlib import Path
 
+from ._abi import configure_api
 from ._errors import ERROR_TYPES, PostProjectError
 
 ABI_VERSION = 7
@@ -19,6 +20,7 @@ class NativeLibrary:
         self.path = _library_path(path)
         self.lib = ctypes.CDLL(str(self.path))
         self._configure_common_signatures()
+        configure_api(self.lib)
         version = int(self.lib.pp_abi_version())
         if version != ABI_VERSION:
             raise RuntimeError(
@@ -62,4 +64,3 @@ def _library_path(path: str | os.PathLike[str] | None) -> Path:
     if not resolved.is_file():
         raise RuntimeError(f"PostProject library is not a file: {resolved}")
     return resolved
-
