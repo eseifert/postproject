@@ -25,6 +25,7 @@ int main(int argc, char **argv) {
   if (argc != 3) {
     return 64;
   }
+  (void)remove(argv[1]);
   if (pp_abi_version() != UINT32_C(6)) {
     return 1;
   }
