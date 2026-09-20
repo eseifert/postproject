@@ -109,6 +109,58 @@ fn inject_structured_metadata(project_path: &str, asset_id: &str) {
     transaction.commit().unwrap();
 }
 
+fn exercise_provenance(project: &str, input_representation_id: &str, directory: &std::path::Path) {
+    let proxy = directory.join("proxy.mov");
+    fs::write(&proxy, b"derived proxy fixture media").expect("write proxy fixture");
+    let imported = run_json(&[
+        "media",
+        "add",
+        project,
+        proxy.to_str().expect("UTF-8 proxy path"),
+        "--name",
+        "Editorial proxy",
+    ]);
+    let output_representation_id = imported["representation_id"]
+        .as_str()
+        .expect("proxy representation ID");
+    let input = format!("{input_representation_id}=postproject:input.primary-video");
+    let output = format!("{output_representation_id}=postproject:output.proxy");
+
+    let created = run_json(&[
+        "activity",
+        "add",
+        project,
+        "postproject:transcode",
+        "--input",
+        &input,
+        "--output",
+        &output,
+    ]);
+    let activity_id = created["id"].as_str().expect("activity ID");
+    assert_eq!(
+        created["inputs"][0]["role"],
+        "postproject:input.primary-video"
+    );
+    assert_eq!(created["outputs"][0]["role"], "postproject:output.proxy");
+
+    let listed = run_json(&["activity", "list", project]);
+    assert_eq!(listed.as_array().expect("activity array").len(), 1);
+    assert_eq!(listed[0]["id"], activity_id);
+
+    let producing = run_json(&["activity", "producing", project, output_representation_id]);
+    assert_eq!(producing[0]["id"], activity_id);
+    let consuming = run_json(&["activity", "consuming", project, input_representation_id]);
+    assert_eq!(consuming[0]["id"], activity_id);
+
+    let ancestors = run_json(&["activity", "ancestors", project, output_representation_id]);
+    assert_eq!(ancestors[0]["representation_id"], input_representation_id);
+    let descendants = run_json(&["activity", "descendants", project, input_representation_id]);
+    assert_eq!(
+        descendants[0]["representation_id"],
+        output_representation_id
+    );
+}
+
 #[test]
 fn lifecycle_and_explicit_ambiguous_confirmation() {
     let directory = tempfile::tempdir().expect("create test directory");
@@ -213,5 +265,30 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
             .expect("locators")
             .len(),
         2
+    );
+}
+
+#[test]
+fn records_and_queries_provenance() {
+    let directory = tempfile::tempdir().expect("create test directory");
+    let project = directory.path().join("provenance.pproj");
+    let original = directory.path().join("original.mov");
+    fs::write(&original, b"provenance source fixture").expect("write source fixture");
+
+    run_json(&["init", project.to_str().expect("UTF-8 project path")]);
+    let imported = run_json(&[
+        "media",
+        "add",
+        project.to_str().expect("UTF-8 project path"),
+        original.to_str().expect("UTF-8 media path"),
+    ]);
+    let representation_id = imported["representation_id"]
+        .as_str()
+        .expect("source representation ID");
+
+    exercise_provenance(
+        project.to_str().expect("UTF-8 project path"),
+        representation_id,
+        directory.path(),
     );
 }
