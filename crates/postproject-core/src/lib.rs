@@ -14,6 +14,7 @@ mod model;
 mod provenance;
 mod resolution;
 mod resource;
+mod revision;
 mod storage;
 mod time;
 mod transaction;
@@ -57,6 +58,7 @@ pub use resource::{
     FileFacts, Locator, LocatorAvailability, RepresentationFingerprint, Resource,
     ResourceFingerprint,
 };
+pub use revision::{MAX_REVISION_MESSAGE_BYTES, OriginIdentity, Revision};
 pub use storage::{ProjectRead, ProjectStore, ProjectStoreTransaction};
 pub use time::{RationalRate, RationalTime, TimeRange};
 pub use transaction::{TransactionLifecycle, TransactionState};
