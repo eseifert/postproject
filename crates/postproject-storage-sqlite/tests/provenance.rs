@@ -1,10 +1,11 @@
 //! Activity persistence, atomicity, and cycle-invariant integration tests.
 
 use postproject_core::{
-    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, Asset, AssetId,
-    ContentStructure, ErrorKind, Locator, LocatorAvailability, LocatorId, MetadataProperty,
-    MetadataValue, ObjectRef, OriginalMediaImport, PropertyId, Representation, RepresentationId,
-    RepresentationKind, Resource, ResourceId, Timestamp, VocabularyId,
+    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
+    Asset, AssetId, ContentStructure, ErrorKind, ExternalIdentifier, IdentifierScheme, Locator,
+    LocatorAvailability, LocatorId, MetadataProperty, MetadataValue, ObjectRef,
+    OriginalMediaImport, PropertyId, Representation, RepresentationId, RepresentationKind,
+    Resource, ResourceId, Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_storage_sqlite::SqliteProject;
 use tempfile::tempdir;
@@ -60,6 +61,42 @@ fn activity_metadata_is_atomic_with_activity_creation() {
     let (source, source_id) = import(1);
     let (proxy, proxy_id) = import(2);
     let activity_id = ActivityId::new();
+    let agent_identifier = ExternalIdentifier::new(
+        IdentifierScheme::new("com.example.worker").expect("valid scheme"),
+        "worker-7",
+        None,
+    )
+    .expect("valid identifier");
+    let activity = Activity::new(
+        activity_id,
+        ActivityKind::new("postproject:transcode").expect("valid kind"),
+        vec![ActivityInput::new(
+            source_id,
+            Some(ActivityRole::new("postproject:input.primary").expect("valid role")),
+        )],
+        vec![ActivityOutput::new(
+            proxy_id,
+            Some(ActivityRole::new("postproject:output.proxy").expect("valid role")),
+        )],
+    )
+    .expect("valid activity")
+    .with_timing(
+        Some(Timestamp::from_unix_micros(10)),
+        Some(Timestamp::from_unix_micros(20)),
+    )
+    .expect("valid timing")
+    .with_tool(
+        ToolIdentity::new(
+            "FFmpeg",
+            Some("8.0".to_owned()),
+            Some("https://ffmpeg.org".to_owned()),
+        )
+        .expect("valid tool"),
+    )
+    .with_agent(
+        AgentIdentity::new(Some("Render worker".to_owned()), Some(agent_identifier))
+            .expect("valid agent"),
+    );
     let property = MetadataProperty::new(
         VocabularyId::new("com.example.provenance").expect("valid vocabulary"),
         PropertyId::new("preset").expect("valid property"),
@@ -70,7 +107,7 @@ fn activity_metadata_is_atomic_with_activity_creation() {
         transaction.import_original(&source).expect("import source");
         transaction.import_original(&proxy).expect("import proxy");
         transaction
-            .create_activity(&activity(activity_id, source_id, proxy_id))
+            .create_activity(&activity)
             .expect("create activity");
         transaction
             .add_metadata_value(ObjectRef::Activity(activity_id), &property, &value)
@@ -79,6 +116,7 @@ fn activity_metadata_is_atomic_with_activity_creation() {
     }
 
     let reopened = SqliteProject::open(&path).expect("reopen project");
+    assert_eq!(reopened.activities().expect("load activities"), [activity]);
     assert_eq!(
         reopened
             .metadata_values(ObjectRef::Activity(activity_id), &property)
