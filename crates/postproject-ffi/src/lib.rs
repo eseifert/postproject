@@ -6,6 +6,7 @@
 
 mod metadata;
 mod provenance;
+mod revisions;
 
 use std::{
     any::Any,
@@ -35,6 +36,7 @@ use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
 use provenance::AbiActivityEdge;
 pub use provenance::PpActivitySet;
+pub use revisions::PpRevisionSet;
 
 const PP_OK: u32 = 0;
 const PP_ERROR_INVALID_ARGUMENT: u32 = 1;
@@ -85,7 +87,7 @@ const PP_OBJECT_RESOURCE: u32 = 4;
 const PP_OBJECT_ACTIVITY: u32 = 5;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 6;
+pub const ABI_VERSION: u32 = 7;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -1128,6 +1130,187 @@ pub unsafe extern "C" fn pp_activity_set_release(activities: *mut PpActivitySet)
     let _ = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: Ownership is transferred back exactly once by contract.
         drop(unsafe { Box::from_raw(activities) });
+    }));
+}
+
+/// Loads the newest revision as a zero-or-one-element owned result set.
+///
+/// # Safety
+///
+/// `project` must be live, `out_revisions` must be writable, and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_latest_revision(
+    project: *const PpProject,
+    out_revisions: *mut *mut PpRevisionSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before use and output ownership is explicit.
+    unsafe {
+        initialize_output(out_revisions);
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            require_output(out_revisions, "out_revisions")?;
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let revisions: Vec<_> = inner.latest_revision()?.into_iter().collect();
+            out_revisions.write(Box::into_raw(Box::new(PpRevisionSet::new(&revisions)?)));
+            Ok(())
+        })
+    }
+}
+
+/// Loads an ascending, bounded revision page after `sequence`.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_project_latest_revision`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_changes_since(
+    project: *const PpProject,
+    sequence: u64,
+    limit: u32,
+    out_revisions: *mut *mut PpRevisionSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before use and output ownership is explicit.
+    unsafe {
+        initialize_output(out_revisions);
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            require_output(out_revisions, "out_revisions")?;
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let revisions = PpRevisionSet::new(&inner.changes_since(sequence, limit)?)?;
+            out_revisions.write(Box::into_raw(Box::new(revisions)));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the number of revisions in a result set. Null returns zero.
+///
+/// # Safety
+///
+/// `revisions` must be null or a live result-set handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_revision_set_count(revisions: *const PpRevisionSet) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null handle is live by the caller contract.
+        unsafe { revisions.as_ref() }.map_or(0, |set| {
+            u64::try_from(set.revisions.len()).unwrap_or(u64::MAX)
+        })
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one revision summary. Returned strings borrow the result-set lifetime.
+///
+/// # Safety
+///
+/// `revisions` must be live. Every output must be writable and `out_error` may
+/// be null or writable.
+#[unsafe(no_mangle)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "flat C output parameters are ABI-safe"
+)]
+pub unsafe extern "C" fn pp_revision_set_get(
+    revisions: *const PpRevisionSet,
+    index: u64,
+    out_id: *mut PpUuid,
+    out_sequence: *mut u64,
+    out_transaction_id: *mut PpUuid,
+    out_committed_at_unix_micros: *mut i64,
+    out_origin_name: *mut *const c_char,
+    out_origin_version: *mut *const c_char,
+    out_origin_uri: *mut *const c_char,
+    out_message: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_uuid(out_id);
+        initialize_value(out_sequence, 0);
+        initialize_uuid(out_transaction_id);
+        initialize_value(out_committed_at_unix_micros, 0);
+        initialize_const_output(out_origin_name);
+        initialize_const_output(out_origin_version);
+        initialize_const_output(out_origin_uri);
+        initialize_const_output(out_message);
+        ffi_call(out_error, || {
+            require_output(out_id, "out_id")?;
+            require_output(out_sequence, "out_sequence")?;
+            require_output(out_transaction_id, "out_transaction_id")?;
+            require_output(out_committed_at_unix_micros, "out_committed_at_unix_micros")?;
+            require_output(out_origin_name, "out_origin_name")?;
+            require_output(out_origin_version, "out_origin_version")?;
+            require_output(out_origin_uri, "out_origin_uri")?;
+            require_output(out_message, "out_message")?;
+            let revisions = revisions
+                .as_ref()
+                .ok_or_else(|| invalid_argument("revisions must not be null"))?;
+            let revision = item_at(&revisions.revisions, index, "revision")?;
+            out_id.write(PpUuid {
+                bytes: revision.id.into_bytes(),
+            });
+            out_sequence.write(revision.sequence);
+            out_transaction_id.write(PpUuid {
+                bytes: revision.transaction_id.into_bytes(),
+            });
+            out_committed_at_unix_micros.write(revision.committed_at_unix_micros);
+            out_origin_name.write(
+                revision
+                    .origin_name
+                    .as_ref()
+                    .map_or(ptr::null(), |value| value.as_ptr()),
+            );
+            out_origin_version.write(
+                revision
+                    .origin_version
+                    .as_ref()
+                    .map_or(ptr::null(), |value| value.as_ptr()),
+            );
+            out_origin_uri.write(
+                revision
+                    .origin_uri
+                    .as_ref()
+                    .map_or(ptr::null(), |value| value.as_ptr()),
+            );
+            out_message.write(
+                revision
+                    .message
+                    .as_ref()
+                    .map_or(ptr::null(), |value| value.as_ptr()),
+            );
+            Ok(())
+        })
+    }
+}
+
+/// Releases a revision result set. Null is a no-op.
+///
+/// # Safety
+///
+/// A non-null handle must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_revision_set_release(revisions: *mut PpRevisionSet) {
+    if revisions.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership is transferred back exactly once by contract.
+        drop(unsafe { Box::from_raw(revisions) });
     }));
 }
 

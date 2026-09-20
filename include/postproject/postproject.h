@@ -27,6 +27,7 @@ typedef struct pp_object_ref_set pp_object_ref_set_t;
 typedef struct pp_metadata_set pp_metadata_set_t;
 typedef struct pp_metadata_value pp_metadata_value_t;
 typedef struct pp_activity_set pp_activity_set_t;
+typedef struct pp_revision_set pp_revision_set_t;
 typedef struct pp_error pp_error_t;
 
 typedef struct pp_uuid {
@@ -256,6 +257,22 @@ PP_API pp_error_code_t pp_activity_set_get_output(
     uint64_t output_index, pp_uuid_t *out_representation_id,
     const char **out_role, pp_error_t **out_error);
 PP_API void pp_activity_set_release(pp_activity_set_t *activities);
+/* Revision strings are borrowed until pp_revision_set_release(). Latest
+ * returns a set containing zero or one revision. */
+PP_API pp_error_code_t pp_project_latest_revision(
+    const pp_project_t *project, pp_revision_set_t **out_revisions,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_project_changes_since(
+    const pp_project_t *project, uint64_t sequence, uint32_t limit,
+    pp_revision_set_t **out_revisions, pp_error_t **out_error);
+PP_API uint64_t pp_revision_set_count(const pp_revision_set_t *revisions);
+PP_API pp_error_code_t pp_revision_set_get(
+    const pp_revision_set_t *revisions, uint64_t index, pp_uuid_t *out_id,
+    uint64_t *out_sequence, pp_uuid_t *out_transaction_id,
+    int64_t *out_committed_at_unix_micros, const char **out_origin_name,
+    const char **out_origin_version, const char **out_origin_uri,
+    const char **out_message, pp_error_t **out_error);
+PP_API void pp_revision_set_release(pp_revision_set_t *revisions);
 /* Resolution is read-only. Borrowed candidate URI and evidence-detail strings
  * remain valid until pp_resolution_set_release(). */
 PP_API pp_error_code_t pp_project_resolve_asset(
