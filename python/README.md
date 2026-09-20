@@ -6,3 +6,21 @@ an explicit library path when opening a production.
 
 The package is pre-1.0 and tracks the current PostProject ABI without backward
 compatibility guarantees.
+
+```python
+from postproject import Production
+
+with Production.create("production.pproj", "Documentary") as production:
+    with production.transaction(
+        origin="example.importer", message="Import camera original"
+    ) as transaction:
+        asset_id = transaction.import_media(
+            "rushes/A001.mov", display_name="Camera A"
+        )
+
+    assert production.contains_asset(asset_id)
+```
+
+Production and transaction handles support deterministic `close()` and context
+manager cleanup. A clean transaction context commits; an exception rolls back.
+Releasing an unfinished transaction also discards its staged mutations.

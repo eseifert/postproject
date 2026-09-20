@@ -21,6 +21,7 @@
 # For integrators
 
 - [Integrator guide](integrators/README.md)
+- [Python quickstart](integrators/python.md)
 - [Metadata vocabularies](integrators/metadata-vocabularies.md)
 - [Provenance integration](integrators/provenance.md)
 - [Revision feed](integrators/revision-feed.md)
