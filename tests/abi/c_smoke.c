@@ -307,6 +307,114 @@ int main(int argc, char **argv) {
   }
   pp_transaction_release(transaction);
   transaction = NULL;
+
+  status = pp_project_begin_transaction(project, &transaction, &error);
+  if (status != PP_OK || transaction == NULL) {
+    pp_resolution_set_release(resolutions);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 29;
+  }
+  const pp_activity_edge_t activity_output = {
+      representation_id, "postproject:output.master"};
+  const int64_t started_at = INT64_C(100);
+  const int64_t finished_at = INT64_C(200);
+  pp_uuid_t activity_id = {{0}};
+  status = pp_transaction_create_activity(
+      transaction, "postproject:ingest", NULL, 0, &activity_output, 1,
+      &started_at, &finished_at, "C ingest", "1.0",
+      "https://example.com/tools/ingest", "C operator", "com.example.agent",
+      "operator-1", "primary", &activity_id, &error);
+  pp_object_ref_t activity_ref = {PP_OBJECT_ACTIVITY, activity_id};
+  if (status != PP_OK || uuid_is_zero(&activity_id) ||
+      pp_transaction_add_metadata_text(
+          transaction, &activity_ref, "com.example.ingest", "preset",
+          "camera-master", NULL, &error) != PP_OK ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_resolution_set_release(resolutions);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 30;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+
+  pp_activity_set_t *activities = NULL;
+  status = pp_project_activities(project, &activities, &error);
+  pp_uuid_t read_activity_id = {{0}};
+  const char *activity_kind = NULL;
+  uint8_t has_started_at = 0;
+  int64_t read_started_at = 0;
+  uint8_t has_finished_at = 0;
+  int64_t read_finished_at = 0;
+  uint64_t input_count = 0;
+  uint64_t output_count = 0;
+  if (status != PP_OK || activities == NULL ||
+      pp_activity_set_count(activities) != UINT64_C(1) ||
+      pp_activity_set_get(activities, 0, &read_activity_id, &activity_kind,
+                          &has_started_at, &read_started_at, &has_finished_at,
+                          &read_finished_at, &input_count, &output_count,
+                          &error) != PP_OK ||
+      memcmp(read_activity_id.bytes, activity_id.bytes,
+             sizeof(activity_id.bytes)) != 0 ||
+      activity_kind == NULL || strcmp(activity_kind, "postproject:ingest") != 0 ||
+      has_started_at != UINT8_C(1) || read_started_at != started_at ||
+      has_finished_at != UINT8_C(1) || read_finished_at != finished_at ||
+      input_count != 0 || output_count != UINT64_C(1)) {
+    pp_activity_set_release(activities);
+    pp_resolution_set_release(resolutions);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 31;
+  }
+  const char *tool_name = NULL;
+  const char *tool_version = NULL;
+  const char *tool_uri = NULL;
+  const char *agent_name = NULL;
+  const char *agent_scheme = NULL;
+  const char *agent_value = NULL;
+  const char *agent_qualifier = NULL;
+  pp_uuid_t output_representation_id = {{0}};
+  const char *output_role = NULL;
+  if (pp_activity_set_get_tool(activities, 0, &tool_name, &tool_version,
+                               &tool_uri, &error) != PP_OK ||
+      tool_name == NULL || strcmp(tool_name, "C ingest") != 0 ||
+      tool_version == NULL || strcmp(tool_version, "1.0") != 0 ||
+      tool_uri == NULL ||
+      strcmp(tool_uri, "https://example.com/tools/ingest") != 0 ||
+      pp_activity_set_get_agent(
+          activities, 0, &agent_name, &agent_scheme, &agent_value,
+          &agent_qualifier, &error) != PP_OK ||
+      agent_name == NULL || strcmp(agent_name, "C operator") != 0 ||
+      agent_scheme == NULL || strcmp(agent_scheme, "com.example.agent") != 0 ||
+      agent_value == NULL || strcmp(agent_value, "operator-1") != 0 ||
+      agent_qualifier == NULL || strcmp(agent_qualifier, "primary") != 0 ||
+      pp_activity_set_get_output(activities, 0, 0,
+                                 &output_representation_id, &output_role,
+                                 &error) != PP_OK ||
+      memcmp(output_representation_id.bytes, representation_id.bytes,
+             sizeof(representation_id.bytes)) != 0 ||
+      output_role == NULL || strcmp(output_role, "postproject:output.master") != 0) {
+    pp_activity_set_release(activities);
+    pp_resolution_set_release(resolutions);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 32;
+  }
+  pp_activity_set_release(activities);
+  activities = NULL;
+  status = pp_project_activities_producing(
+      project, &representation_id, &activities, &error);
+  if (status != PP_OK || activities == NULL ||
+      pp_activity_set_count(activities) != UINT64_C(1)) {
+    pp_activity_set_release(activities);
+    pp_resolution_set_release(resolutions);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 33;
+  }
+  pp_activity_set_release(activities);
   pp_resolution_set_release(resolutions);
   pp_project_release(project);
   project = NULL;
