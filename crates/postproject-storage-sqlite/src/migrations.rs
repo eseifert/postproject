@@ -4,17 +4,23 @@ use postproject_core::{Error, ErrorKind, Result, Timestamp};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 /// The newest schema understood by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 struct Migration {
     version: u32,
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("migrations/001_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("migrations/001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("migrations/002_activities.sql"),
+    },
+];
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<()> {
     let current = schema_version(connection)?;
@@ -111,7 +117,7 @@ mod tests {
             .expect("query migration history")
             .collect::<std::result::Result<_, _>>()
             .expect("read migration history");
-        assert_eq!(applied, [1]);
+        assert_eq!(applied, [1, 2]);
         for table in [
             "projects",
             "assets",
@@ -126,6 +132,9 @@ mod tests {
             "media_roots",
             "external_identifiers",
             "metadata_assertions",
+            "activities",
+            "activity_inputs",
+            "activity_outputs",
         ] {
             let count: u32 = connection
                 .query_row(
@@ -136,6 +145,27 @@ mod tests {
                 .expect("query migrated table");
             assert_eq!(count, 1, "missing migrated table {table}");
         }
+    }
+
+    #[test]
+    fn activity_migration_updates_existing_project_version() {
+        let mut connection = Connection::open_in_memory().expect("open in-memory database");
+        apply_migration(&mut connection, &MIGRATIONS[0]).expect("apply first migration");
+        connection
+            .execute(
+                "INSERT INTO projects (
+                    singleton, id, schema_version, created_at_micros, display_name
+                 ) VALUES (1, zeroblob(16), 1, 0, NULL)",
+                [],
+            )
+            .expect("insert version-one project");
+
+        migrate(&mut connection).expect("migrate existing project");
+
+        let project_version: u32 = connection
+            .query_row("SELECT schema_version FROM projects", [], |row| row.get(0))
+            .expect("read project version");
+        assert_eq!(project_version, CURRENT_SCHEMA_VERSION);
     }
 
     #[test]
