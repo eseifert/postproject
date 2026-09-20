@@ -6,7 +6,7 @@ use assert_cmd::cargo::cargo_bin_cmd;
 use postproject_core::{
     AssetId, MetadataField, MetadataProperty, MetadataValue, ObjectRef, PropertyId, VocabularyId,
 };
-use postproject_storage_sqlite::SqliteProject;
+use postproject_storage_sqlite::SqliteProduction;
 use serde_json::Value;
 
 fn run_json(arguments: &[&str]) -> Value {
@@ -18,11 +18,11 @@ fn run_json(arguments: &[&str]) -> Value {
     serde_json::from_slice(&assertion.get_output().stdout).expect("command emits valid JSON")
 }
 
-fn exercise_identifiers(project: &str, asset_id: &str) {
+fn exercise_identifiers(production: &str, asset_id: &str) {
     let identifier = run_json(&[
         "identifier",
         "add",
-        project,
+        production,
         "asset",
         asset_id,
         "com.example.asset",
@@ -33,14 +33,14 @@ fn exercise_identifiers(project: &str, asset_id: &str) {
     assert_eq!(identifier["scheme"], "com.example.asset");
     assert_eq!(identifier["value"], "asset-42");
 
-    let identifiers = run_json(&["identifier", "list", project, "asset", asset_id]);
+    let identifiers = run_json(&["identifier", "list", production, "asset", asset_id]);
     assert_eq!(identifiers.as_array().expect("identifier array").len(), 1);
     assert_eq!(identifiers[0]["qualifier"], "primary");
 
     let found = run_json(&[
         "identifier",
         "find",
-        project,
+        production,
         "com.example.asset",
         "asset-42",
     ]);
@@ -49,13 +49,13 @@ fn exercise_identifiers(project: &str, asset_id: &str) {
     assert_eq!(found[0]["id"], asset_id);
 }
 
-fn exercise_metadata(project_path: &str, asset_id: &str) {
+fn exercise_metadata(production_path: &str, asset_id: &str) {
     let vocabulary = "http://iptc.org/std/videometadatahub/1.0";
     for (value, language) in [("Interview", "en-US"), ("Gespräch", "de-DE")] {
         let added = run_json(&[
             "metadata",
             "add-text",
-            project_path,
+            production_path,
             "asset",
             asset_id,
             vocabulary,
@@ -68,11 +68,11 @@ fn exercise_metadata(project_path: &str, asset_id: &str) {
         assert_eq!(added["value"]["language"], language);
     }
 
-    let found = run_json(&["metadata", "find", project_path, vocabulary, "title"]);
+    let found = run_json(&["metadata", "find", production_path, vocabulary, "title"]);
     assert_eq!(found.as_array().expect("metadata matches").len(), 2);
 
-    inject_structured_metadata(project_path, asset_id);
-    let listed = run_json(&["metadata", "list", project_path, "asset", asset_id]);
+    inject_structured_metadata(production_path, asset_id);
+    let listed = run_json(&["metadata", "list", production_path, "asset", asset_id]);
     assert_eq!(listed.as_array().expect("metadata assertions").len(), 3);
     assert_eq!(listed[0]["value"]["type"], "struct");
     assert_eq!(listed[0]["value"]["fields"][0]["name"], "name");
@@ -80,17 +80,17 @@ fn exercise_metadata(project_path: &str, asset_id: &str) {
     run_json(&[
         "metadata",
         "remove",
-        project_path,
+        production_path,
         "asset",
         asset_id,
         vocabulary,
         "title",
     ]);
-    let listed = run_json(&["metadata", "list", project_path, "asset", asset_id]);
+    let listed = run_json(&["metadata", "list", production_path, "asset", asset_id]);
     assert_eq!(listed.as_array().expect("remaining metadata").len(), 1);
 }
 
-fn inject_structured_metadata(project_path: &str, asset_id: &str) {
+fn inject_structured_metadata(production_path: &str, asset_id: &str) {
     let target = ObjectRef::Asset(AssetId::from_str(asset_id).expect("parse asset ID"));
     let property = MetadataProperty::new(
         VocabularyId::new("com.example.editor/metadata").unwrap(),
@@ -101,21 +101,26 @@ fn inject_structured_metadata(project_path: &str, asset_id: &str) {
         MetadataValue::string("Camera department").unwrap(),
     )])
     .unwrap();
-    let mut project = SqliteProject::open(project_path).expect("open project for test metadata");
-    let mut transaction = project.begin_transaction().unwrap();
+    let mut production =
+        SqliteProduction::open(production_path).expect("open production for test metadata");
+    let mut transaction = production.begin_transaction().unwrap();
     transaction
         .add_metadata_value(target, &property, &value)
         .unwrap();
     transaction.commit().unwrap();
 }
 
-fn exercise_provenance(project: &str, input_representation_id: &str, directory: &std::path::Path) {
+fn exercise_provenance(
+    production: &str,
+    input_representation_id: &str,
+    directory: &std::path::Path,
+) {
     let proxy = directory.join("proxy.mov");
     fs::write(&proxy, b"derived proxy fixture media").expect("write proxy fixture");
     let imported = run_json(&[
         "media",
         "add",
-        project,
+        production,
         proxy.to_str().expect("UTF-8 proxy path"),
         "--name",
         "Editorial proxy",
@@ -129,7 +134,7 @@ fn exercise_provenance(project: &str, input_representation_id: &str, directory: 
     let created = run_json(&[
         "activity",
         "add",
-        project,
+        production,
         "postproject:transcode",
         "--input",
         &input,
@@ -176,7 +181,7 @@ fn exercise_provenance(project: &str, input_representation_id: &str, directory: 
     let parameter = run_json(&[
         "metadata",
         "add-text",
-        project,
+        production,
         "activity",
         activity_id,
         "com.example.transcode",
@@ -186,18 +191,33 @@ fn exercise_provenance(project: &str, input_representation_id: &str, directory: 
     assert_eq!(parameter["target_kind"], "activity");
     assert_eq!(parameter["value"]["value"], "editorial-proxy-h264");
 
-    let listed = run_json(&["activity", "list", project]);
+    let listed = run_json(&["activity", "list", production]);
     assert_eq!(listed.as_array().expect("activity array").len(), 1);
     assert_eq!(listed[0]["id"], activity_id);
 
-    let producing = run_json(&["activity", "producing", project, output_representation_id]);
+    let producing = run_json(&[
+        "activity",
+        "producing",
+        production,
+        output_representation_id,
+    ]);
     assert_eq!(producing[0]["id"], activity_id);
-    let consuming = run_json(&["activity", "consuming", project, input_representation_id]);
+    let consuming = run_json(&["activity", "consuming", production, input_representation_id]);
     assert_eq!(consuming[0]["id"], activity_id);
 
-    let ancestors = run_json(&["activity", "ancestors", project, output_representation_id]);
+    let ancestors = run_json(&[
+        "activity",
+        "ancestors",
+        production,
+        output_representation_id,
+    ]);
     assert_eq!(ancestors[0]["representation_id"], input_representation_id);
-    let descendants = run_json(&["activity", "descendants", project, input_representation_id]);
+    let descendants = run_json(&[
+        "activity",
+        "descendants",
+        production,
+        input_representation_id,
+    ]);
     assert_eq!(
         descendants[0]["representation_id"],
         output_representation_id
@@ -207,13 +227,13 @@ fn exercise_provenance(project: &str, input_representation_id: &str, directory: 
 #[test]
 fn lifecycle_and_explicit_ambiguous_confirmation() {
     let directory = tempfile::tempdir().expect("create test directory");
-    let project = directory.path().join("production.pproj");
+    let production = directory.path().join("production.pproj");
     let original = directory.path().join("original.mov");
     fs::write(&original, b"identifiable fixture media").expect("write original fixture");
 
     let initialized = run_json(&[
         "init",
-        project.to_str().expect("UTF-8 project path"),
+        production.to_str().expect("UTF-8 production path"),
         "--name",
         "CLI workflow",
     ]);
@@ -222,7 +242,7 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
     let imported = run_json(&[
         "media",
         "add",
-        project.to_str().expect("UTF-8 project path"),
+        production.to_str().expect("UTF-8 production path"),
         original.to_str().expect("UTF-8 media path"),
         "--name",
         "Camera original",
@@ -234,13 +254,19 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
     let listed = run_json(&[
         "media",
         "list",
-        project.to_str().expect("UTF-8 project path"),
+        production.to_str().expect("UTF-8 production path"),
     ]);
     assert_eq!(listed.as_array().expect("asset array").len(), 1);
     assert_eq!(listed[0]["id"], asset_id);
 
-    exercise_identifiers(project.to_str().expect("UTF-8 project path"), asset_id);
-    exercise_metadata(project.to_str().expect("UTF-8 project path"), asset_id);
+    exercise_identifiers(
+        production.to_str().expect("UTF-8 production path"),
+        asset_id,
+    );
+    exercise_metadata(
+        production.to_str().expect("UTF-8 production path"),
+        asset_id,
+    );
 
     let candidates = directory.path().join("candidates");
     fs::create_dir(&candidates).expect("create candidates root");
@@ -253,7 +279,7 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
     run_json(&[
         "root",
         "add",
-        project.to_str().expect("UTF-8 project path"),
+        production.to_str().expect("UTF-8 production path"),
         candidates.to_str().expect("UTF-8 root path"),
         "--label",
         "Relocated",
@@ -262,7 +288,7 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
     let ambiguous = run_json(&[
         "media",
         "resolve",
-        project.to_str().expect("UTF-8 project path"),
+        production.to_str().expect("UTF-8 production path"),
         asset_id,
     ]);
     assert_eq!(ambiguous["resolutions"][0]["availability"], "ambiguous");
@@ -277,7 +303,7 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
     let confirmed = run_json(&[
         "media",
         "resolve",
-        project.to_str().expect("UTF-8 project path"),
+        production.to_str().expect("UTF-8 production path"),
         asset_id,
         "--confirm",
         confirmed_uri,
@@ -287,7 +313,7 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
     let resolved = run_json(&[
         "media",
         "resolve",
-        project.to_str().expect("UTF-8 project path"),
+        production.to_str().expect("UTF-8 production path"),
         asset_id,
     ]);
     assert_eq!(resolved["resolutions"][0]["availability"], "online");
@@ -299,7 +325,7 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
     let shown = run_json(&[
         "media",
         "show",
-        project.to_str().expect("UTF-8 project path"),
+        production.to_str().expect("UTF-8 production path"),
         asset_id,
     ]);
     assert_eq!(
@@ -314,15 +340,15 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
 #[test]
 fn records_and_queries_provenance() {
     let directory = tempfile::tempdir().expect("create test directory");
-    let project = directory.path().join("provenance.pproj");
+    let production = directory.path().join("provenance.pproj");
     let original = directory.path().join("original.mov");
     fs::write(&original, b"provenance source fixture").expect("write source fixture");
 
-    run_json(&["init", project.to_str().expect("UTF-8 project path")]);
+    run_json(&["init", production.to_str().expect("UTF-8 production path")]);
     let imported = run_json(&[
         "media",
         "add",
-        project.to_str().expect("UTF-8 project path"),
+        production.to_str().expect("UTF-8 production path"),
         original.to_str().expect("UTF-8 media path"),
     ]);
     let representation_id = imported["representation_id"]
@@ -330,7 +356,7 @@ fn records_and_queries_provenance() {
         .expect("source representation ID");
 
     exercise_provenance(
-        project.to_str().expect("UTF-8 project path"),
+        production.to_str().expect("UTF-8 production path"),
         representation_id,
         directory.path(),
     );
@@ -339,24 +365,24 @@ fn records_and_queries_provenance() {
 #[test]
 fn reads_revision_pages_and_semantic_events() {
     let directory = tempfile::tempdir().expect("create test directory");
-    let project = directory.path().join("revisions.pproj");
+    let production = directory.path().join("revisions.pproj");
     let original = directory.path().join("original.mov");
     fs::write(&original, b"revision source fixture").expect("write source fixture");
-    let project_path = project.to_str().expect("UTF-8 project path");
+    let production_path = production.to_str().expect("UTF-8 production path");
 
-    run_json(&["init", project_path]);
-    assert!(run_json(&["revisions", "latest", project_path]).is_null());
+    run_json(&["init", production_path]);
+    assert!(run_json(&["revisions", "latest", production_path]).is_null());
     run_json(&[
         "media",
         "add",
-        project_path,
+        production_path,
         original.to_str().expect("UTF-8 media path"),
     ]);
 
     let revisions = run_json(&[
         "revisions",
         "since",
-        project_path,
+        production_path,
         "--after",
         "0",
         "--limit",
@@ -371,9 +397,9 @@ fn reads_revision_pages_and_semantic_events() {
     assert_eq!(revisions[0]["message"], "Import media");
     let revision_id = revisions[0]["id"].as_str().expect("revision ID");
 
-    let latest = run_json(&["revisions", "latest", project_path]);
+    let latest = run_json(&["revisions", "latest", production_path]);
     assert_eq!(latest["id"], revision_id);
-    let events = run_json(&["revisions", "events", project_path, revision_id]);
+    let events = run_json(&["revisions", "events", production_path, revision_id]);
     let events = events.as_array().expect("revision event array");
     assert_eq!(events.len(), 5);
     assert_eq!(events[0]["position"], 0);
