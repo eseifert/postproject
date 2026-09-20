@@ -354,6 +354,15 @@ struct RevisionSetDeleter final {
 using RevisionSetHandle =
     std::unique_ptr<pp_revision_set_t, RevisionSetDeleter>;
 
+struct RevisionEventSetDeleter final {
+  void operator()(pp_revision_event_set_t *events) const noexcept {
+    pp_revision_event_set_release(events);
+  }
+};
+
+using RevisionEventSetHandle =
+    std::unique_ptr<pp_revision_event_set_t, RevisionEventSetDeleter>;
+
 inline void throw_if_error(pp_error_code_t status, pp_error_t *raw_error) {
   ErrorHandle error(raw_error);
   if (status == PP_OK) {
@@ -520,6 +529,94 @@ inline Revision revision(const pp_revision_set_t *revisions,
   }
   return {uuid(id), sequence, uuid(transaction_id), committed_at,
           std::move(origin), optional_string(message)};
+}
+
+inline std::string required_event_string(const char *value,
+                                         std::string_view label) {
+  if (value == nullptr) {
+    throw Error(ErrorCode::internal,
+                "revision event is missing " + std::string(label));
+  }
+  return std::string(value);
+}
+
+inline RevisionEvent revision_event(const pp_revision_event_set_t *events,
+                                    std::uint64_t index) {
+  pp_revision_event_t event{};
+  pp_error_t *error = nullptr;
+  const pp_error_code_t status =
+      pp_revision_event_set_get(events, index, &event, &error);
+  throw_if_error(status, error);
+  switch (event.kind) {
+  case PP_REVISION_ASSET_IMPORTED:
+    return {event.position, AssetImportedEvent{uuid(event.asset_id)}};
+  case PP_REVISION_REPRESENTATION_ADDED:
+    return {event.position,
+            RepresentationAddedEvent{uuid(event.asset_id),
+                                     uuid(event.representation_id)}};
+  case PP_REVISION_RESOURCE_ADDED:
+    return {event.position, ResourceAddedEvent{uuid(event.resource_id)}};
+  case PP_REVISION_REPRESENTATION_RESOURCE_ADDED:
+    return {event.position,
+            RepresentationResourceAddedEvent{
+                uuid(event.representation_id), uuid(event.resource_id),
+                event.structural_position}};
+  case PP_REVISION_LOCATOR_ADDED:
+    return {event.position,
+            LocatorAddedEvent{uuid(event.resource_id),
+                              uuid(event.locator_id)}};
+  case PP_REVISION_MEDIA_ROOT_ADDED:
+    return {event.position,
+            MediaRootAddedEvent{uuid(event.media_root_id)}};
+  case PP_REVISION_EXTERNAL_IDENTIFIER_ADDED:
+    return {event.position,
+            ExternalIdentifierAddedEvent{
+                object_ref(event.target),
+                {required_event_string(event.identifier_scheme,
+                                       "identifier scheme"),
+                 required_event_string(event.identifier_value,
+                                       "identifier value"),
+                 optional_string(event.identifier_qualifier)}}};
+  case PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED:
+    return {event.position,
+            ExternalIdentifierRemovedEvent{
+                object_ref(event.target),
+                {required_event_string(event.identifier_scheme,
+                                       "identifier scheme"),
+                 required_event_string(event.identifier_value,
+                                       "identifier value"),
+                 optional_string(event.identifier_qualifier)}}};
+  case PP_REVISION_METADATA_ADDED_OR_REPLACED:
+    return {event.position,
+            MetadataAddedOrReplacedEvent{
+                object_ref(event.target),
+                required_event_string(event.vocabulary, "metadata vocabulary"),
+                required_event_string(event.property, "metadata property")}};
+  case PP_REVISION_METADATA_REMOVED:
+    return {event.position,
+            MetadataRemovedEvent{
+                object_ref(event.target),
+                required_event_string(event.vocabulary, "metadata vocabulary"),
+                required_event_string(event.property, "metadata property")}};
+  case PP_REVISION_ACTIVITY_CREATED:
+    return {event.position,
+            ActivityCreatedEvent{
+                uuid(event.activity_id),
+                required_event_string(event.activity_kind, "activity kind")}};
+  case PP_REVISION_ACTIVITY_INPUT_ADDED:
+    return {event.position,
+            ActivityInputAddedEvent{uuid(event.activity_id),
+                                    uuid(event.representation_id),
+                                    optional_string(event.role)}};
+  case PP_REVISION_ACTIVITY_OUTPUT_ADDED:
+    return {event.position,
+            ActivityOutputAddedEvent{uuid(event.activity_id),
+                                     uuid(event.representation_id),
+                                     optional_string(event.role)}};
+  default:
+    throw Error(ErrorCode::internal,
+                "revision event has an unknown semantic kind");
+  }
 }
 
 inline Evidence resource_evidence(const pp_resolution_set_t *resolutions,
@@ -1103,6 +1200,24 @@ public:
     result.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t index = 0; index < count; ++index) {
       result.push_back(detail::revision(revisions.get(), index));
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::vector<RevisionEvent>
+  revisionEvents(const Uuid &revision_id) const {
+    const pp_uuid_t native_id = detail::native_uuid(revision_id);
+    pp_revision_event_set_t *raw_events = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_project_revision_events(
+        project_, &native_id, &raw_events, &error);
+    detail::throw_if_error(status, error);
+    detail::RevisionEventSetHandle events(raw_events);
+    std::vector<RevisionEvent> result;
+    const std::uint64_t count = pp_revision_event_set_count(events.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      result.push_back(detail::revision_event(events.get(), index));
     }
     return result;
   }

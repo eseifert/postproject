@@ -56,6 +56,21 @@ int main(int argc, char **argv) {
         revision_page[0].id != latest_revision->id) {
       return 15;
     }
+    const auto revision_events = project.revisionEvents(latest_revision->id);
+    if (revision_events.size() != 7 || revision_events[0].position != 0 ||
+        !std::holds_alternative<postproject::AssetImportedEvent>(
+            revision_events[0].payload) ||
+        std::get<postproject::AssetImportedEvent>(revision_events[0].payload)
+                .asset_id != asset_id ||
+        !std::holds_alternative<postproject::ExternalIdentifierAddedEvent>(
+            revision_events[5].payload) ||
+        std::get<postproject::ExternalIdentifierAddedEvent>(
+            revision_events[5].payload)
+                .identifier.value != external_id.value ||
+        !std::holds_alternative<postproject::MediaRootAddedEvent>(
+            revision_events[6].payload)) {
+      return 16;
+    }
     if (!project.containsAsset(asset_id)) {
       return 8;
     }
