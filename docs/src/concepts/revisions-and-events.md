@@ -1,8 +1,8 @@
 # Revisions and semantic events
 
 A revision is the durable record of one successful mutating transaction. It
-gives another application a project-local cursor for discovering changes
-without repeatedly scanning the whole project.
+gives another application a production-local cursor for discovering changes
+without repeatedly scanning the whole production.
 
 Every non-empty committed transaction creates exactly one revision. The domain
 changes, revision, and ordered semantic events are atomic: consumers see all of
@@ -14,7 +14,7 @@ not advance the revision sequence.
 A revision contains:
 
 - a stable `RevisionId`;
-- a positive, monotonically increasing project-local sequence;
+- a positive, monotonically increasing production-local sequence;
 - the `TransactionId` that produced it;
 - a commit timestamp;
 - an optional integrating application/process identity; and
@@ -59,7 +59,7 @@ Consumers poll with three operations:
 
 After receiving an event, a consumer should re-query the relevant object when
 it needs current values. Events are an observation and cache-invalidation
-mechanism, not a replay log that replaces the project database.
+mechanism, not a replay log that replaces the production database.
 
 ## Deliberate boundaries
 

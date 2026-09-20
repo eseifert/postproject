@@ -1,7 +1,7 @@
 # Consuming the revision feed
 
 Use the revision feed when an integration needs to refresh caches, update a UI,
-or observe changes made by another tool sharing the same project file. Store the
+or observe changes made by another tool sharing the same production file. Store the
 last fully processed sequence as the local cursor.
 
 ## Polling safely
@@ -15,7 +15,7 @@ last fully processed sequence as the local cursor.
 
 Persisting the cursor after each complete revision gives at-least-once
 processing after a consumer crash. Handlers should therefore tolerate seeing a
-revision again. A cursor is meaningful only for the project that produced it.
+revision again. A cursor is meaningful only for the production that produced it.
 
 ## CLI inspection
 
@@ -32,12 +32,12 @@ the package version, and a short operation message.
 
 ## Rust
 
-Storage backends implement the domain-shaped `ProjectRead` contract:
+Storage backends implement the domain-shaped `ProductionRead` contract:
 
 ```rust
-let page = project.changes_since(cursor, 100)?;
+let page = production.changes_since(cursor, 100)?;
 for revision in page {
-    for event in project.events_for_revision(revision.id())? {
+    for event in production.events_for_revision(revision.id())? {
         handle(event)?;
     }
     cursor = revision.sequence();
@@ -63,7 +63,7 @@ accessor borrow the owning handle and must be copied before it is released.
 ```c
 pp_revision_set_t *page = NULL;
 pp_error_t *error = NULL;
-if (pp_project_changes_since(project, cursor, 100, &page, &error) != PP_OK) {
+if (pp_production_changes_since(production, cursor, 100, &page, &error) != PP_OK) {
     /* inspect and release error */
 }
 
@@ -77,7 +77,7 @@ for (uint64_t i = 0; i < pp_revision_set_count(page); ++i) {
                         &origin_uri, &message, &error);
 
     pp_revision_event_set_t *events = NULL;
-    pp_project_revision_events(project, &revision_id, &events, &error);
+    pp_production_revision_events(production, &revision_id, &events, &error);
     for (uint64_t j = 0; j < pp_revision_event_set_count(events); ++j) {
         pp_revision_event_t event;
         pp_revision_event_set_get(events, j, &event, &error);
@@ -98,8 +98,8 @@ The C++17 wrapper copies results into values and converts the tagged C event
 record into a `std::variant`:
 
 ```cpp
-for (const auto &revision : project.changesSince(cursor, 100)) {
-  for (const auto &event : project.revisionEvents(revision.id)) {
+for (const auto &revision : production.changesSince(cursor, 100)) {
+  for (const auto &event : production.revisionEvents(revision.id)) {
     std::visit(handle_event, event.payload);
   }
   cursor = revision.sequence;

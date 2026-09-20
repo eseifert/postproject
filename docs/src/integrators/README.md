@@ -33,7 +33,7 @@ postproject::ObjectRef target{postproject::ObjectKind::asset, asset_id};
 tx.addExternalIdentifier(
     target, {"com.example.camera.serial", "A-0007", std::nullopt});
 tx.commit();
-auto identifiers = project.externalIdentifiers(target);
+auto identifiers = production.externalIdentifiers(target);
 ```
 
 The [metadata guide](metadata-vocabularies.md), [provenance

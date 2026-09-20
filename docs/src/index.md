@@ -2,7 +2,7 @@
 
 PostProject provides neutral infrastructure for media identity, compound
 representations, resources and locators, metadata persistence, production
-provenance, and project-local revision semantics. It is designed for
+provenance, and production-local revision semantics. It is designed for
 applications to embed; it is not an editor or network service.
 
 The documentation is split by audience:

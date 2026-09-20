@@ -7,7 +7,7 @@ stable application-owned namespace only for genuinely application-specific
 data.
 
 The core Rust API exposes `VocabularyId`, `PropertyId`, `MetadataProperty`,
-`MetadataValue`, `MetadataField`, and `MetadataAssertion`. The SQLite project
+`MetadataValue`, `MetadataField`, and `MetadataAssertion`. The SQLite production
 API supports:
 
 - appending a repeated value;
@@ -16,7 +16,7 @@ API supports:
 - reading one property or every assertion on a target;
 - finding every assertion with an exact vocabulary/property pair.
 
-All writes belong to an explicit project transaction. A failed operation or
+All writes belong to an explicit production transaction. A failed operation or
 rollback leaves no partial assertions.
 
 ## CLI inspection
@@ -49,7 +49,7 @@ shell quoting.
 
 ## Availability
 
-The typed domain model, SQLite persistence, Rust project API, and CLI read
+The typed domain model, SQLite persistence, Rust production API, and CLI read
 surface are implemented. Activity metadata is writable after the activity is
 created in the same or an earlier transaction. Metadata traversal through C,
 C++, and Python is not available yet; those interfaces must expose the same

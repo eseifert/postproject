@@ -11,15 +11,15 @@ Construct an activity from existing representation IDs, then optionally attach:
 - a bounded agent name and/or external identifier;
 - typed metadata parameters using `ObjectRef::Activity(activity.id())`.
 
-Stage the activity with `ProjectStoreTransaction::create_activity`. Activity,
-edges, metadata, and other mutations in that project transaction commit or roll
+Stage the activity with `ProductionStoreTransaction::create_activity`. Activity,
+edges, metadata, and other mutations in that production transaction commit or roll
 back together. Every referenced representation must already exist in the
 transaction view. A duplicate activity returns `AlreadyExists`, an absent
 representation returns `NotFound`, and a generation cycle returns `Conflict`.
 
 ## Queries
 
-`ProjectRead` exposes domain-shaped reads:
+`ProductionRead` exposes domain-shaped reads:
 
 - `activities()` returns every activity in stable identity order;
 - `activities_producing(representation_id)` finds producers;

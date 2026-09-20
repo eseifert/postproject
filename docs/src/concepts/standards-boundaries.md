@@ -2,7 +2,7 @@
 
 > PostProject provides persistent production knowledge: media identity,
 > compound representations and resources, locators, metadata, provenance, and
-> project-local revision semantics. It maps that knowledge to established
+> production-local revision semantics. It maps that knowledge to established
 > interoperability contracts rather than attempting to replace them.
 
 PostProject is a carrier, query, and persistence layer. It does not claim

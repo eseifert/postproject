@@ -1,7 +1,7 @@
 # Metadata and provenance
 
 Metadata is descriptive information that an application stores alongside your
-project and media. It can include titles, descriptions, keywords, rights
+production and media. It can include titles, descriptions, keywords, rights
 information, camera notes, language-specific text, or fields defined by another
 production application.
 
@@ -21,5 +21,5 @@ parameters. Descriptive metadata and production provenance can complement each
 other, but neither is proof that content is authentic. Cryptographic trust
 systems such as C2PA remain a separate layer.
 
-All current metadata remains inside the local project file. PostProject does
+All current metadata remains inside the local production file. PostProject does
 not upload it, contact vocabulary services, or look up identifier registries.

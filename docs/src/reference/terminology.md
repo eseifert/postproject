@@ -10,5 +10,5 @@
 | Object ID | A typed PostProject identity for one domain object. |
 | External identifier | A scheme-qualified industry, registry, vendor, or application value. |
 | Activity | An operation that consumes inputs and produces outputs. |
-| Provenance | Project knowledge about how media or results were produced. |
+| Provenance | Production knowledge about how media or results were produced. |
 | Revision | One durable, successful local mutation transaction and its semantic events. |
