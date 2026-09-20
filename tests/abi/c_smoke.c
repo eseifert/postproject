@@ -25,7 +25,7 @@ int main(int argc, char **argv) {
   if (argc != 3) {
     return 64;
   }
-  if (pp_abi_version() != UINT32_C(4)) {
+  if (pp_abi_version() != UINT32_C(5)) {
     return 1;
   }
   pp_error_code_t status =

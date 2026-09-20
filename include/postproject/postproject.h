@@ -76,15 +76,6 @@ typedef uint32_t pp_error_code_t;
 #define PP_ERROR_UNSUPPORTED UINT32_C(10)
 #define PP_ERROR_INTERNAL UINT32_C(255)
 
-typedef uint32_t pp_resolution_state_t;
-
-#define PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATOR UINT32_C(1)
-#define PP_RESOLUTION_RESOLVED_EXACT UINT32_C(2)
-#define PP_RESOLUTION_RESOLVED_PROBABLE UINT32_C(3)
-#define PP_RESOLUTION_MISSING UINT32_C(4)
-#define PP_RESOLUTION_AMBIGUOUS UINT32_C(5)
-#define PP_RESOLUTION_ERROR UINT32_C(6)
-
 typedef uint32_t pp_representation_availability_t;
 
 #define PP_AVAILABILITY_ONLINE UINT32_C(1)
@@ -224,8 +215,6 @@ PP_API pp_error_code_t pp_metadata_value_get_reference(
 PP_API pp_error_code_t pp_project_resolve_asset(
     const pp_project_t *project, const pp_uuid_t *asset_id,
     pp_resolution_set_t **out_resolutions, pp_error_t **out_error);
-PP_API uint64_t
-pp_resolution_set_count(const pp_resolution_set_t *resolutions);
 PP_API uint64_t pp_resolution_set_representation_count(
     const pp_resolution_set_t *resolutions);
 PP_API pp_error_code_t pp_resolution_set_get_representation(
@@ -264,26 +253,6 @@ PP_API pp_error_code_t pp_resolution_set_get_candidate_evidence(
     uint64_t resource_index, uint64_t candidate_index,
     uint64_t evidence_index, pp_evidence_kind_t *out_kind,
     const char **out_detail, pp_error_t **out_error);
-PP_API pp_error_code_t pp_resolution_set_get(
-    const pp_resolution_set_t *resolutions, uint64_t resolution_index,
-    pp_uuid_t *out_representation_id, pp_uuid_t *out_resource_id,
-    pp_resolution_state_t *out_state,
-    uint64_t *out_candidate_count, uint64_t *out_evidence_count,
-    pp_error_t **out_error);
-PP_API pp_error_code_t pp_resolution_candidate_get(
-    const pp_resolution_set_t *resolutions, uint64_t resolution_index,
-    uint64_t candidate_index, const char **out_uri,
-    uint16_t *out_confidence_basis_points, uint64_t *out_evidence_count,
-    pp_error_t **out_error);
-PP_API pp_error_code_t pp_resolution_evidence_get(
-    const pp_resolution_set_t *resolutions, uint64_t resolution_index,
-    uint64_t evidence_index, pp_evidence_kind_t *out_kind,
-    const char **out_detail, pp_error_t **out_error);
-PP_API pp_error_code_t pp_resolution_candidate_evidence_get(
-    const pp_resolution_set_t *resolutions, uint64_t resolution_index,
-    uint64_t candidate_index, uint64_t evidence_index,
-    pp_evidence_kind_t *out_kind, const char **out_detail,
-    pp_error_t **out_error);
 PP_API void pp_resolution_set_release(pp_resolution_set_t *resolutions);
 /* Only one transaction may be open for a project state. The transaction keeps
  * that state alive independently of the project handle. */

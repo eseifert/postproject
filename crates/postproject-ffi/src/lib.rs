@@ -44,12 +44,12 @@ const PP_ERROR_FINGERPRINT: u32 = 9;
 const PP_ERROR_UNSUPPORTED: u32 = 10;
 const PP_ERROR_INTERNAL: u32 = 255;
 
-const PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATOR: u32 = 1;
-const PP_RESOLUTION_RESOLVED_EXACT: u32 = 2;
-const PP_RESOLUTION_RESOLVED_PROBABLE: u32 = 3;
-const PP_RESOLUTION_MISSING: u32 = 4;
-const PP_RESOLUTION_AMBIGUOUS: u32 = 5;
-const PP_RESOLUTION_ERROR: u32 = 6;
+const PP_RESOURCE_ONLINE_AT_KNOWN_LOCATOR: u32 = 1;
+const PP_RESOURCE_RESOLVED_EXACT: u32 = 2;
+const PP_RESOURCE_RESOLVED_PROBABLE: u32 = 3;
+const PP_RESOURCE_OFFLINE: u32 = 4;
+const PP_RESOURCE_AMBIGUOUS: u32 = 5;
+const PP_RESOURCE_RESOLUTION_ERROR: u32 = 6;
 
 const PP_AVAILABILITY_ONLINE: u32 = 1;
 const PP_AVAILABILITY_PARTIAL: u32 = 2;
@@ -80,7 +80,7 @@ const PP_OBJECT_RESOURCE: u32 = 4;
 const PP_OBJECT_ACTIVITY: u32 = 5;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 4;
+pub const ABI_VERSION: u32 = 5;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -1152,29 +1152,6 @@ pub unsafe extern "C" fn pp_project_resolve_asset(
 ///
 /// `resolutions` must be null or a live handle returned by this library.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_resolution_set_count(resolutions: *const PpResolutionSet) -> u64 {
-    catch_unwind(AssertUnwindSafe(|| {
-        // SAFETY: A non-null pointer is live for the duration of this call by
-        // the caller contract and is only borrowed.
-        unsafe { resolutions.as_ref() }.map_or(0, |set| {
-            let count: usize = set
-                .representations
-                .iter()
-                .map(|resolution| resolution.resources.len())
-                .sum();
-            u64::try_from(count).unwrap_or(u64::MAX)
-        })
-    }))
-    .unwrap_or(0)
-}
-
-/// Returns the number of representation results in a resolution set.
-/// Null input returns zero.
-///
-/// # Safety
-///
-/// `resolutions` must be null or a live handle returned by this library.
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pp_resolution_set_representation_count(
     resolutions: *const PpResolutionSet,
 ) -> u64 {
@@ -1429,153 +1406,6 @@ pub unsafe extern "C" fn pp_resolution_set_get_candidate_evidence(
             let resource =
                 resource_resolution_at(resolutions, representation_index, resource_index)?;
             let candidate = item_at(&resource.candidates, candidate_index, "candidate")?;
-            write_evidence(&candidate.evidence, evidence_index, out_kind, out_detail)
-        })
-    }
-}
-
-/// Reads one representation-level resolution result.
-///
-/// # Safety
-///
-/// `resolutions` must be live. All value outputs must be writable and
-/// `out_error` may be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_resolution_set_get(
-    resolutions: *const PpResolutionSet,
-    resolution_index: u64,
-    out_representation_id: *mut PpUuid,
-    out_resource_id: *mut PpUuid,
-    out_state: *mut u32,
-    out_candidate_count: *mut u64,
-    out_evidence_count: *mut u64,
-    out_error: *mut *mut PpError,
-) -> u32 {
-    // SAFETY: Outputs are initialized and validated before use; the input
-    // handle must remain live according to the caller contract.
-    unsafe {
-        initialize_uuid(out_representation_id);
-        initialize_uuid(out_resource_id);
-        initialize_value(out_state, 0);
-        initialize_value(out_candidate_count, 0);
-        initialize_value(out_evidence_count, 0);
-        ffi_call(out_error, || {
-            require_output(out_representation_id, "out_representation_id")?;
-            require_output(out_resource_id, "out_resource_id")?;
-            require_output(out_state, "out_state")?;
-            require_output(out_candidate_count, "out_candidate_count")?;
-            require_output(out_evidence_count, "out_evidence_count")?;
-            let (representation, resolution) = resolution_at(resolutions, resolution_index)?;
-            out_representation_id.write(PpUuid {
-                bytes: representation.representation_id.into_bytes(),
-            });
-            out_resource_id.write(PpUuid {
-                bytes: resolution.resource_id.into_bytes(),
-            });
-            out_state.write(resolution.state);
-            out_candidate_count.write(length_as_u64(resolution.candidates.len())?);
-            out_evidence_count.write(length_as_u64(resolution.evidence.len())?);
-            Ok(())
-        })
-    }
-}
-
-/// Reads one candidate from a representation-level resolution result.
-///
-/// `out_uri` receives a borrowed NUL-terminated UTF-8 string that remains valid
-/// until the resolution set is released.
-///
-/// # Safety
-///
-/// `resolutions` must be live. All outputs must be writable and `out_error` may
-/// be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_resolution_candidate_get(
-    resolutions: *const PpResolutionSet,
-    resolution_index: u64,
-    candidate_index: u64,
-    out_uri: *mut *const c_char,
-    out_confidence_basis_points: *mut u16,
-    out_evidence_count: *mut u64,
-    out_error: *mut *mut PpError,
-) -> u32 {
-    // SAFETY: Outputs are initialized and validated before use; the input
-    // handle must remain live according to the caller contract.
-    unsafe {
-        initialize_const_output(out_uri);
-        initialize_value(out_confidence_basis_points, 0);
-        initialize_value(out_evidence_count, 0);
-        ffi_call(out_error, || {
-            require_output(out_uri, "out_uri")?;
-            require_output(out_confidence_basis_points, "out_confidence_basis_points")?;
-            require_output(out_evidence_count, "out_evidence_count")?;
-            let (_, resolution) = resolution_at(resolutions, resolution_index)?;
-            let candidate = item_at(&resolution.candidates, candidate_index, "candidate")?;
-            out_uri.write(candidate.uri.as_ptr());
-            out_confidence_basis_points.write(candidate.confidence);
-            out_evidence_count.write(length_as_u64(candidate.evidence.len())?);
-            Ok(())
-        })
-    }
-}
-
-/// Reads representation-level evidence from a resolution result.
-///
-/// `out_detail` receives null or a borrowed NUL-terminated UTF-8 string valid
-/// until the resolution set is released.
-///
-/// # Safety
-///
-/// `resolutions` must be live. Outputs must be writable and `out_error` may be
-/// null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_resolution_evidence_get(
-    resolutions: *const PpResolutionSet,
-    resolution_index: u64,
-    evidence_index: u64,
-    out_kind: *mut u32,
-    out_detail: *mut *const c_char,
-    out_error: *mut *mut PpError,
-) -> u32 {
-    // SAFETY: Initializes outputs, then delegates to the shared accessor after
-    // validating the live handle.
-    unsafe {
-        initialize_value(out_kind, 0);
-        initialize_const_output(out_detail);
-        ffi_call(out_error, || {
-            let (_, resolution) = resolution_at(resolutions, resolution_index)?;
-            write_evidence(&resolution.evidence, evidence_index, out_kind, out_detail)
-        })
-    }
-}
-
-/// Reads candidate-level evidence from a resolution result.
-///
-/// `out_detail` receives null or a borrowed NUL-terminated UTF-8 string valid
-/// until the resolution set is released.
-///
-/// # Safety
-///
-/// `resolutions` must be live. Outputs must be writable and `out_error` may be
-/// null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_resolution_candidate_evidence_get(
-    resolutions: *const PpResolutionSet,
-    resolution_index: u64,
-    candidate_index: u64,
-    evidence_index: u64,
-    out_kind: *mut u32,
-    out_detail: *mut *const c_char,
-    out_error: *mut *mut PpError,
-) -> u32 {
-    // SAFETY: Initializes outputs, then delegates to the shared accessor after
-    // validating the live handle.
-    unsafe {
-        initialize_value(out_kind, 0);
-        initialize_const_output(out_detail);
-        ffi_call(out_error, || {
-            let (_, resolution) = resolution_at(resolutions, resolution_index)?;
-            let candidate = item_at(&resolution.candidates, candidate_index, "candidate")?;
             write_evidence(&candidate.evidence, evidence_index, out_kind, out_detail)
         })
     }
@@ -2311,27 +2141,6 @@ unsafe fn resource_resolution_at<'a>(
     )
 }
 
-unsafe fn resolution_at<'a>(
-    resolutions: *const PpResolutionSet,
-    index: u64,
-) -> Result<(&'a AbiRepresentationResolution, &'a AbiResolution), Error> {
-    // SAFETY: Exported callers guarantee a non-null handle remains live for the
-    // complete call. The reference never escapes an exported operation.
-    let resolutions = unsafe { resolutions.as_ref() }
-        .ok_or_else(|| invalid_argument("resolutions must not be null"))?;
-    let mut index =
-        usize::try_from(index).map_err(|_| invalid_argument("resolution index is out of range"))?;
-    for representation in &resolutions.representations {
-        if index < representation.resources.len() {
-            return Ok((representation, &representation.resources[index]));
-        }
-        index -= representation.resources.len();
-    }
-    Err(invalid_argument(format!(
-        "resolution index {index} is out of range"
-    )))
-}
-
 fn item_at<'a, T>(items: &'a [T], index: u64, label: &str) -> Result<&'a T, Error> {
     let index = usize::try_from(index)
         .map_err(|_| invalid_argument(format!("{label} index is out of range")))?;
@@ -2437,12 +2246,12 @@ impl TryFrom<ExternalIdentifier> for AbiExternalIdentifier {
 
 const fn resolution_state(state: ResourceResolutionState) -> u32 {
     match state {
-        ResourceResolutionState::OnlineAtKnownLocator => PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATOR,
-        ResourceResolutionState::ResolvedExact => PP_RESOLUTION_RESOLVED_EXACT,
-        ResourceResolutionState::ResolvedProbable => PP_RESOLUTION_RESOLVED_PROBABLE,
-        ResourceResolutionState::Offline => PP_RESOLUTION_MISSING,
-        ResourceResolutionState::Ambiguous => PP_RESOLUTION_AMBIGUOUS,
-        ResourceResolutionState::Error => PP_RESOLUTION_ERROR,
+        ResourceResolutionState::OnlineAtKnownLocator => PP_RESOURCE_ONLINE_AT_KNOWN_LOCATOR,
+        ResourceResolutionState::ResolvedExact => PP_RESOURCE_RESOLVED_EXACT,
+        ResourceResolutionState::ResolvedProbable => PP_RESOURCE_RESOLVED_PROBABLE,
+        ResourceResolutionState::Offline => PP_RESOURCE_OFFLINE,
+        ResourceResolutionState::Ambiguous => PP_RESOURCE_AMBIGUOUS,
+        ResourceResolutionState::Error => PP_RESOURCE_RESOLUTION_ERROR,
         _ => 0,
     }
 }
@@ -2683,31 +2492,28 @@ mod tests {
     fn resolution_accessors_reject_out_of_range_indices() {
         let resolutions = Box::into_raw(Box::new(PpResolutionSet::new(Vec::new())));
         let mut representation_id = PpUuid { bytes: [9; 16] };
-        let mut resource_id = PpUuid { bytes: [8; 16] };
-        let mut state = 99;
-        let mut candidate_count = 99;
-        let mut evidence_count = 99;
+        let mut availability = 99;
+        let mut resource_count = 99;
+        let mut issue_count = 99;
         let mut error = ptr::null_mut();
 
         // SAFETY: The handle is live and every output is writable.
         let status = unsafe {
-            pp_resolution_set_get(
+            pp_resolution_set_get_representation(
                 resolutions,
                 0,
                 &raw mut representation_id,
-                &raw mut resource_id,
-                &raw mut state,
-                &raw mut candidate_count,
-                &raw mut evidence_count,
+                &raw mut availability,
+                &raw mut resource_count,
+                &raw mut issue_count,
                 &raw mut error,
             )
         };
         assert_eq!(status, PP_ERROR_INVALID_ARGUMENT);
         assert_eq!(representation_id.bytes, [0; 16]);
-        assert_eq!(resource_id.bytes, [0; 16]);
-        assert_eq!(state, 0);
-        assert_eq!(candidate_count, 0);
-        assert_eq!(evidence_count, 0);
+        assert_eq!(availability, 0);
+        assert_eq!(resource_count, 0);
+        assert_eq!(issue_count, 0);
         assert!(!error.is_null());
 
         // SAFETY: Both handles are live and released exactly once.
@@ -2716,7 +2522,10 @@ mod tests {
             pp_resolution_set_release(resolutions);
         }
         // SAFETY: Null is explicitly accepted by the count accessor.
-        assert_eq!(unsafe { pp_resolution_set_count(ptr::null()) }, 0);
+        assert_eq!(
+            unsafe { pp_resolution_set_representation_count(ptr::null()) },
+            0
+        );
     }
 
     #[test]
