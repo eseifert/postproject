@@ -49,12 +49,13 @@ and transaction workflows against the release shared library.
 
 The CLI integration test creates a project, imports media, removes the known
 file, discovers two byte-identical candidates under a configured root, verifies
-an explicit ambiguous result, confirms one candidate, and reopens the project to
-observe the persisted location. Commands exchange JSON in this test so the
-machine-readable contract is exercised alongside the domain workflow.
+an explicit ambiguous representation and resource result, confirms one
+candidate, and reopens the project to observe the persisted locator. Commands
+exchange JSON in this test so the machine-readable contract is exercised
+alongside the domain workflow.
 
 The storage E2E test moves a three-file media directory, verifies every known
-location is offline, resolves two unique files, refuses to choose between two
+locator is offline, resolves two unique resources, refuses to choose between two
 byte-identical candidates for the third, explicitly confirms all choices in one
-transaction, reopens the project, and resolves from persisted locations with no
+transaction, reopens the project, and resolves from persisted locators with no
 roots supplied.

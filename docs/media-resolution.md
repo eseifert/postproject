@@ -20,24 +20,32 @@ separate domain and may use different strategies.
 
 ## Resolution policy
 
-Resolution checks known locations first and scans configured roots only when
-necessary. Traversal is deterministic, does not follow symlinks, defaults to a
-depth limit of 64 and an entry limit of 100,000, and reports a structured error
-result when a bound or filesystem operation prevents a safe answer.
+Resource resolution checks known locators first and scans configured roots only
+when necessary. Traversal is deterministic, does not follow symlinks, defaults
+to a depth limit of 64 and an entry limit of 100,000, and reports a structured
+error result when a bound or filesystem operation prevents a safe answer.
 
 Discovery, cheap file-size filtering, and fingerprint verification are separate
 stages. Full hashes produce exact resolution; sampled fingerprints produce
 probable resolution. If no fingerprint exists, a matching filename is required
 and file size strengthens the evidence. Equally credible candidates produce
-`Ambiguous` and require explicit confirmation. Confirmation adds a new location
-inside a project transaction; the resolver itself never mutates project state.
+`Ambiguous` and require explicit confirmation. Confirmation adds a new locator
+for the selected resource inside a project transaction; the resolver itself
+never mutates project state.
+
+Representation availability is then aggregated from its content structure.
+Every required member online is `Online`; a mix of online and offline required
+members is `Partial`; no resolvable required members is `Offline`; and an
+ambiguous required member makes the representation `Ambiguous`. Optional
+package members produce diagnostics without reducing availability. Known
+missing image-sequence frames make an otherwise online sequence `Partial`, with
+the exact frames retained in the diagnostic.
 
 Current scans are intentionally uncached. Overlapping roots are de-duplicated by
 canonical file URI, but each resolve operation walks enabled roots afresh. A later
 filesystem index can replace discovery without changing result semantics.
 
-Rust callers receive the domain `Resolution` values directly. Native C callers
-receive an opaque resolution set and inspect state, candidate confidence, URI,
-and both result-level and candidate-level evidence through bounded accessors.
-The C++17 wrapper copies the same information into value objects. Native
-confirmation remains a separate explicit transaction operation.
+Rust callers receive `ResourceResolution` values and aggregate them into a
+`RepresentationResolution`. The CLI emits one representation result containing
+ordered resource results and availability issues. Native confirmation remains a
+separate explicit transaction operation.

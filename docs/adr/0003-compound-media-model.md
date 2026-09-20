@@ -41,9 +41,12 @@ A representation may additionally own a representation-level fingerprint over
 its canonical structure. Resource and representation fingerprints are distinct
 domains even when they use the same digest algorithm.
 
-Resolution evaluates the complete content structure and reports one of
-`Online`, `Partial`, `Offline`, or `Ambiguous`, with resource-level diagnostics.
-It never silently treats one available member as a complete representation.
+Resolution evaluates resources independently, then aggregates the complete
+content structure as `Online`, `Partial`, `Offline`, or `Ambiguous`, with an
+additional `Error` outcome when required discovery cannot complete safely.
+Resource- and frame-level diagnostics explain the aggregate. Optional package
+members do not reduce availability. The resolver never silently treats one
+available required member as a complete representation.
 
 ## Consequences
 
