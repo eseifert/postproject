@@ -250,6 +250,14 @@ enum ActivityCommand {
     Add(ActivityAddArgs),
     /// List production activities with their inputs and outputs.
     List(ProjectArgs),
+    /// List activities that produced a representation.
+    Producing(ActivityRepresentationArgs),
+    /// List activities that consume a representation.
+    Consuming(ActivityRepresentationArgs),
+    /// List every transitive provenance ancestor of a representation.
+    Ancestors(ActivityRepresentationArgs),
+    /// List every transitive provenance descendant of a representation.
+    Descendants(ActivityRepresentationArgs),
 }
 
 #[derive(Debug, Args)]
@@ -267,6 +275,12 @@ struct ActivityAddArgs {
         required = true
     )]
     outputs: Vec<ActivityEdgeArg>,
+}
+
+#[derive(Debug, Args)]
+struct ActivityRepresentationArgs {
+    project: PathBuf,
+    representation_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -505,6 +519,23 @@ struct ActivityEdgeView {
     role: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+struct RepresentationRefView {
+    representation_id: String,
+}
+
+#[derive(Clone, Copy)]
+enum ActivityLookup {
+    Producing,
+    Consuming,
+}
+
+#[derive(Clone, Copy)]
+enum ProvenanceDirection {
+    Ancestors,
+    Descendants,
+}
+
 fn main() -> ExitCode {
     match execute(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -542,6 +573,18 @@ fn execute(cli: Cli) -> Result<()> {
         Command::Activity(args) => match args.command {
             ActivityCommand::Add(args) => activity_add(args, cli.json),
             ActivityCommand::List(args) => activity_list(&args, cli.json),
+            ActivityCommand::Producing(args) => {
+                activity_lookup(&args, ActivityLookup::Producing, cli.json)
+            }
+            ActivityCommand::Consuming(args) => {
+                activity_lookup(&args, ActivityLookup::Consuming, cli.json)
+            }
+            ActivityCommand::Ancestors(args) => {
+                activity_relatives(&args, ProvenanceDirection::Ancestors, cli.json)
+            }
+            ActivityCommand::Descendants(args) => {
+                activity_relatives(&args, ProvenanceDirection::Descendants, cli.json)
+            }
         },
     }
 }
@@ -860,6 +903,27 @@ fn activity_list(args: &ProjectArgs, json: bool) -> Result<()> {
         .map(activity_view)
         .collect();
 
+    print_activity_views(&views, json)
+}
+
+fn activity_lookup(
+    args: &ActivityRepresentationArgs,
+    lookup: ActivityLookup,
+    json: bool,
+) -> Result<()> {
+    let representation_id = parse_representation_id(&args.representation_id)?;
+    let project = SqliteProject::open(&args.project).context("open project")?;
+    let activities = match lookup {
+        ActivityLookup::Producing => project.activities_producing(representation_id),
+        ActivityLookup::Consuming => project.activities_consuming(representation_id),
+    }
+    .context("query representation activities")?;
+    let views: Vec<_> = activities.iter().map(activity_view).collect();
+
+    print_activity_views(&views, json)
+}
+
+fn print_activity_views(views: &[ActivityView], json: bool) -> Result<()> {
     if json {
         print_json(&views)
     } else {
@@ -871,6 +935,35 @@ fn activity_list(args: &ProjectArgs, json: bool) -> Result<()> {
                 view.inputs.len(),
                 view.outputs.len()
             );
+        }
+        Ok(())
+    }
+}
+
+fn activity_relatives(
+    args: &ActivityRepresentationArgs,
+    direction: ProvenanceDirection,
+    json: bool,
+) -> Result<()> {
+    let representation_id = parse_representation_id(&args.representation_id)?;
+    let project = SqliteProject::open(&args.project).context("open project")?;
+    let representation_ids = match direction {
+        ProvenanceDirection::Ancestors => project.ancestors(representation_id),
+        ProvenanceDirection::Descendants => project.descendants(representation_id),
+    }
+    .context("traverse provenance")?;
+    let views: Vec<_> = representation_ids
+        .into_iter()
+        .map(|id| RepresentationRefView {
+            representation_id: id.to_string(),
+        })
+        .collect();
+
+    if json {
+        print_json(&views)
+    } else {
+        for view in views {
+            println!("{}", view.representation_id);
         }
         Ok(())
     }
@@ -1057,6 +1150,10 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
 
 fn parse_asset_id(value: &str) -> Result<AssetId> {
     AssetId::from_str(value).context("parse asset ID")
+}
+
+fn parse_representation_id(value: &str) -> Result<RepresentationId> {
+    RepresentationId::from_str(value).context("parse representation ID")
 }
 
 fn parse_identifier_target(kind: IdentifierTargetKind, value: &str) -> Result<ObjectRef> {
