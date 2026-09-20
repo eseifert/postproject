@@ -7,9 +7,9 @@ use std::{
 };
 
 use postproject_core::{
-    Confidence, Error, ErrorKind, EvidenceKind, FileFacts, Locator, MediaRoot, RepresentationId,
-    Resolution, ResolutionCandidate, ResolutionEvidence, ResolutionState, Resource,
-    ResourceFingerprint, ResourceResolution, ResourceResolutionState, Result,
+    Confidence, Error, ErrorKind, EvidenceKind, FileFacts, Locator, MediaRoot, ResolutionCandidate,
+    ResolutionEvidence, Resource, ResourceFingerprint, ResourceResolution, ResourceResolutionState,
+    Result,
 };
 use url::Url;
 use walkdir::WalkDir;
@@ -143,35 +143,6 @@ impl MediaResolver {
             Vec::new()
         };
         ResourceResolution::new(resource.id(), state, candidates, evidence)
-    }
-
-    /// Resolves one resource using a representation-keyed result.
-    ///
-    /// # Errors
-    ///
-    /// Returns the errors documented by [`Self::resolve_resource`].
-    pub fn resolve(
-        &self,
-        representation_id: RepresentationId,
-        resource: &Resource,
-        known_locators: &[Locator],
-        media_roots: &[MediaRoot],
-    ) -> Result<Resolution> {
-        let resource = self.resolve_resource(resource, known_locators, media_roots)?;
-        let state = match resource.state() {
-            ResourceResolutionState::OnlineAtKnownLocator => ResolutionState::OnlineAtKnownLocation,
-            ResourceResolutionState::ResolvedExact => ResolutionState::ResolvedExact,
-            ResourceResolutionState::ResolvedProbable => ResolutionState::ResolvedProbable,
-            ResourceResolutionState::Offline => ResolutionState::Missing,
-            ResourceResolutionState::Ambiguous => ResolutionState::Ambiguous,
-            _ => ResolutionState::Error,
-        };
-        Resolution::new(
-            representation_id,
-            state,
-            resource.candidates().to_vec(),
-            resource.evidence().to_vec(),
-        )
     }
 
     fn discover(

@@ -142,101 +142,6 @@ impl ResolutionCandidate {
     }
 }
 
-/// The outcome category of a media-resolution attempt.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-#[non_exhaustive]
-pub enum ResolutionState {
-    /// A stored location remains online, so no scan was required.
-    OnlineAtKnownLocation,
-    /// One candidate has exact identity evidence.
-    ResolvedExact,
-    /// One candidate is credible but lacks exact verification.
-    ResolvedProbable,
-    /// No credible candidate was found.
-    Missing,
-    /// Multiple candidates are equally credible and require confirmation.
-    Ambiguous,
-    /// Candidate discovery or verification failed.
-    Error,
-}
-
-/// An explainable resolution result with deterministically ordered candidates.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Resolution {
-    representation_id: RepresentationId,
-    state: ResolutionState,
-    candidates: Vec<ResolutionCandidate>,
-    evidence: Vec<ResolutionEvidence>,
-}
-
-impl Resolution {
-    /// Creates a result and sorts candidates by descending confidence then URI.
-    ///
-    /// Ambiguous results require at least two candidates. Successful single-choice
-    /// states require exactly one. Missing and error results select no candidate.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ErrorKind::InvalidArgument`] when the candidate count is
-    /// inconsistent with `state`.
-    pub fn new(
-        representation_id: RepresentationId,
-        state: ResolutionState,
-        mut candidates: Vec<ResolutionCandidate>,
-        evidence: Vec<ResolutionEvidence>,
-    ) -> Result<Self> {
-        candidates.sort_by(|left, right| {
-            (Reverse(left.confidence), left.uri.as_str())
-                .cmp(&(Reverse(right.confidence), right.uri.as_str()))
-        });
-
-        let valid_count = match state {
-            ResolutionState::OnlineAtKnownLocation
-            | ResolutionState::ResolvedExact
-            | ResolutionState::ResolvedProbable => candidates.len() == 1,
-            ResolutionState::Missing | ResolutionState::Error => candidates.is_empty(),
-            ResolutionState::Ambiguous => candidates.len() >= 2,
-        };
-        if !valid_count {
-            return Err(Error::new(
-                ErrorKind::InvalidArgument,
-                "candidate count is inconsistent with resolution state",
-            ));
-        }
-
-        Ok(Self {
-            representation_id,
-            state,
-            candidates,
-            evidence,
-        })
-    }
-
-    /// Returns the representation that was resolved.
-    #[must_use]
-    pub const fn representation_id(&self) -> RepresentationId {
-        self.representation_id
-    }
-
-    /// Returns the outcome category.
-    #[must_use]
-    pub const fn state(&self) -> ResolutionState {
-        self.state
-    }
-
-    /// Returns candidates in deterministic best-first order.
-    #[must_use]
-    pub fn candidates(&self) -> &[ResolutionCandidate] {
-        &self.candidates
-    }
-
-    /// Returns result-wide evidence and diagnostics.
-    #[must_use]
-    pub fn evidence(&self) -> &[ResolutionEvidence] {
-        &self.evidence
-    }
-}
-
 /// The outcome of resolving one storage resource.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
@@ -620,9 +525,9 @@ mod tests {
 
     #[test]
     fn candidates_are_sorted_deterministically() {
-        let resolution = Resolution::new(
-            RepresentationId::new(),
-            ResolutionState::Ambiguous,
+        let resolution = ResourceResolution::new(
+            ResourceId::new(),
+            ResourceResolutionState::Ambiguous,
             vec![
                 candidate("file:///z", 8_000),
                 candidate("file:///b", 9_000),
@@ -642,9 +547,9 @@ mod tests {
 
     #[test]
     fn ambiguity_cannot_silently_select_one_candidate() {
-        let error = Resolution::new(
-            RepresentationId::new(),
-            ResolutionState::Ambiguous,
+        let error = ResourceResolution::new(
+            ResourceId::new(),
+            ResourceResolutionState::Ambiguous,
             vec![candidate("file:///only", 10_000)],
             Vec::new(),
         )
@@ -778,16 +683,16 @@ mod tests {
             left_score in 0_u16..=10_000,
             right_score in 0_u16..=10_000,
         ) {
-            let id = RepresentationId::from_bytes([4; 16]);
-            let forward = Resolution::new(
+            let id = ResourceId::from_bytes([4; 16]);
+            let forward = ResourceResolution::new(
                 id,
-                ResolutionState::Ambiguous,
+                ResourceResolutionState::Ambiguous,
                 vec![candidate("file:///a", left_score), candidate("file:///b", right_score)],
                 Vec::new(),
             ).expect("valid resolution");
-            let reverse = Resolution::new(
+            let reverse = ResourceResolution::new(
                 id,
-                ResolutionState::Ambiguous,
+                ResourceResolutionState::Ambiguous,
                 vec![candidate("file:///b", right_score), candidate("file:///a", left_score)],
                 Vec::new(),
             ).expect("valid resolution");

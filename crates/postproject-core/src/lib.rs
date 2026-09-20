@@ -44,8 +44,8 @@ pub use model::{
 };
 pub use resolution::{
     AvailabilityIssue, AvailabilityIssueKind, Confidence, EvidenceKind, RepresentationAvailability,
-    RepresentationResolution, Resolution, ResolutionCandidate, ResolutionEvidence, ResolutionState,
-    ResourceResolution, ResourceResolutionState,
+    RepresentationResolution, ResolutionCandidate, ResolutionEvidence, ResourceResolution,
+    ResourceResolutionState,
 };
 pub use resource::{
     FileFacts, Locator, LocatorAvailability, RepresentationFingerprint, Resource,
