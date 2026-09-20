@@ -23,10 +23,10 @@ use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     AssetId, AvailabilityIssue, AvailabilityIssueKind, Error, ErrorKind, EvidenceKind,
     ExternalIdentifier, IdentifierScheme, Locator, MAX_ACTIVITY_EDGES, MediaRoot, MetadataProperty,
-    MetadataValue, ObjectRef, OriginalMediaImport, ProjectId, PropertyId,
+    MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProjectId, PropertyId,
     RepresentationAvailability, RepresentationId, RepresentationResolution, ResolutionEvidence,
-    ResourceId, ResourceResolutionState, RevisionId, Timestamp, ToolIdentity, TransactionLifecycle,
-    VocabularyId,
+    ResourceId, ResourceResolutionState, RevisionContext, RevisionId, Timestamp, ToolIdentity,
+    TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
@@ -187,6 +187,7 @@ struct ProjectState {
 pub struct PpTransaction {
     state: Rc<ProjectState>,
     lifecycle: TransactionLifecycle,
+    revision_context: RevisionContext,
     mutations: Vec<StagedMutation>,
 }
 
@@ -2222,8 +2223,59 @@ pub unsafe extern "C" fn pp_project_begin_transaction(
             out_transaction.write(Box::into_raw(Box::new(PpTransaction {
                 state: Rc::clone(&project.state),
                 lifecycle: TransactionLifecycle::new(),
+                revision_context: RevisionContext::default(),
                 mutations: Vec::new(),
             })));
+            Ok(())
+        })
+    }
+}
+
+/// Sets the origin and message attached to this transaction's future revision.
+///
+/// `origin_name` and `message` may be null. Origin version and URI may be null,
+/// but require a non-null origin name when supplied.
+///
+/// # Safety
+///
+/// `transaction` must be live. Every non-null string must be NUL-terminated
+/// UTF-8 for the duration of the call. `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_set_revision_context(
+    transaction: *mut PpTransaction,
+    origin_name: *const c_char,
+    origin_version: *const c_char,
+    origin_uri: *const c_char,
+    message: *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated and copied before this call returns.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let origin_name = optional_utf8(origin_name, "origin_name")?;
+            let origin_version = optional_utf8(origin_version, "origin_version")?;
+            let origin_uri = optional_utf8(origin_uri, "origin_uri")?;
+            let origin = match origin_name {
+                Some(name) => Some(OriginIdentity::new(
+                    name,
+                    origin_version.map(str::to_owned),
+                    origin_uri.map(str::to_owned),
+                )?),
+                None if origin_version.is_none() && origin_uri.is_none() => None,
+                None => {
+                    return Err(invalid_argument(
+                        "origin_version and origin_uri require origin_name",
+                    ));
+                }
+            };
+            transaction.revision_context = RevisionContext::new(
+                origin,
+                optional_utf8(message, "message")?.map(str::to_owned),
+            )?;
             Ok(())
         })
     }
@@ -3347,6 +3399,7 @@ impl PpTransaction {
                 .try_borrow_mut()
                 .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
             let mut transaction = project.begin_transaction()?;
+            transaction.set_revision_context(self.revision_context.clone())?;
             for mutation in &self.mutations {
                 match mutation {
                     StagedMutation::Import(import) => transaction.import_original(import)?,

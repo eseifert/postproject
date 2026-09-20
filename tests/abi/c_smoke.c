@@ -95,6 +95,14 @@ int main(int argc, char **argv) {
     pp_error_release(error);
     return 11;
   }
+  status = pp_transaction_set_revision_context(
+      transaction, "C smoke", "1.0", NULL, "Import fixture", &error);
+  if (status != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 42;
+  }
   status = pp_transaction_import_media(transaction, media_path, "C asset",
                                        &asset_id, &error);
   if (status != PP_OK || uuid_is_zero(&asset_id)) {
@@ -165,8 +173,12 @@ int main(int argc, char **argv) {
           &revision_origin_uri, &revision_message, &error) != PP_OK ||
       uuid_is_zero(&revision_id) || uuid_is_zero(&revision_transaction_id) ||
       revision_sequence != UINT64_C(1) || revision_committed_at == 0 ||
-      revision_origin_name != NULL || revision_origin_version != NULL ||
-      revision_origin_uri != NULL || revision_message != NULL) {
+      revision_origin_name == NULL || revision_origin_version == NULL ||
+      revision_message == NULL ||
+      strcmp(revision_origin_name, "C smoke") != 0 ||
+      strcmp(revision_origin_version, "1.0") != 0 ||
+      revision_origin_uri != NULL ||
+      strcmp(revision_message, "Import fixture") != 0) {
     pp_revision_set_release(revisions);
     pp_project_release(project);
     pp_error_release(error);

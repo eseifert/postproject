@@ -374,6 +374,10 @@ PP_API void pp_project_release(pp_project_t *project);
 
 /* Mutations remain in memory until commit. Input strings are borrowed UTF-8
  * without embedded NUL. Nullable names/labels represent absent values. */
+PP_API pp_error_code_t pp_transaction_set_revision_context(
+    pp_transaction_t *transaction, const char *origin_name,
+    const char *origin_version, const char *origin_uri, const char *message,
+    pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_import_media(
     pp_transaction_t *transaction, const char *path, const char *display_name,
     pp_uuid_t *out_asset_id, pp_error_t **out_error);

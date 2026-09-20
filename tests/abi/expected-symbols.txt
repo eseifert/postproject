@@ -78,3 +78,4 @@ pp_transaction_release
 pp_transaction_remove_external_identifier
 pp_transaction_remove_metadata_property
 pp_transaction_rollback
+pp_transaction_set_revision_context
