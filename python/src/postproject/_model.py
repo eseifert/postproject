@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TypeAlias
 from uuid import UUID
 
 
@@ -26,6 +27,36 @@ class AssetId(_TypedId):
     __slots__ = ()
 
 
+class RepresentationId(_TypedId):
+    """Stable identity of one usable asset representation."""
+
+    __slots__ = ()
+
+
+class ResourceId(_TypedId):
+    """Stable identity of one storage resource."""
+
+    __slots__ = ()
+
+
+class LocatorId(_TypedId):
+    """Stable identity of one resource locator."""
+
+    __slots__ = ()
+
+
+class MediaRootId(_TypedId):
+    """Stable identity of one configured media root."""
+
+    __slots__ = ()
+
+
+class ActivityId(_TypedId):
+    """Stable identity of one provenance activity."""
+
+    __slots__ = ()
+
+
 class RevisionId(_TypedId):
     """Stable identity of one committed revision."""
 
@@ -36,6 +67,28 @@ class TransactionId(_TypedId):
     """Stable identity of the transaction that produced a revision."""
 
     __slots__ = ()
+
+
+ObjectReference: TypeAlias = (
+    ProductionId | AssetId | RepresentationId | ResourceId | ActivityId
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalIdentifier:
+    """Opaque external identity preserved exactly as supplied."""
+
+    scheme: str
+    value: str
+    qualifier: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataProperty:
+    """Vocabulary-qualified metadata property identity."""
+
+    vocabulary: str
+    property: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,4 +118,3 @@ class Revision:
     committed_at_unix_micros: int
     origin: OriginIdentity | None
     message: str | None
-
