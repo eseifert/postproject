@@ -170,8 +170,12 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
         project.to_str().expect("UTF-8 project path"),
         asset_id,
     ]);
-    assert_eq!(ambiguous["resolutions"][0]["state"], "ambiguous");
-    let confirmed_uri = ambiguous["resolutions"][0]["candidates"][0]["uri"]
+    assert_eq!(ambiguous["resolutions"][0]["availability"], "ambiguous");
+    assert_eq!(
+        ambiguous["resolutions"][0]["resources"][0]["state"],
+        "ambiguous"
+    );
+    let confirmed_uri = ambiguous["resolutions"][0]["resources"][0]["candidates"][0]["uri"]
         .as_str()
         .expect("candidate URI");
 
@@ -191,9 +195,10 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
         project.to_str().expect("UTF-8 project path"),
         asset_id,
     ]);
+    assert_eq!(resolved["resolutions"][0]["availability"], "online");
     assert_eq!(
-        resolved["resolutions"][0]["state"],
-        "online_at_known_location"
+        resolved["resolutions"][0]["resources"][0]["state"],
+        "online_at_known_locator"
     );
 
     let shown = run_json(&[

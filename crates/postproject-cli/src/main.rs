@@ -7,11 +7,12 @@ use std::{path::PathBuf, process::ExitCode, str::FromStr};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
-    Asset, AssetId, EvidenceKind, ExternalIdentifier, IdentifierScheme, Locator,
-    LocatorAvailability, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
-    MetadataValueKind, ObjectRef, ProjectId, PropertyId, Representation, RepresentationId,
-    RepresentationKind, Resolution, ResolutionEvidence, ResolutionState, Resource, ResourceId,
-    VocabularyId,
+    Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, EvidenceKind, ExternalIdentifier,
+    IdentifierScheme, Locator, LocatorAvailability, MetadataAssertion, MetadataField,
+    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, ProjectId, PropertyId,
+    Representation, RepresentationAvailability, RepresentationId, RepresentationKind,
+    RepresentationResolution, ResolutionEvidence, Resource, ResourceId, ResourceResolution,
+    ResourceResolutionState, VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
@@ -318,9 +319,25 @@ struct ResolveView {
 #[derive(Debug, Serialize)]
 struct ResolutionView {
     representation_id: String,
+    availability: &'static str,
+    resources: Vec<ResourceResolutionView>,
+    issues: Vec<AvailabilityIssueView>,
+}
+
+#[derive(Debug, Serialize)]
+struct ResourceResolutionView {
+    resource_id: String,
     state: &'static str,
     candidates: Vec<CandidateView>,
     evidence: Vec<EvidenceView>,
+}
+
+#[derive(Debug, Serialize)]
+struct AvailabilityIssueView {
+    resource_id: String,
+    required: bool,
+    kind: &'static str,
+    frames: Vec<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -762,33 +779,37 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
         let resources = project
             .resources(representation.id())
             .context("load representation resources")?;
-        if resources.len() != 1 {
-            bail!("compound representation resolution is not exposed by this command yet");
+        let mut resource_resolutions = Vec::with_capacity(resources.len());
+        for resource in &resources {
+            let locators = project
+                .locators(resource.id())
+                .context("load resource locators")?;
+            resource_resolutions.push(
+                resolver
+                    .resolve_resource(resource, &locators, project.project().media_roots())
+                    .context("resolve representation resource")?,
+            );
         }
-        let resource = &resources[0];
-        let locators = project
-            .locators(resource.id())
-            .context("load resource locators")?;
-        let resolution = resolver
-            .resolve(
+        resolutions.push(
+            RepresentationResolution::aggregate(
                 representation.id(),
-                resource,
-                &locators,
-                project.project().media_roots(),
+                representation.content_structure(),
+                resource_resolutions,
             )
-            .context("resolve representation resource")?;
-        resolutions.push((resource.id(), resolution));
+            .context("aggregate representation availability")?,
+        );
     }
 
     if let Some(uri) = args.confirm.as_deref() {
         let matching: Vec<_> = resolutions
             .iter()
-            .flat_map(|(resource_id, resolution)| {
+            .flat_map(RepresentationResolution::resources)
+            .flat_map(|resolution| {
                 resolution
                     .candidates()
                     .iter()
                     .filter(move |candidate| candidate.uri() == uri)
-                    .map(move |_| *resource_id)
+                    .map(move |_| resolution.resource_id())
             })
             .collect();
         if matching.len() != 1 {
@@ -807,22 +828,25 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
 
     let view = ResolveView {
         asset_id: asset_id.to_string(),
-        resolutions: resolutions
-            .iter()
-            .map(|(_, resolution)| ResolutionView::from(resolution))
-            .collect(),
+        resolutions: resolutions.iter().map(ResolutionView::from).collect(),
         confirmed_uri: args.confirm,
     };
     if json {
         print_json(&view)
     } else {
         for resolution in &view.resolutions {
-            println!("{}: {}", resolution.representation_id, resolution.state);
-            for candidate in &resolution.candidates {
-                println!(
-                    "  {} ({} bp)",
-                    candidate.uri, candidate.confidence_basis_points
-                );
+            println!(
+                "{}: {}",
+                resolution.representation_id, resolution.availability
+            );
+            for resource in &resolution.resources {
+                println!("  {}: {}", resource.resource_id, resource.state);
+                for candidate in &resource.candidates {
+                    println!(
+                        "    {} ({} bp)",
+                        candidate.uri, candidate.confidence_basis_points
+                    );
+                }
             }
         }
         if let Some(uri) = &view.confirmed_uri {
@@ -1111,11 +1135,30 @@ impl From<&Locator> for LocatorView {
     }
 }
 
-impl From<&Resolution> for ResolutionView {
-    fn from(resolution: &Resolution) -> Self {
+impl From<&RepresentationResolution> for ResolutionView {
+    fn from(resolution: &RepresentationResolution) -> Self {
         Self {
             representation_id: resolution.representation_id().to_string(),
-            state: resolution_state(resolution.state()),
+            availability: representation_availability(resolution.availability()),
+            resources: resolution
+                .resources()
+                .iter()
+                .map(ResourceResolutionView::from)
+                .collect(),
+            issues: resolution
+                .issues()
+                .iter()
+                .map(AvailabilityIssueView::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<&ResourceResolution> for ResourceResolutionView {
+    fn from(resolution: &ResourceResolution) -> Self {
+        Self {
+            resource_id: resolution.resource_id().to_string(),
+            state: resource_resolution_state(resolution.state()),
             candidates: resolution
                 .candidates()
                 .iter()
@@ -1134,6 +1177,17 @@ impl From<&Resolution> for ResolutionView {
                 .iter()
                 .map(EvidenceView::from)
                 .collect(),
+        }
+    }
+}
+
+impl From<&AvailabilityIssue> for AvailabilityIssueView {
+    fn from(issue: &AvailabilityIssue) -> Self {
+        Self {
+            resource_id: issue.resource_id().to_string(),
+            required: issue.is_required(),
+            kind: availability_issue_kind(issue.kind()),
+            frames: issue.frames().to_vec(),
         }
     }
 }
@@ -1181,14 +1235,35 @@ const fn locator_availability(availability: LocatorAvailability) -> &'static str
     }
 }
 
-const fn resolution_state(state: ResolutionState) -> &'static str {
+const fn resource_resolution_state(state: ResourceResolutionState) -> &'static str {
     match state {
-        ResolutionState::OnlineAtKnownLocation => "online_at_known_location",
-        ResolutionState::ResolvedExact => "resolved_exact",
-        ResolutionState::ResolvedProbable => "resolved_probable",
-        ResolutionState::Missing => "missing",
-        ResolutionState::Ambiguous => "ambiguous",
-        ResolutionState::Error => "error",
+        ResourceResolutionState::OnlineAtKnownLocator => "online_at_known_locator",
+        ResourceResolutionState::ResolvedExact => "resolved_exact",
+        ResourceResolutionState::ResolvedProbable => "resolved_probable",
+        ResourceResolutionState::Offline => "offline",
+        ResourceResolutionState::Ambiguous => "ambiguous",
+        ResourceResolutionState::Error => "error",
+        _ => "unknown",
+    }
+}
+
+const fn representation_availability(state: RepresentationAvailability) -> &'static str {
+    match state {
+        RepresentationAvailability::Online => "online",
+        RepresentationAvailability::Partial => "partial",
+        RepresentationAvailability::Offline => "offline",
+        RepresentationAvailability::Ambiguous => "ambiguous",
+        RepresentationAvailability::Error => "error",
+        _ => "unknown",
+    }
+}
+
+const fn availability_issue_kind(kind: AvailabilityIssueKind) -> &'static str {
+    match kind {
+        AvailabilityIssueKind::OfflineResource => "offline_resource",
+        AvailabilityIssueKind::AmbiguousResource => "ambiguous_resource",
+        AvailabilityIssueKind::ResourceError => "resource_error",
+        AvailabilityIssueKind::MissingFrames => "missing_frames",
         _ => "unknown",
     }
 }
