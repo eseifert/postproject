@@ -21,8 +21,8 @@ int main(int argc, char **argv) {
       return 3;
     }
 
-    auto project = postproject::Project::create(path, "C++ smoke test");
-    const auto created_id = project.id();
+    auto production = postproject::Production::create(path, "C++ smoke test");
+    const auto created_id = production.id();
     const std::string media_path = path + ".media";
     {
       std::ofstream media(media_path, std::ios::binary);
@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
         return 10;
       }
     }
-    auto transaction = project.beginTransaction();
+    auto transaction = production.beginTransaction();
     transaction.setRevisionContext(
         {postproject::OriginIdentity{"C++ smoke", std::string("1.0"),
                                      std::nullopt},
@@ -45,8 +45,8 @@ int main(int argc, char **argv) {
     static_cast<void>(transaction.addMediaRoot(
         std::filesystem::path(path).parent_path().string(), "fixtures"));
     transaction.commit();
-    const auto latest_revision = project.latestRevision();
-    const auto revision_page = project.changesSince(0, 1);
+    const auto latest_revision = production.latestRevision();
+    const auto revision_page = production.changesSince(0, 1);
     if (!latest_revision.has_value() || latest_revision->sequence != 1 ||
         !latest_revision->origin.has_value() ||
         latest_revision->origin->name != "C++ smoke" ||
@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
         revision_page[0].id != latest_revision->id) {
       return 15;
     }
-    const auto revision_events = project.revisionEvents(latest_revision->id);
+    const auto revision_events = production.revisionEvents(latest_revision->id);
     if (revision_events.size() != 7 || revision_events[0].position != 0 ||
         !std::holds_alternative<postproject::AssetImportedEvent>(
             revision_events[0].payload) ||
@@ -71,12 +71,12 @@ int main(int argc, char **argv) {
             revision_events[6].payload)) {
       return 16;
     }
-    if (!project.containsAsset(asset_id)) {
+    if (!production.containsAsset(asset_id)) {
       return 8;
     }
-    const auto identifiers = project.externalIdentifiers(asset_ref);
+    const auto identifiers = production.externalIdentifiers(asset_ref);
     const auto found =
-        project.findByExternalIdentifier("com.example.asset", "asset-42");
+        production.findByExternalIdentifier("com.example.asset", "asset-42");
     if (identifiers.size() != 1 ||
         identifiers[0].scheme != external_id.scheme ||
         identifiers[0].value != external_id.value ||
@@ -85,16 +85,16 @@ int main(int argc, char **argv) {
       return 13;
     }
 
-    auto rolled_back = project.beginTransaction();
+    auto rolled_back = production.beginTransaction();
     const auto discarded_id = rolled_back.importMedia(media_path);
     rolled_back.rollback();
-    if (project.containsAsset(discarded_id)) {
+    if (production.containsAsset(discarded_id)) {
       return 9;
     }
 
     const std::string moved_media_path = media_path + ".moved";
     std::filesystem::rename(media_path, moved_media_path);
-    const auto resolutions = project.resolveAsset(asset_id);
+    const auto resolutions = production.resolveAsset(asset_id);
     if (resolutions.size() != 1 ||
         resolutions[0].availability !=
             postproject::RepresentationAvailability::online ||
@@ -124,13 +124,13 @@ int main(int argc, char **argv) {
         {},
         {{resolutions[0].representation_id,
           std::string("postproject:output.master")}}};
-    auto provenance = project.beginTransaction();
+    auto provenance = production.beginTransaction();
     const auto activity_id = provenance.createActivity(activity_spec);
     provenance.commit();
 
-    const auto activities = project.activities();
+    const auto activities = production.activities();
     const auto producing =
-        project.activitiesProducing(resolutions[0].representation_id);
+        production.activitiesProducing(resolutions[0].representation_id);
     if (activities.size() != 1 || producing.size() != 1 ||
         activities[0].id != activity_id ||
         activities[0].kind != "postproject:ingest" ||
@@ -145,21 +145,21 @@ int main(int argc, char **argv) {
             resolutions[0].representation_id ||
         activities[0].outputs[0].role !=
             std::string("postproject:output.master") ||
-        !project.ancestors(resolutions[0].representation_id).empty()) {
+        !production.ancestors(resolutions[0].representation_id).empty()) {
       return 14;
     }
-    auto confirmation = project.beginTransaction();
+    auto confirmation = production.beginTransaction();
     confirmation.confirmLocator(
         resolutions[0].resources[0].resource_id,
         resolutions[0].resources[0].candidates[0].uri);
     confirmation.commit();
 
-    auto moved = std::move(project);
-    if (project || !moved) {
+    auto moved = std::move(production);
+    if (production || !moved) {
       return 4;
     }
 
-    auto reopened = postproject::Project::open(path);
+    auto reopened = postproject::Production::open(path);
     if (reopened.id() != created_id || !reopened.containsAsset(asset_id)) {
       return 5;
     }
@@ -174,7 +174,7 @@ int main(int argc, char **argv) {
     }
 
     try {
-      static_cast<void>(postproject::Project::open(path + ".missing"));
+      static_cast<void>(postproject::Production::open(path + ".missing"));
       return 6;
     } catch (const postproject::Error &error) {
       if (error.code() == postproject::ErrorCode::ok ||
