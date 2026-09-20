@@ -8,6 +8,7 @@
 - [Assets, representations, and locators](concepts/assets-representations-locators.md)
 - [External identifiers](concepts/external-identifiers.md)
 - [Metadata assertions](concepts/metadata.md)
+- [Production provenance](concepts/provenance.md)
 - [Standards boundaries](concepts/standards-boundaries.md)
 
 # For application users
@@ -19,12 +20,14 @@
 
 - [Integrator guide](integrators/README.md)
 - [Metadata vocabularies](integrators/metadata-vocabularies.md)
+- [Provenance integration](integrators/provenance.md)
 
 # For contributors
 
 - [Contributor guide](contributors/README.md)
 - [Standards policy](contributors/standards-policy.md)
 - [Metadata model](contributors/metadata-model.md)
+- [Provenance model](contributors/provenance-model.md)
 
 # Reference
 
