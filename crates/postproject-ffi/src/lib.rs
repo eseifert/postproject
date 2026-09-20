@@ -31,6 +31,7 @@ use postproject_storage_sqlite::SqliteProject;
 
 use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
+use provenance::AbiActivityEdge;
 pub use provenance::PpActivitySet;
 
 const PP_OK: u32 = 0;
@@ -818,9 +819,73 @@ pub unsafe extern "C" fn pp_activity_set_get(
                 out_has_finished_at.write(1);
                 out_finished_at_unix_micros.write(value);
             }
-            out_input_count.write(activity.input_count);
-            out_output_count.write(activity.output_count);
+            out_input_count.write(length_as_u64(activity.inputs.len())?);
+            out_output_count.write(length_as_u64(activity.outputs.len())?);
             Ok(())
+        })
+    }
+}
+
+/// Reads one input edge and its optional borrowed role.
+///
+/// # Safety
+///
+/// `activities` must be live. Every output must be writable and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_activity_set_get_input(
+    activities: *const PpActivitySet,
+    activity_index: u64,
+    input_index: u64,
+    out_representation_id: *mut PpUuid,
+    out_role: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The shared helper initializes and validates every output.
+    unsafe {
+        ffi_call(out_error, || {
+            let activities = activities
+                .as_ref()
+                .ok_or_else(|| invalid_argument("activities must not be null"))?;
+            let activity = item_at(&activities.activities, activity_index, "activity")?;
+            write_activity_edge(
+                &activity.inputs,
+                input_index,
+                out_representation_id,
+                out_role,
+            )
+        })
+    }
+}
+
+/// Reads one output edge and its optional borrowed role.
+///
+/// # Safety
+///
+/// `activities` must be live. Every output must be writable and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_activity_set_get_output(
+    activities: *const PpActivitySet,
+    activity_index: u64,
+    output_index: u64,
+    out_representation_id: *mut PpUuid,
+    out_role: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The shared helper initializes and validates every output.
+    unsafe {
+        ffi_call(out_error, || {
+            let activities = activities
+                .as_ref()
+                .ok_or_else(|| invalid_argument("activities must not be null"))?;
+            let activity = item_at(&activities.activities, activity_index, "activity")?;
+            write_activity_edge(
+                &activity.outputs,
+                output_index,
+                out_representation_id,
+                out_role,
+            )
         })
     }
 }
@@ -2225,6 +2290,31 @@ unsafe fn write_evidence(
         out_detail.write(
             evidence
                 .detail
+                .as_ref()
+                .map_or(ptr::null(), |value| value.as_ptr()),
+        );
+        Ok(())
+    }
+}
+
+unsafe fn write_activity_edge(
+    edges: &[AbiActivityEdge],
+    index: u64,
+    out_representation_id: *mut PpUuid,
+    out_role: *mut *const c_char,
+) -> Result<(), Error> {
+    // SAFETY: Output validity is checked before either pointer is written.
+    unsafe {
+        initialize_uuid(out_representation_id);
+        initialize_const_output(out_role);
+        require_output(out_representation_id, "out_representation_id")?;
+        require_output(out_role, "out_role")?;
+        let edge = item_at(edges, index, "activity edge")?;
+        out_representation_id.write(PpUuid {
+            bytes: edge.representation_id.into_bytes(),
+        });
+        out_role.write(
+            edge.role
                 .as_ref()
                 .map_or(ptr::null(), |value| value.as_ptr()),
         );

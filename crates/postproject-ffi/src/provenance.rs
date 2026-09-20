@@ -2,9 +2,9 @@
 
 use std::ffi::CString;
 
-use postproject_core::{Activity, ActivityId, Error};
+use postproject_core::{Activity, ActivityId, Error, RepresentationId};
 
-use crate::{exact_cstring, length_as_u64};
+use crate::exact_cstring;
 
 /// Opaque immutable activity result set owned by the C caller.
 pub struct PpActivitySet {
@@ -18,8 +18,13 @@ pub(crate) struct AbiActivity {
     pub(crate) finished_at_unix_micros: Option<i64>,
     pub(crate) tool: Option<AbiTool>,
     pub(crate) agent: Option<AbiAgent>,
-    pub(crate) input_count: u64,
-    pub(crate) output_count: u64,
+    pub(crate) inputs: Vec<AbiActivityEdge>,
+    pub(crate) outputs: Vec<AbiActivityEdge>,
+}
+
+pub(crate) struct AbiActivityEdge {
+    pub(crate) representation_id: RepresentationId,
+    pub(crate) role: Option<CString>,
 }
 
 pub(crate) struct AbiTool {
@@ -60,8 +65,37 @@ impl TryFrom<&Activity> for AbiActivity {
                 .map(postproject_core::Timestamp::as_unix_micros),
             tool: activity.tool().map(AbiTool::try_from).transpose()?,
             agent: activity.agent().map(AbiAgent::try_from).transpose()?,
-            input_count: length_as_u64(activity.inputs().len())?,
-            output_count: length_as_u64(activity.outputs().len())?,
+            inputs: activity
+                .inputs()
+                .iter()
+                .map(|input| {
+                    AbiActivityEdge::new(
+                        input.representation_id(),
+                        input.role().map(postproject_core::ActivityRole::as_str),
+                    )
+                })
+                .collect::<Result<_, _>>()?,
+            outputs: activity
+                .outputs()
+                .iter()
+                .map(|output| {
+                    AbiActivityEdge::new(
+                        output.representation_id(),
+                        output.role().map(postproject_core::ActivityRole::as_str),
+                    )
+                })
+                .collect::<Result<_, _>>()?,
+        })
+    }
+}
+
+impl AbiActivityEdge {
+    fn new(representation_id: RepresentationId, role: Option<&str>) -> Result<Self, Error> {
+        Ok(Self {
+            representation_id,
+            role: role
+                .map(|value| exact_cstring(value, "activity edge role"))
+                .transpose()?,
         })
     }
 }
