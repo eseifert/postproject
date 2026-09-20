@@ -11,6 +11,7 @@ Key integration rules:
 - preserve external scheme/value text exactly;
 - never choose an ambiguous relink candidate silently;
 - perform mutations through explicit transactions;
+- advance revision cursors only after processing a complete revision;
 - release owned C handles with their documented release function;
 - do not infer “revision”, “variant”, or “alternative” relationships from a
   processing activity.
@@ -35,11 +36,7 @@ tx.commit();
 auto identifiers = project.externalIdentifiers(target);
 ```
 
-The [metadata guide](metadata-vocabularies.md) documents the implemented typed
-model, storage limits, and CLI inspection surface. Metadata access through the
-C ABI, C++ wrapper, and future Python binding will be documented when those
-public surfaces land.
-
-The root README contains the shortest native build and C example. Detailed
-provenance, revision-feed, and Python examples will be added with those public
-surfaces.
+The [metadata guide](metadata-vocabularies.md), [provenance
+guide](provenance.md), and [revision feed guide](revision-feed.md) document the
+implemented cross-language surfaces. The root README contains the shortest
+native build and C example.

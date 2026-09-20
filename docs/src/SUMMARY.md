@@ -23,6 +23,7 @@
 - [Integrator guide](integrators/README.md)
 - [Metadata vocabularies](integrators/metadata-vocabularies.md)
 - [Provenance integration](integrators/provenance.md)
+- [Revision feed](integrators/revision-feed.md)
 
 # For contributors
 
