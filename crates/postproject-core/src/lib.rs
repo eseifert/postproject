@@ -43,7 +43,9 @@ pub use model::{
     Asset, MediaRoot, OriginalMediaImport, Project, Representation, RepresentationKind, Timestamp,
 };
 pub use resolution::{
-    Confidence, EvidenceKind, Resolution, ResolutionCandidate, ResolutionEvidence, ResolutionState,
+    AvailabilityIssue, AvailabilityIssueKind, Confidence, EvidenceKind, RepresentationAvailability,
+    RepresentationResolution, Resolution, ResolutionCandidate, ResolutionEvidence, ResolutionState,
+    ResourceResolution, ResourceResolutionState,
 };
 pub use resource::{
     FileFacts, Locator, LocatorAvailability, RepresentationFingerprint, Resource,

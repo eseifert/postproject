@@ -2,7 +2,9 @@
 
 use std::cmp::Reverse;
 
-use crate::{Error, ErrorKind, RepresentationId, Result, uri::normalize_uri};
+use crate::{
+    ContentStructure, Error, ErrorKind, RepresentationId, ResourceId, Result, uri::normalize_uri,
+};
 
 /// A deterministic confidence value in basis points from 0 through 10,000.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -235,8 +237,354 @@ impl Resolution {
     }
 }
 
+/// The outcome of resolving one storage resource.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum ResourceResolutionState {
+    /// A persisted locator is currently online.
+    OnlineAtKnownLocator,
+    /// One candidate has exact identity evidence.
+    ResolvedExact,
+    /// One candidate is credible but lacks exact verification.
+    ResolvedProbable,
+    /// No credible candidate was found.
+    Offline,
+    /// Multiple candidates require an explicit decision.
+    Ambiguous,
+    /// Candidate discovery or verification could not complete safely.
+    Error,
+}
+
+/// An explainable result for one resource, independent of representation shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceResolution {
+    resource_id: ResourceId,
+    state: ResourceResolutionState,
+    candidates: Vec<ResolutionCandidate>,
+    evidence: Vec<ResolutionEvidence>,
+}
+
+impl ResourceResolution {
+    /// Creates a resource result and sorts candidates deterministically.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] when the candidate count is
+    /// inconsistent with `state`.
+    pub fn new(
+        resource_id: ResourceId,
+        state: ResourceResolutionState,
+        mut candidates: Vec<ResolutionCandidate>,
+        evidence: Vec<ResolutionEvidence>,
+    ) -> Result<Self> {
+        candidates.sort_by(|left, right| {
+            (Reverse(left.confidence), left.uri.as_str())
+                .cmp(&(Reverse(right.confidence), right.uri.as_str()))
+        });
+        let valid_count = match state {
+            ResourceResolutionState::OnlineAtKnownLocator
+            | ResourceResolutionState::ResolvedExact
+            | ResourceResolutionState::ResolvedProbable => candidates.len() == 1,
+            ResourceResolutionState::Offline | ResourceResolutionState::Error => {
+                candidates.is_empty()
+            }
+            ResourceResolutionState::Ambiguous => candidates.len() >= 2,
+        };
+        if !valid_count {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "candidate count is inconsistent with resource resolution state",
+            ));
+        }
+        Ok(Self {
+            resource_id,
+            state,
+            candidates,
+            evidence,
+        })
+    }
+
+    /// Returns the resolved resource identity.
+    #[must_use]
+    pub const fn resource_id(&self) -> ResourceId {
+        self.resource_id
+    }
+
+    /// Returns the resource outcome.
+    #[must_use]
+    pub const fn state(&self) -> ResourceResolutionState {
+        self.state
+    }
+
+    /// Returns candidates in deterministic best-first order.
+    #[must_use]
+    pub fn candidates(&self) -> &[ResolutionCandidate] {
+        &self.candidates
+    }
+
+    /// Returns resource-wide evidence and diagnostics.
+    #[must_use]
+    pub fn evidence(&self) -> &[ResolutionEvidence] {
+        &self.evidence
+    }
+}
+
+/// Aggregated availability of a complete representation.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum RepresentationAvailability {
+    /// Every required resource and frame is resolvable.
+    Online,
+    /// Some required content is resolvable and some is unavailable.
+    Partial,
+    /// No required content is resolvable.
+    Offline,
+    /// A required resource has multiple plausible candidates.
+    Ambiguous,
+    /// Required resource resolution could not complete safely.
+    Error,
+}
+
+/// The machine-inspectable category of a representation availability issue.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum AvailabilityIssueKind {
+    /// A resource has no credible online candidate.
+    OfflineResource,
+    /// A resource has multiple plausible candidates.
+    AmbiguousResource,
+    /// Resolution of a resource failed safely.
+    ResourceError,
+    /// Known frames are absent from an image sequence.
+    MissingFrames,
+}
+
+/// A resource- or frame-specific availability diagnostic.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AvailabilityIssue {
+    resource_id: ResourceId,
+    required: bool,
+    kind: AvailabilityIssueKind,
+    frames: Vec<i64>,
+}
+
+impl AvailabilityIssue {
+    /// Returns the affected resource or compact sequence resource.
+    #[must_use]
+    pub const fn resource_id(&self) -> ResourceId {
+        self.resource_id
+    }
+
+    /// Returns whether this content is required for a complete representation.
+    #[must_use]
+    pub const fn is_required(&self) -> bool {
+        self.required
+    }
+
+    /// Returns the diagnostic category.
+    #[must_use]
+    pub const fn kind(&self) -> AvailabilityIssueKind {
+        self.kind
+    }
+
+    /// Returns sorted missing frames for [`AvailabilityIssueKind::MissingFrames`].
+    #[must_use]
+    pub fn frames(&self) -> &[i64] {
+        &self.frames
+    }
+}
+
+/// Representation-level availability with ordered per-resource detail.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepresentationResolution {
+    representation_id: RepresentationId,
+    availability: RepresentationAvailability,
+    resources: Vec<ResourceResolution>,
+    issues: Vec<AvailabilityIssue>,
+}
+
+impl RepresentationResolution {
+    /// Aggregates resource results according to content-structure requiredness.
+    ///
+    /// Optional package members produce diagnostics but do not reduce aggregate
+    /// availability. Known missing sequence frames make an otherwise online
+    /// sequence partial.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] unless the resource results match
+    /// the structure's resources exactly and without duplicates.
+    pub fn aggregate(
+        representation_id: RepresentationId,
+        structure: &ContentStructure,
+        resources: Vec<ResourceResolution>,
+    ) -> Result<Self> {
+        let ordered = order_resource_resolutions(structure, resources)?;
+        let (availability, issues) = inspect_availability(structure, &ordered);
+        Ok(Self {
+            representation_id,
+            availability,
+            resources: ordered,
+            issues,
+        })
+    }
+
+    /// Returns the representation whose availability was aggregated.
+    #[must_use]
+    pub const fn representation_id(&self) -> RepresentationId {
+        self.representation_id
+    }
+
+    /// Returns aggregate representation availability.
+    #[must_use]
+    pub const fn availability(&self) -> RepresentationAvailability {
+        self.availability
+    }
+
+    /// Returns results in content-structure resource order.
+    #[must_use]
+    pub fn resources(&self) -> &[ResourceResolution] {
+        &self.resources
+    }
+
+    /// Returns resource- and frame-specific diagnostics.
+    #[must_use]
+    pub fn issues(&self) -> &[AvailabilityIssue] {
+        &self.issues
+    }
+}
+
+#[derive(Default)]
+struct AvailabilityCounts {
+    online_required: usize,
+    offline_required: usize,
+    ambiguous_required: bool,
+    error_required: bool,
+    missing_frames: bool,
+}
+
+impl AvailabilityCounts {
+    const fn availability(&self) -> RepresentationAvailability {
+        if self.error_required {
+            RepresentationAvailability::Error
+        } else if self.ambiguous_required {
+            RepresentationAvailability::Ambiguous
+        } else if self.online_required == 0 {
+            RepresentationAvailability::Offline
+        } else if self.offline_required > 0 || self.missing_frames {
+            RepresentationAvailability::Partial
+        } else {
+            RepresentationAvailability::Online
+        }
+    }
+}
+
+fn order_resource_resolutions(
+    structure: &ContentStructure,
+    resources: Vec<ResourceResolution>,
+) -> Result<Vec<ResourceResolution>> {
+    let expected = structure.resource_ids();
+    if resources.len() != expected.len() {
+        return Err(resource_set_error());
+    }
+    let mut by_id = std::collections::BTreeMap::new();
+    for resource in resources {
+        if by_id.insert(resource.resource_id(), resource).is_some() {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "resource resolution is duplicated",
+            ));
+        }
+    }
+    expected
+        .into_iter()
+        .map(|resource_id| by_id.remove(&resource_id).ok_or_else(resource_set_error))
+        .collect()
+}
+
+fn resource_set_error() -> Error {
+    Error::new(
+        ErrorKind::InvalidArgument,
+        "resource resolutions do not match the content structure",
+    )
+}
+
+fn inspect_availability(
+    structure: &ContentStructure,
+    resources: &[ResourceResolution],
+) -> (RepresentationAvailability, Vec<AvailabilityIssue>) {
+    let mut counts = AvailabilityCounts::default();
+    let mut issues = Vec::new();
+    for resource in resources {
+        inspect_resource(structure, resource, &mut counts, &mut issues);
+    }
+    if let Some(descriptor) = structure.image_sequence_descriptor() {
+        if !descriptor.known_missing_frames().is_empty() {
+            counts.missing_frames = true;
+            issues.push(AvailabilityIssue {
+                resource_id: descriptor.resource_id(),
+                required: true,
+                kind: AvailabilityIssueKind::MissingFrames,
+                frames: descriptor.known_missing_frames().to_vec(),
+            });
+        }
+    }
+    (counts.availability(), issues)
+}
+
+fn inspect_resource(
+    structure: &ContentStructure,
+    resource: &ResourceResolution,
+    counts: &mut AvailabilityCounts,
+    issues: &mut Vec<AvailabilityIssue>,
+) {
+    let resource_id = resource.resource_id();
+    let required = resource_is_required(structure, resource_id);
+    let issue_kind = match resource.state() {
+        ResourceResolutionState::OnlineAtKnownLocator
+        | ResourceResolutionState::ResolvedExact
+        | ResourceResolutionState::ResolvedProbable => {
+            counts.online_required += usize::from(required);
+            None
+        }
+        ResourceResolutionState::Offline => {
+            counts.offline_required += usize::from(required);
+            Some(AvailabilityIssueKind::OfflineResource)
+        }
+        ResourceResolutionState::Ambiguous => {
+            counts.ambiguous_required |= required;
+            Some(AvailabilityIssueKind::AmbiguousResource)
+        }
+        ResourceResolutionState::Error => {
+            counts.error_required |= required;
+            Some(AvailabilityIssueKind::ResourceError)
+        }
+    };
+    if let Some(kind) = issue_kind {
+        issues.push(AvailabilityIssue {
+            resource_id,
+            required,
+            kind,
+            frames: Vec::new(),
+        });
+    }
+}
+
+fn resource_is_required(structure: &ContentStructure, resource_id: ResourceId) -> bool {
+    structure.members().is_none_or(|members| {
+        members
+            .iter()
+            .find(|member| member.resource_id() == resource_id)
+            .is_some_and(crate::ResourceMember::is_required)
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::{
+        FrameRange, ImageSequenceDescriptor, ImageSequencePattern, RationalRate, ResourceMember,
+        ResourceRole,
+    };
     use proptest::prelude::*;
 
     use super::*;
@@ -248,6 +596,26 @@ mod tests {
             vec![ResolutionEvidence::new(EvidenceKind::FileSizeMatch, None)],
         )
         .expect("test candidate is valid")
+    }
+
+    fn resource_result(
+        resource_id: ResourceId,
+        state: ResourceResolutionState,
+    ) -> ResourceResolution {
+        let candidates = match state {
+            ResourceResolutionState::OnlineAtKnownLocator
+            | ResourceResolutionState::ResolvedExact
+            | ResourceResolutionState::ResolvedProbable => {
+                vec![candidate(&format!("file:///{resource_id}"), 10_000)]
+            }
+            ResourceResolutionState::Ambiguous => vec![
+                candidate(&format!("file:///a/{resource_id}"), 9_000),
+                candidate(&format!("file:///b/{resource_id}"), 9_000),
+            ],
+            ResourceResolutionState::Offline | ResourceResolutionState::Error => Vec::new(),
+        };
+        ResourceResolution::new(resource_id, state, candidates, Vec::new())
+            .expect("test resource resolution is valid")
     }
 
     #[test]
@@ -281,6 +649,126 @@ mod tests {
             Vec::new(),
         )
         .expect_err("one candidate cannot be ambiguous");
+        assert_eq!(error.kind(), ErrorKind::InvalidArgument);
+    }
+
+    #[test]
+    fn optional_package_members_do_not_reduce_availability() {
+        let essence = ResourceId::new();
+        let thumbnail = ResourceId::new();
+        let structure = ContentStructure::package(vec![
+            ResourceMember::new(
+                essence,
+                ResourceRole::new("postproject:essence").expect("valid role"),
+                true,
+            ),
+            ResourceMember::new(
+                thumbnail,
+                ResourceRole::new("postproject:thumbnail").expect("valid role"),
+                false,
+            ),
+        ])
+        .expect("valid package");
+
+        let resolution = RepresentationResolution::aggregate(
+            RepresentationId::new(),
+            &structure,
+            vec![
+                resource_result(thumbnail, ResourceResolutionState::Offline),
+                resource_result(essence, ResourceResolutionState::OnlineAtKnownLocator),
+            ],
+        )
+        .expect("matching results aggregate");
+
+        assert_eq!(
+            resolution.availability(),
+            RepresentationAvailability::Online
+        );
+        assert_eq!(resolution.resources()[0].resource_id(), essence);
+        assert_eq!(resolution.issues().len(), 1);
+        assert!(!resolution.issues()[0].is_required());
+    }
+
+    #[test]
+    fn some_missing_required_members_make_a_representation_partial() {
+        let first = ResourceId::new();
+        let second = ResourceId::new();
+        let role = ResourceRole::new("postproject:essence").expect("valid role");
+        let structure = ContentStructure::ordered_parts(vec![
+            ResourceMember::new(first, role.clone(), true),
+            ResourceMember::new(second, role, true),
+        ])
+        .expect("valid ordered parts");
+
+        let resolution = RepresentationResolution::aggregate(
+            RepresentationId::new(),
+            &structure,
+            vec![
+                resource_result(first, ResourceResolutionState::ResolvedExact),
+                resource_result(second, ResourceResolutionState::Offline),
+            ],
+        )
+        .expect("matching results aggregate");
+
+        assert_eq!(
+            resolution.availability(),
+            RepresentationAvailability::Partial
+        );
+        assert_eq!(
+            resolution.issues()[0].kind(),
+            AvailabilityIssueKind::OfflineResource
+        );
+        assert!(resolution.issues()[0].is_required());
+    }
+
+    #[test]
+    fn known_sequence_gaps_are_partial_with_frame_diagnostics() {
+        let resource_id = ResourceId::new();
+        let descriptor = ImageSequenceDescriptor::new(
+            resource_id,
+            ImageSequencePattern::new("shot.", ".exr", 4).expect("valid pattern"),
+            FrameRange::new(1001, 1004, 1).expect("valid frame range"),
+            RationalRate::new(24, 1).expect("valid rate"),
+            vec![1002, 1003],
+        )
+        .expect("valid sequence");
+        let structure = ContentStructure::image_sequence(descriptor);
+
+        let resolution = RepresentationResolution::aggregate(
+            RepresentationId::new(),
+            &structure,
+            vec![resource_result(
+                resource_id,
+                ResourceResolutionState::OnlineAtKnownLocator,
+            )],
+        )
+        .expect("matching results aggregate");
+
+        assert_eq!(
+            resolution.availability(),
+            RepresentationAvailability::Partial
+        );
+        assert_eq!(
+            resolution.issues()[0].kind(),
+            AvailabilityIssueKind::MissingFrames
+        );
+        assert_eq!(resolution.issues()[0].frames(), [1002, 1003]);
+    }
+
+    #[test]
+    fn aggregate_rejects_the_wrong_resource_set() {
+        let expected = ResourceId::new();
+        let unexpected = ResourceId::new();
+        let error = RepresentationResolution::aggregate(
+            RepresentationId::new(),
+            &ContentStructure::single_resource(expected),
+            vec![resource_result(
+                unexpected,
+                ResourceResolutionState::Offline,
+            )],
+        )
+        .expect_err("unrelated resource must be rejected");
+
         assert_eq!(error.kind(), ErrorKind::InvalidArgument);
     }
 
