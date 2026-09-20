@@ -19,7 +19,7 @@ use std::{
 use postproject_core::{
     AssetId, Error, ErrorKind, EvidenceKind, ExternalIdentifier, IdentifierScheme, Locator,
     MediaRoot, MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, ProjectId,
-    PropertyId, RepresentationId, ResolutionEvidence, ResourceId, ResourceResolution,
+    PropertyId, RepresentationId, RepresentationResolution, ResolutionEvidence, ResourceId,
     ResourceResolutionState, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
@@ -133,11 +133,15 @@ pub struct PpObjectRefSet {
 
 /// Opaque set of immutable media-resolution results owned by the C caller.
 pub struct PpResolutionSet {
-    resolutions: Vec<AbiResolution>,
+    representations: Vec<AbiRepresentationResolution>,
+}
+
+struct AbiRepresentationResolution {
+    representation_id: RepresentationId,
+    resources: Vec<AbiResolution>,
 }
 
 struct AbiResolution {
-    representation_id: RepresentationId,
     resource_id: ResourceId,
     state: u32,
     candidates: Vec<AbiCandidate>,
@@ -1105,6 +1109,7 @@ pub unsafe extern "C" fn pp_project_resolve_asset(
             let resolver = MediaResolver::default();
             let mut resolutions = Vec::new();
             for representation in inner.representations(asset_id)? {
+                let mut resource_resolutions = Vec::new();
                 for resource in inner.resources(representation.id())? {
                     let locators = inner.locators(resource.id())?;
                     let resolution = resolver.resolve_resource(
@@ -1112,8 +1117,13 @@ pub unsafe extern "C" fn pp_project_resolve_asset(
                         &locators,
                         inner.project().media_roots(),
                     )?;
-                    resolutions.push((representation.id(), resolution));
+                    resource_resolutions.push(resolution);
                 }
+                resolutions.push(RepresentationResolution::aggregate(
+                    representation.id(),
+                    representation.content_structure(),
+                    resource_resolutions,
+                )?);
             }
             out_resolutions.write(Box::into_raw(Box::new(PpResolutionSet::new(resolutions))));
             Ok(())
@@ -1133,7 +1143,12 @@ pub unsafe extern "C" fn pp_resolution_set_count(resolutions: *const PpResolutio
         // SAFETY: A non-null pointer is live for the duration of this call by
         // the caller contract and is only borrowed.
         unsafe { resolutions.as_ref() }.map_or(0, |set| {
-            u64::try_from(set.resolutions.len()).unwrap_or(u64::MAX)
+            let count: usize = set
+                .representations
+                .iter()
+                .map(|resolution| resolution.resources.len())
+                .sum();
+            u64::try_from(count).unwrap_or(u64::MAX)
         })
     }))
     .unwrap_or(0)
@@ -1170,9 +1185,9 @@ pub unsafe extern "C" fn pp_resolution_set_get(
             require_output(out_state, "out_state")?;
             require_output(out_candidate_count, "out_candidate_count")?;
             require_output(out_evidence_count, "out_evidence_count")?;
-            let resolution = resolution_at(resolutions, resolution_index)?;
+            let (representation, resolution) = resolution_at(resolutions, resolution_index)?;
             out_representation_id.write(PpUuid {
-                bytes: resolution.representation_id.into_bytes(),
+                bytes: representation.representation_id.into_bytes(),
             });
             out_resource_id.write(PpUuid {
                 bytes: resolution.resource_id.into_bytes(),
@@ -1214,7 +1229,7 @@ pub unsafe extern "C" fn pp_resolution_candidate_get(
             require_output(out_uri, "out_uri")?;
             require_output(out_confidence_basis_points, "out_confidence_basis_points")?;
             require_output(out_evidence_count, "out_evidence_count")?;
-            let resolution = resolution_at(resolutions, resolution_index)?;
+            let (_, resolution) = resolution_at(resolutions, resolution_index)?;
             let candidate = item_at(&resolution.candidates, candidate_index, "candidate")?;
             out_uri.write(candidate.uri.as_ptr());
             out_confidence_basis_points.write(candidate.confidence);
@@ -1248,7 +1263,7 @@ pub unsafe extern "C" fn pp_resolution_evidence_get(
         initialize_value(out_kind, 0);
         initialize_const_output(out_detail);
         ffi_call(out_error, || {
-            let resolution = resolution_at(resolutions, resolution_index)?;
+            let (_, resolution) = resolution_at(resolutions, resolution_index)?;
             write_evidence(&resolution.evidence, evidence_index, out_kind, out_detail)
         })
     }
@@ -1279,7 +1294,7 @@ pub unsafe extern "C" fn pp_resolution_candidate_evidence_get(
         initialize_value(out_kind, 0);
         initialize_const_output(out_detail);
         ffi_call(out_error, || {
-            let resolution = resolution_at(resolutions, resolution_index)?;
+            let (_, resolution) = resolution_at(resolutions, resolution_index)?;
             let candidate = item_at(&resolution.candidates, candidate_index, "candidate")?;
             write_evidence(&candidate.evidence, evidence_index, out_kind, out_detail)
         })
@@ -1989,12 +2004,22 @@ fn project_handle(project: SqliteProject) -> PpProject {
 unsafe fn resolution_at<'a>(
     resolutions: *const PpResolutionSet,
     index: u64,
-) -> Result<&'a AbiResolution, Error> {
+) -> Result<(&'a AbiRepresentationResolution, &'a AbiResolution), Error> {
     // SAFETY: Exported callers guarantee a non-null handle remains live for the
     // complete call. The reference never escapes an exported operation.
     let resolutions = unsafe { resolutions.as_ref() }
         .ok_or_else(|| invalid_argument("resolutions must not be null"))?;
-    item_at(&resolutions.resolutions, index, "resolution")
+    let mut index =
+        usize::try_from(index).map_err(|_| invalid_argument("resolution index is out of range"))?;
+    for representation in &resolutions.representations {
+        if index < representation.resources.len() {
+            return Ok((representation, &representation.resources[index]));
+        }
+        index -= representation.resources.len();
+    }
+    Err(invalid_argument(format!(
+        "resolution index {index} is out of range"
+    )))
 }
 
 fn item_at<'a, T>(items: &'a [T], index: u64, label: &str) -> Result<&'a T, Error> {
@@ -2027,27 +2052,33 @@ unsafe fn write_copy<T: Copy>(output: *mut T, value: T, label: &str) -> Result<(
 }
 
 impl PpResolutionSet {
-    fn new(resolutions: Vec<(RepresentationId, ResourceResolution)>) -> Self {
+    fn new(resolutions: Vec<RepresentationResolution>) -> Self {
         Self {
-            resolutions: resolutions
+            representations: resolutions
                 .into_iter()
-                .map(|(representation_id, resolution)| AbiResolution {
-                    representation_id,
-                    resource_id: resolution.resource_id(),
-                    state: resolution_state(resolution.state()),
-                    candidates: resolution
-                        .candidates()
+                .map(|resolution| AbiRepresentationResolution {
+                    representation_id: resolution.representation_id(),
+                    resources: resolution
+                        .resources()
                         .iter()
-                        .map(|candidate| AbiCandidate {
-                            uri: sanitized_cstring(candidate.uri()),
-                            confidence: candidate.confidence().basis_points(),
-                            evidence: candidate.evidence().iter().map(AbiEvidence::from).collect(),
+                        .map(|resource| AbiResolution {
+                            resource_id: resource.resource_id(),
+                            state: resolution_state(resource.state()),
+                            candidates: resource
+                                .candidates()
+                                .iter()
+                                .map(|candidate| AbiCandidate {
+                                    uri: sanitized_cstring(candidate.uri()),
+                                    confidence: candidate.confidence().basis_points(),
+                                    evidence: candidate
+                                        .evidence()
+                                        .iter()
+                                        .map(AbiEvidence::from)
+                                        .collect(),
+                                })
+                                .collect(),
+                            evidence: resource.evidence().iter().map(AbiEvidence::from).collect(),
                         })
-                        .collect(),
-                    evidence: resolution
-                        .evidence()
-                        .iter()
-                        .map(AbiEvidence::from)
                         .collect(),
                 })
                 .collect(),
