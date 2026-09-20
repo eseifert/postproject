@@ -62,6 +62,11 @@ typedef struct pp_object_ref {
   pp_uuid_t id;
 } pp_object_ref_t;
 
+typedef struct pp_activity_edge {
+  pp_uuid_t representation_id;
+  const char *role;
+} pp_activity_edge_t;
+
 typedef uint32_t pp_error_code_t;
 
 #define PP_OK UINT32_C(0)
@@ -332,6 +337,19 @@ PP_API pp_error_code_t pp_transaction_add_metadata_text(
 PP_API pp_error_code_t pp_transaction_remove_metadata_property(
     pp_transaction_t *transaction, const pp_object_ref_t *target,
     const char *vocabulary, const char *property, pp_error_t **out_error);
+/* Arrays and strings are borrowed only for this call. A NULL timestamp pointer
+ * means absent. Tool and agent fields are independently optional subject to
+ * the documented domain invariants. */
+PP_API pp_error_code_t pp_transaction_create_activity(
+    pp_transaction_t *transaction, const char *kind,
+    const pp_activity_edge_t *inputs, uint64_t input_count,
+    const pp_activity_edge_t *outputs, uint64_t output_count,
+    const int64_t *started_at_unix_micros,
+    const int64_t *finished_at_unix_micros, const char *tool_name,
+    const char *tool_version, const char *tool_uri, const char *agent_name,
+    const char *agent_identifier_scheme, const char *agent_identifier_value,
+    const char *agent_identifier_qualifier, pp_uuid_t *out_activity_id,
+    pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_commit(pp_transaction_t *transaction,
                                              pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_rollback(pp_transaction_t *transaction,
