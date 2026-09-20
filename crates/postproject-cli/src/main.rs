@@ -13,7 +13,7 @@ use postproject_core::{
     MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, ProjectId, PropertyId,
     Representation, RepresentationAvailability, RepresentationId, RepresentationKind,
     RepresentationResolution, ResolutionEvidence, Resource, ResourceId, ResourceResolution,
-    ResourceResolutionState, Timestamp, ToolIdentity, VocabularyId,
+    ResourceResolutionState, Revision, Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
@@ -46,6 +46,8 @@ enum Command {
     Metadata(MetadataArgs),
     /// Inspect production provenance activities.
     Activity(ActivityArgs),
+    /// Inspect the durable semantic change journal.
+    Revisions(RevisionsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -304,6 +306,31 @@ struct ActivityRepresentationArgs {
     representation_id: String,
 }
 
+#[derive(Debug, Args)]
+struct RevisionsArgs {
+    #[command(subcommand)]
+    command: RevisionsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum RevisionsCommand {
+    /// Show the newest committed revision.
+    Latest(ProjectArgs),
+    /// List revisions after a project-local sequence cursor.
+    Since(RevisionsSinceArgs),
+}
+
+#[derive(Debug, Args)]
+struct RevisionsSinceArgs {
+    project: PathBuf,
+    /// Return revisions with a sequence greater than this cursor.
+    #[arg(long, default_value_t = 0)]
+    after: u64,
+    /// Maximum number of revisions to return.
+    #[arg(long, default_value_t = 100)]
+    limit: u32,
+}
+
 #[derive(Clone, Debug)]
 struct ActivityEdgeArg {
     representation_id: RepresentationId,
@@ -541,6 +568,23 @@ struct ActivityEdgeView {
 }
 
 #[derive(Debug, Serialize)]
+struct RevisionView {
+    id: String,
+    sequence: u64,
+    transaction_id: String,
+    committed_at_unix_micros: i64,
+    origin: Option<RevisionOriginView>,
+    message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RevisionOriginView {
+    name: String,
+    version: Option<String>,
+    uri: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct RepresentationRefView {
     representation_id: String,
 }
@@ -606,6 +650,10 @@ fn execute(cli: Cli) -> Result<()> {
             ActivityCommand::Descendants(args) => {
                 activity_relatives(&args, ProvenanceDirection::Descendants, cli.json)
             }
+        },
+        Command::Revisions(args) => match args.command {
+            RevisionsCommand::Latest(args) => revisions_latest(&args, cli.json),
+            RevisionsCommand::Since(args) => revisions_since(&args, cli.json),
         },
     }
 }
@@ -1094,6 +1142,64 @@ fn activity_view(activity: &Activity) -> ActivityView {
             })
             .collect(),
     }
+}
+
+fn revisions_latest(args: &ProjectArgs, json: bool) -> Result<()> {
+    let project = SqliteProject::open(&args.project).context("open project")?;
+    let revision = project
+        .latest_revision()
+        .context("load latest revision")?
+        .as_ref()
+        .map(revision_view);
+    if json {
+        print_json(&revision)
+    } else if let Some(revision) = revision {
+        print_revision(&revision);
+        Ok(())
+    } else {
+        println!("no revisions");
+        Ok(())
+    }
+}
+
+fn revisions_since(args: &RevisionsSinceArgs, json: bool) -> Result<()> {
+    let project = SqliteProject::open(&args.project).context("open project")?;
+    let revisions = project
+        .changes_since(args.after, args.limit)
+        .context("load revision page")?;
+    let views: Vec<_> = revisions.iter().map(revision_view).collect();
+    if json {
+        print_json(&views)
+    } else {
+        for revision in &views {
+            print_revision(revision);
+        }
+        Ok(())
+    }
+}
+
+fn revision_view(revision: &Revision) -> RevisionView {
+    RevisionView {
+        id: revision.id().to_string(),
+        sequence: revision.sequence(),
+        transaction_id: revision.transaction_id().to_string(),
+        committed_at_unix_micros: revision.committed_at().as_unix_micros(),
+        origin: revision.origin().map(|origin| RevisionOriginView {
+            name: origin.name().to_owned(),
+            version: origin.version().map(str::to_owned),
+            uri: origin.uri().map(str::to_owned),
+        }),
+        message: revision.message().map(str::to_owned),
+    }
+}
+
+fn print_revision(revision: &RevisionView) {
+    println!(
+        "{}\t{}\t{}",
+        revision.sequence,
+        revision.id,
+        revision.message.as_deref().unwrap_or("")
+    );
 }
 
 fn print_metadata_assertions(views: &[MetadataAssertionView], json: bool) -> Result<()> {
