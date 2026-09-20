@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace postproject {
@@ -147,6 +148,88 @@ struct Revision final {
   std::int64_t committed_at_unix_micros;
   std::optional<OriginIdentity> origin;
   std::optional<std::string> message;
+};
+
+struct AssetImportedEvent final {
+  Uuid asset_id;
+};
+
+struct RepresentationAddedEvent final {
+  Uuid asset_id;
+  Uuid representation_id;
+};
+
+struct ResourceAddedEvent final {
+  Uuid resource_id;
+};
+
+struct RepresentationResourceAddedEvent final {
+  Uuid representation_id;
+  Uuid resource_id;
+  std::uint32_t structural_position;
+};
+
+struct LocatorAddedEvent final {
+  Uuid resource_id;
+  Uuid locator_id;
+};
+
+struct MediaRootAddedEvent final {
+  Uuid media_root_id;
+};
+
+struct ExternalIdentifierAddedEvent final {
+  ObjectRef target;
+  ExternalIdentifier identifier;
+};
+
+struct ExternalIdentifierRemovedEvent final {
+  ObjectRef target;
+  ExternalIdentifier identifier;
+};
+
+struct MetadataAddedOrReplacedEvent final {
+  ObjectRef target;
+  std::string vocabulary;
+  std::string property;
+};
+
+struct MetadataRemovedEvent final {
+  ObjectRef target;
+  std::string vocabulary;
+  std::string property;
+};
+
+struct ActivityCreatedEvent final {
+  Uuid activity_id;
+  std::string kind;
+};
+
+struct ActivityInputAddedEvent final {
+  Uuid activity_id;
+  Uuid representation_id;
+  std::optional<std::string> role;
+};
+
+struct ActivityOutputAddedEvent final {
+  Uuid activity_id;
+  Uuid representation_id;
+  std::optional<std::string> role;
+};
+
+using RevisionEventPayload =
+    std::variant<AssetImportedEvent, RepresentationAddedEvent,
+                 ResourceAddedEvent, RepresentationResourceAddedEvent,
+                 LocatorAddedEvent, MediaRootAddedEvent,
+                 ExternalIdentifierAddedEvent,
+                 ExternalIdentifierRemovedEvent,
+                 MetadataAddedOrReplacedEvent, MetadataRemovedEvent,
+                 ActivityCreatedEvent, ActivityInputAddedEvent,
+                 ActivityOutputAddedEvent>;
+
+struct RevisionEvent final {
+  std::uint32_t position;
+  RevisionEventPayload payload;
 };
 
 enum class RepresentationAvailability : std::uint32_t {
