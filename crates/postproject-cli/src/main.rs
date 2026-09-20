@@ -7,10 +7,11 @@ use std::{path::PathBuf, process::ExitCode, str::FromStr};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
-    Activity, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, EvidenceKind,
-    ExternalIdentifier, IdentifierScheme, Locator, LocatorAvailability, MetadataAssertion,
-    MetadataField, MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, ProjectId,
-    PropertyId, Representation, RepresentationAvailability, RepresentationId, RepresentationKind,
+    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, Asset,
+    AssetId, AvailabilityIssue, AvailabilityIssueKind, EvidenceKind, ExternalIdentifier,
+    IdentifierScheme, Locator, LocatorAvailability, MetadataAssertion, MetadataField,
+    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, ProjectId, PropertyId,
+    Representation, RepresentationAvailability, RepresentationId, RepresentationKind,
     RepresentationResolution, ResolutionEvidence, Resource, ResourceId, ResourceResolution,
     ResourceResolutionState, VocabularyId,
 };
@@ -245,8 +246,51 @@ struct ActivityArgs {
 
 #[derive(Debug, Subcommand)]
 enum ActivityCommand {
+    /// Record a completed production activity.
+    Add(ActivityAddArgs),
     /// List production activities with their inputs and outputs.
     List(ProjectArgs),
+}
+
+#[derive(Debug, Args)]
+struct ActivityAddArgs {
+    project: PathBuf,
+    /// Namespaced activity kind, such as `postproject:transcode`.
+    kind: String,
+    /// Consumed representation, optionally followed by `=ROLE`.
+    #[arg(long = "input", value_name = "REPRESENTATION_ID[=ROLE]")]
+    inputs: Vec<ActivityEdgeArg>,
+    /// Produced representation, optionally followed by `=ROLE`.
+    #[arg(
+        long = "output",
+        value_name = "REPRESENTATION_ID[=ROLE]",
+        required = true
+    )]
+    outputs: Vec<ActivityEdgeArg>,
+}
+
+#[derive(Clone, Debug)]
+struct ActivityEdgeArg {
+    representation_id: RepresentationId,
+    role: Option<ActivityRole>,
+}
+
+impl FromStr for ActivityEdgeArg {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let (representation_id, role) = value
+            .split_once('=')
+            .map_or((value, None), |(id, role)| (id, Some(role)));
+        Ok(Self {
+            representation_id: RepresentationId::from_str(representation_id)
+                .map_err(|error| format!("invalid representation ID: {error}"))?,
+            role: role
+                .map(ActivityRole::new)
+                .transpose()
+                .map_err(|error| format!("invalid activity role: {error}"))?,
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -496,6 +540,7 @@ fn execute(cli: Cli) -> Result<()> {
             MetadataCommand::Find(args) => metadata_find(args, cli.json),
         },
         Command::Activity(args) => match args.command {
+            ActivityCommand::Add(args) => activity_add(args, cli.json),
             ActivityCommand::List(args) => activity_list(&args, cli.json),
         },
     }
@@ -827,6 +872,38 @@ fn activity_list(args: &ProjectArgs, json: bool) -> Result<()> {
                 view.outputs.len()
             );
         }
+        Ok(())
+    }
+}
+
+fn activity_add(args: ActivityAddArgs, json: bool) -> Result<()> {
+    let kind = ActivityKind::new(args.kind).context("validate activity kind")?;
+    let inputs = args
+        .inputs
+        .into_iter()
+        .map(|edge| ActivityInput::new(edge.representation_id, edge.role))
+        .collect();
+    let outputs = args
+        .outputs
+        .into_iter()
+        .map(|edge| ActivityOutput::new(edge.representation_id, edge.role))
+        .collect();
+    let activity =
+        Activity::new(ActivityId::new(), kind, inputs, outputs).context("validate activity")?;
+    let view = activity_view(&activity);
+    let mut project = SqliteProject::open(&args.project).context("open project")?;
+    let mut transaction = project
+        .begin_transaction()
+        .context("begin activity transaction")?;
+    transaction
+        .create_activity(&activity)
+        .context("stage activity")?;
+    transaction.commit().context("commit activity")?;
+
+    if json {
+        print_json(&view)
+    } else {
+        println!("recorded activity {} ({})", view.id, view.kind);
         Ok(())
     }
 }
