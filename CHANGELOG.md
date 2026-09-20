@@ -29,6 +29,9 @@ All notable changes to PostProject will be documented here. The project uses
   rejection of the obsolete development schema.
 - C ABI version 2 and C++17 wrappers for typed object references, external
   identifier enumeration, transactional add/remove, and exact lookup.
+- Activity-based provenance with extensible kinds and edge roles, bounded tool
+  and agent identity, atomic SQLite schema version 2 persistence, cycle
+  prevention, deterministic reload, and ancestry/descendant queries.
 - CLI commands for attaching, removing, listing, and finding external
   identifiers with structured JSON output.
 - Initial workspace and engineering-policy scaffolding.

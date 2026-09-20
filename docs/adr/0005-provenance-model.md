@@ -1,6 +1,6 @@
 # ADR 0005: Activity-based provenance
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-19
 
 ## Decision
@@ -13,6 +13,17 @@ model.
 Derived lineage is a traversal query, not the sole stored fact. Generation
 cycles are rejected, fan-in/fan-out and cross-asset processing are supported,
 and malformed persisted cycles produce bounded errors.
+
+Activities are complete facts in the current model: they may have no inputs,
+but must have at least one output because no in-progress lifecycle is exposed.
+Identical edges and a representation appearing on both sides are rejected.
+Timestamps, tool identity, agent identity, and edge roles are optional and
+bounded. Metadata assertions carry activity parameters.
+
+SQLite schema version 2 stores activities and their edges. Creation and cycle
+validation occur inside the surrounding project transaction. Read APIs return
+deterministically ordered activities and support producing/consuming lookup plus
+transitive ancestor/descendant traversal.
 
 ## Consequences
 

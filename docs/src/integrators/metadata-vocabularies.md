@@ -50,10 +50,10 @@ shell quoting.
 ## Availability
 
 The typed domain model, SQLite persistence, Rust project API, and CLI read
-surface are implemented. Activity targets will become writable with activity
-persistence. Metadata traversal through C, C++, and Python is not available
-yet; those interfaces must expose the same types and repetition semantics
-without leaking the private storage encoding.
+surface are implemented. Activity metadata is writable after the activity is
+created in the same or an earlier transaction. Metadata traversal through C,
+C++, and Python is not available yet; those interfaces must expose the same
+types and repetition semantics without leaking the private storage encoding.
 
 See [standards boundaries](../concepts/standards-boundaries.md) and the
 [mapping matrix](../reference/standards-mapping-matrix.md) for the intended
