@@ -90,10 +90,9 @@ fn imported_media_creates_a_durable_contextual_revision() {
     assert_eq!(revision.transaction_id(), transaction_id);
     assert_eq!(revision.origin().expect("origin").name(), "Editorial host");
     assert_eq!(revision.message(), Some("Import camera original"));
-    assert_eq!(
-        project.changes_since(0, 1).expect("query page"),
-        [revision.clone()]
-    );
+    let page = project.changes_since(0, 1).expect("query page");
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0], revision);
 
     let events = project
         .events_for_revision(revision.id())
@@ -171,6 +170,10 @@ fn revision_queries_reject_invalid_bounds_and_missing_ids() {
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one ordered scenario covers the complete semantic event mapping"
+)]
 fn journal_decodes_every_non_import_event_kind() {
     let directory = tempdir().expect("create temporary directory");
     let path = directory.path().join("production.pproj");
@@ -289,4 +292,84 @@ fn journal_decodes_every_non_import_event_kind() {
             role: Some(role),
         } if *id == activity_id && *representation_id == output_id && role == &output_role
     ));
+}
+
+#[test]
+fn only_successful_nonempty_transactions_advance_the_feed() {
+    let directory = tempdir().expect("create temporary directory");
+    let mut project = SqliteProject::create(directory.path().join("production.pproj"), None)
+        .expect("create project");
+
+    project
+        .begin_transaction()
+        .expect("begin empty transaction")
+        .commit()
+        .expect("commit empty transaction");
+    {
+        let mut transaction = project.begin_transaction().expect("begin rollback");
+        transaction
+            .import_original(&import(40))
+            .expect("stage import");
+        transaction.rollback().expect("roll back import");
+    }
+    {
+        let mut transaction = project.begin_transaction().expect("begin failed mutation");
+        let missing_identifier = ExternalIdentifier::new(
+            IdentifierScheme::new("com.example.missing").expect("valid scheme"),
+            "missing",
+            None,
+        )
+        .expect("valid identifier");
+        assert_eq!(
+            transaction
+                .add_external_identifier(ObjectRef::Asset(AssetId::new()), &missing_identifier)
+                .expect_err("missing target must fail")
+                .kind(),
+            ErrorKind::NotFound
+        );
+        transaction.commit().expect("commit after failed mutation");
+    }
+    assert!(
+        project
+            .changes_since(0, 10)
+            .expect("query empty feed")
+            .is_empty()
+    );
+
+    for label in [50, 60, 70] {
+        let mut transaction = project.begin_transaction().expect("begin import");
+        transaction
+            .import_original(&import(label))
+            .expect("stage import");
+        transaction.commit().expect("commit import");
+    }
+
+    let first_page = project.changes_since(0, 2).expect("load first page");
+    assert_eq!(
+        first_page
+            .iter()
+            .map(postproject_core::Revision::sequence)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    let second_page = project.changes_since(2, 2).expect("load second page");
+    assert_eq!(
+        second_page
+            .iter()
+            .map(postproject_core::Revision::sequence)
+            .collect::<Vec<_>>(),
+        [3]
+    );
+    assert!(
+        project
+            .changes_since(3, 2)
+            .expect("load feed end")
+            .is_empty()
+    );
+    assert!(
+        project
+            .changes_since(u64::MAX, 2)
+            .expect("load beyond storage range")
+            .is_empty()
+    );
 }
