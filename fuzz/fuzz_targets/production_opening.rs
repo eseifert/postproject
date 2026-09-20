@@ -3,7 +3,7 @@
 use std::fs;
 
 use libfuzzer_sys::fuzz_target;
-use postproject_storage_sqlite::SqliteProject;
+use postproject_storage_sqlite::SqliteProduction;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(directory) = tempfile::tempdir() else {
@@ -13,5 +13,5 @@ fuzz_target!(|data: &[u8]| {
     if fs::write(&path, data).is_err() {
         return;
     }
-    let _ = SqliteProject::open(path);
+    let _ = SqliteProduction::open(path);
 });
