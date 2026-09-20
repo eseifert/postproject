@@ -50,8 +50,7 @@ fn repeated_and_structured_metadata_round_trip_and_query() {
     let application_note = property("com.example.editor/metadata", "note");
     let structured_contact = structured_contact();
 
-    let mut production =
-        SqliteProduction::create(&production_path, None).expect("create production");
+    let mut production = SqliteProduction::create(&production_path, None).unwrap();
     let production_target = ObjectRef::Production(production.production().id());
     {
         let mut transaction = production.begin_transaction().expect("begin transaction");

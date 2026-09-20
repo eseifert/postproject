@@ -166,16 +166,12 @@ fn exercise_provenance(
     assert_eq!(created["tool"]["version"], "8.0");
     assert_eq!(created["tool"]["uri"], "https://ffmpeg.org/");
     assert_eq!(created["agent"]["name"], "Render worker");
-    assert_eq!(
-        created["agent"]["identifier"]["scheme"],
-        "com.example.worker"
-    );
-    assert_eq!(created["agent"]["identifier"]["value"], "worker-42");
-    assert_eq!(created["agent"]["identifier"]["qualifier"], "primary");
-    assert_eq!(
-        created["inputs"][0]["role"],
-        "postproject:input.primary-video"
-    );
+    let agent_identifier = &created["agent"]["identifier"];
+    assert_eq!(agent_identifier["scheme"], "com.example.worker");
+    assert_eq!(agent_identifier["value"], "worker-42");
+    assert_eq!(agent_identifier["qualifier"], "primary");
+    let created_input = &created["inputs"][0];
+    assert_eq!(created_input["role"], "postproject:input.primary-video");
     assert_eq!(created["outputs"][0]["role"], "postproject:output.proxy");
 
     let parameter = run_json(&[
