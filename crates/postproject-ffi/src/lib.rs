@@ -17,9 +17,10 @@ use std::{
 };
 
 use postproject_core::{
-    AssetId, Error, ErrorKind, EvidenceKind, ExternalIdentifier, IdentifierScheme, Locator,
-    MediaRoot, MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, ProjectId,
-    PropertyId, RepresentationId, RepresentationResolution, ResolutionEvidence, ResourceId,
+    AssetId, AvailabilityIssue, AvailabilityIssueKind, Error, ErrorKind, EvidenceKind,
+    ExternalIdentifier, IdentifierScheme, Locator, MediaRoot, MetadataProperty, MetadataValue,
+    ObjectRef, OriginalMediaImport, ProjectId, PropertyId, RepresentationAvailability,
+    RepresentationId, RepresentationResolution, ResolutionEvidence, ResourceId,
     ResourceResolutionState, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
@@ -49,6 +50,17 @@ const PP_RESOLUTION_RESOLVED_PROBABLE: u32 = 3;
 const PP_RESOLUTION_MISSING: u32 = 4;
 const PP_RESOLUTION_AMBIGUOUS: u32 = 5;
 const PP_RESOLUTION_ERROR: u32 = 6;
+
+const PP_AVAILABILITY_ONLINE: u32 = 1;
+const PP_AVAILABILITY_PARTIAL: u32 = 2;
+const PP_AVAILABILITY_OFFLINE: u32 = 3;
+const PP_AVAILABILITY_AMBIGUOUS: u32 = 4;
+const PP_AVAILABILITY_ERROR: u32 = 5;
+
+const PP_AVAILABILITY_ISSUE_OFFLINE_RESOURCE: u32 = 1;
+const PP_AVAILABILITY_ISSUE_AMBIGUOUS_RESOURCE: u32 = 2;
+const PP_AVAILABILITY_ISSUE_RESOURCE_ERROR: u32 = 3;
+const PP_AVAILABILITY_ISSUE_MISSING_FRAMES: u32 = 4;
 
 const PP_EVIDENCE_KNOWN_LOCATOR_AVAILABLE: u32 = 1;
 const PP_EVIDENCE_EXACT_FINGERPRINT_MATCH: u32 = 2;
@@ -138,7 +150,9 @@ pub struct PpResolutionSet {
 
 struct AbiRepresentationResolution {
     representation_id: RepresentationId,
+    availability: RepresentationAvailability,
     resources: Vec<AbiResolution>,
+    issues: Vec<AvailabilityIssue>,
 }
 
 struct AbiResolution {
@@ -1154,6 +1168,272 @@ pub unsafe extern "C" fn pp_resolution_set_count(resolutions: *const PpResolutio
     .unwrap_or(0)
 }
 
+/// Returns the number of representation results in a resolution set.
+/// Null input returns zero.
+///
+/// # Safety
+///
+/// `resolutions` must be null or a live handle returned by this library.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_set_representation_count(
+    resolutions: *const PpResolutionSet,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null pointer is live for this call by the caller contract.
+        unsafe { resolutions.as_ref() }.map_or(0, |set| {
+            u64::try_from(set.representations.len()).unwrap_or(u64::MAX)
+        })
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one representation-level availability result.
+///
+/// # Safety
+///
+/// `resolutions` must be live. Every output must be writable, and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_set_get_representation(
+    resolutions: *const PpResolutionSet,
+    representation_index: u64,
+    out_representation_id: *mut PpUuid,
+    out_availability: *mut u32,
+    out_resource_count: *mut u64,
+    out_issue_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_uuid(out_representation_id);
+        initialize_value(out_availability, 0);
+        initialize_value(out_resource_count, 0);
+        initialize_value(out_issue_count, 0);
+        ffi_call(out_error, || {
+            require_output(out_representation_id, "out_representation_id")?;
+            require_output(out_availability, "out_availability")?;
+            require_output(out_resource_count, "out_resource_count")?;
+            require_output(out_issue_count, "out_issue_count")?;
+            let resolution = representation_resolution_at(resolutions, representation_index)?;
+            out_representation_id.write(PpUuid {
+                bytes: resolution.representation_id.into_bytes(),
+            });
+            out_availability.write(representation_availability(resolution.availability));
+            out_resource_count.write(length_as_u64(resolution.resources.len())?);
+            out_issue_count.write(length_as_u64(resolution.issues.len())?);
+            Ok(())
+        })
+    }
+}
+
+/// Reads one resource result nested under a representation result.
+///
+/// # Safety
+///
+/// `resolutions` must be live. Every output must be writable, and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_set_get_resource(
+    resolutions: *const PpResolutionSet,
+    representation_index: u64,
+    resource_index: u64,
+    out_resource_id: *mut PpUuid,
+    out_state: *mut u32,
+    out_candidate_count: *mut u64,
+    out_evidence_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_uuid(out_resource_id);
+        initialize_value(out_state, 0);
+        initialize_value(out_candidate_count, 0);
+        initialize_value(out_evidence_count, 0);
+        ffi_call(out_error, || {
+            require_output(out_resource_id, "out_resource_id")?;
+            require_output(out_state, "out_state")?;
+            require_output(out_candidate_count, "out_candidate_count")?;
+            require_output(out_evidence_count, "out_evidence_count")?;
+            let resolution =
+                resource_resolution_at(resolutions, representation_index, resource_index)?;
+            out_resource_id.write(PpUuid {
+                bytes: resolution.resource_id.into_bytes(),
+            });
+            out_state.write(resolution.state);
+            out_candidate_count.write(length_as_u64(resolution.candidates.len())?);
+            out_evidence_count.write(length_as_u64(resolution.evidence.len())?);
+            Ok(())
+        })
+    }
+}
+
+/// Reads one representation availability issue.
+///
+/// # Safety
+///
+/// `resolutions` must be live. Every output must be writable, and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_set_get_issue(
+    resolutions: *const PpResolutionSet,
+    representation_index: u64,
+    issue_index: u64,
+    out_resource_id: *mut PpUuid,
+    out_required: *mut u8,
+    out_kind: *mut u32,
+    out_frame_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_uuid(out_resource_id);
+        initialize_value(out_required, 0);
+        initialize_value(out_kind, 0);
+        initialize_value(out_frame_count, 0);
+        ffi_call(out_error, || {
+            require_output(out_resource_id, "out_resource_id")?;
+            require_output(out_required, "out_required")?;
+            require_output(out_kind, "out_kind")?;
+            require_output(out_frame_count, "out_frame_count")?;
+            let representation = representation_resolution_at(resolutions, representation_index)?;
+            let issue = item_at(&representation.issues, issue_index, "availability issue")?;
+            out_resource_id.write(PpUuid {
+                bytes: issue.resource_id().into_bytes(),
+            });
+            out_required.write(u8::from(issue.is_required()));
+            out_kind.write(availability_issue_kind(issue.kind()));
+            out_frame_count.write(length_as_u64(issue.frames().len())?);
+            Ok(())
+        })
+    }
+}
+
+/// Reads one missing-frame value from an availability issue.
+///
+/// # Safety
+///
+/// `resolutions` must be live. `out_frame` must be writable, and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_set_get_issue_frame(
+    resolutions: *const PpResolutionSet,
+    representation_index: u64,
+    issue_index: u64,
+    frame_index: u64,
+    out_frame: *mut i64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Output is initialized and checked before writes.
+    unsafe {
+        initialize_value(out_frame, 0);
+        ffi_call(out_error, || {
+            require_output(out_frame, "out_frame")?;
+            let representation = representation_resolution_at(resolutions, representation_index)?;
+            let issue = item_at(&representation.issues, issue_index, "availability issue")?;
+            let frame = item_at(issue.frames(), frame_index, "missing frame")?;
+            out_frame.write(*frame);
+            Ok(())
+        })
+    }
+}
+
+/// Reads one candidate nested under a resource result.
+///
+/// The URI is borrowed until the resolution set is released.
+///
+/// # Safety
+///
+/// `resolutions` must be live. Every output must be writable, and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_set_get_candidate(
+    resolutions: *const PpResolutionSet,
+    representation_index: u64,
+    resource_index: u64,
+    candidate_index: u64,
+    out_uri: *mut *const c_char,
+    out_confidence_basis_points: *mut u16,
+    out_evidence_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_const_output(out_uri);
+        initialize_value(out_confidence_basis_points, 0);
+        initialize_value(out_evidence_count, 0);
+        ffi_call(out_error, || {
+            require_output(out_uri, "out_uri")?;
+            require_output(out_confidence_basis_points, "out_confidence_basis_points")?;
+            require_output(out_evidence_count, "out_evidence_count")?;
+            let resource =
+                resource_resolution_at(resolutions, representation_index, resource_index)?;
+            let candidate = item_at(&resource.candidates, candidate_index, "candidate")?;
+            out_uri.write(candidate.uri.as_ptr());
+            out_confidence_basis_points.write(candidate.confidence);
+            out_evidence_count.write(length_as_u64(candidate.evidence.len())?);
+            Ok(())
+        })
+    }
+}
+
+/// Reads resource-level evidence.
+///
+/// # Safety
+///
+/// `resolutions` must be live. Outputs must be writable, and `out_error` may be
+/// null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_set_get_resource_evidence(
+    resolutions: *const PpResolutionSet,
+    representation_index: u64,
+    resource_index: u64,
+    evidence_index: u64,
+    out_kind: *mut u32,
+    out_detail: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized before delegating to checked helpers.
+    unsafe {
+        initialize_value(out_kind, 0);
+        initialize_const_output(out_detail);
+        ffi_call(out_error, || {
+            let resource =
+                resource_resolution_at(resolutions, representation_index, resource_index)?;
+            write_evidence(&resource.evidence, evidence_index, out_kind, out_detail)
+        })
+    }
+}
+
+/// Reads candidate-level evidence.
+///
+/// # Safety
+///
+/// `resolutions` must be live. Outputs must be writable, and `out_error` may be
+/// null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_resolution_set_get_candidate_evidence(
+    resolutions: *const PpResolutionSet,
+    representation_index: u64,
+    resource_index: u64,
+    candidate_index: u64,
+    evidence_index: u64,
+    out_kind: *mut u32,
+    out_detail: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized before delegating to checked helpers.
+    unsafe {
+        initialize_value(out_kind, 0);
+        initialize_const_output(out_detail);
+        ffi_call(out_error, || {
+            let resource =
+                resource_resolution_at(resolutions, representation_index, resource_index)?;
+            let candidate = item_at(&resource.candidates, candidate_index, "candidate")?;
+            write_evidence(&candidate.evidence, evidence_index, out_kind, out_detail)
+        })
+    }
+}
+
 /// Reads one representation-level resolution result.
 ///
 /// # Safety
@@ -2001,6 +2281,36 @@ fn project_handle(project: SqliteProject) -> PpProject {
     }
 }
 
+unsafe fn representation_resolution_at<'a>(
+    resolutions: *const PpResolutionSet,
+    index: u64,
+) -> Result<&'a AbiRepresentationResolution, Error> {
+    // SAFETY: Exported callers guarantee a non-null handle remains live for the
+    // complete call. The reference never escapes an exported operation.
+    let resolutions = unsafe { resolutions.as_ref() }
+        .ok_or_else(|| invalid_argument("resolutions must not be null"))?;
+    item_at(
+        &resolutions.representations,
+        index,
+        "representation resolution",
+    )
+}
+
+unsafe fn resource_resolution_at<'a>(
+    resolutions: *const PpResolutionSet,
+    representation_index: u64,
+    resource_index: u64,
+) -> Result<&'a AbiResolution, Error> {
+    // SAFETY: The caller upholds the live-handle contract for this complete call.
+    let representation =
+        unsafe { representation_resolution_at(resolutions, representation_index) }?;
+    item_at(
+        &representation.resources,
+        resource_index,
+        "resource resolution",
+    )
+}
+
 unsafe fn resolution_at<'a>(
     resolutions: *const PpResolutionSet,
     index: u64,
@@ -2058,6 +2368,7 @@ impl PpResolutionSet {
                 .into_iter()
                 .map(|resolution| AbiRepresentationResolution {
                     representation_id: resolution.representation_id(),
+                    availability: resolution.availability(),
                     resources: resolution
                         .resources()
                         .iter()
@@ -2080,6 +2391,7 @@ impl PpResolutionSet {
                             evidence: resource.evidence().iter().map(AbiEvidence::from).collect(),
                         })
                         .collect(),
+                    issues: resolution.issues().to_vec(),
                 })
                 .collect(),
         }
@@ -2131,6 +2443,27 @@ const fn resolution_state(state: ResourceResolutionState) -> u32 {
         ResourceResolutionState::Offline => PP_RESOLUTION_MISSING,
         ResourceResolutionState::Ambiguous => PP_RESOLUTION_AMBIGUOUS,
         ResourceResolutionState::Error => PP_RESOLUTION_ERROR,
+        _ => 0,
+    }
+}
+
+const fn representation_availability(availability: RepresentationAvailability) -> u32 {
+    match availability {
+        RepresentationAvailability::Online => PP_AVAILABILITY_ONLINE,
+        RepresentationAvailability::Partial => PP_AVAILABILITY_PARTIAL,
+        RepresentationAvailability::Offline => PP_AVAILABILITY_OFFLINE,
+        RepresentationAvailability::Ambiguous => PP_AVAILABILITY_AMBIGUOUS,
+        RepresentationAvailability::Error => PP_AVAILABILITY_ERROR,
+        _ => 0,
+    }
+}
+
+const fn availability_issue_kind(kind: AvailabilityIssueKind) -> u32 {
+    match kind {
+        AvailabilityIssueKind::OfflineResource => PP_AVAILABILITY_ISSUE_OFFLINE_RESOURCE,
+        AvailabilityIssueKind::AmbiguousResource => PP_AVAILABILITY_ISSUE_AMBIGUOUS_RESOURCE,
+        AvailabilityIssueKind::ResourceError => PP_AVAILABILITY_ISSUE_RESOURCE_ERROR,
+        AvailabilityIssueKind::MissingFrames => PP_AVAILABILITY_ISSUE_MISSING_FRAMES,
         _ => 0,
     }
 }

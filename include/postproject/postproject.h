@@ -85,6 +85,30 @@ typedef uint32_t pp_resolution_state_t;
 #define PP_RESOLUTION_AMBIGUOUS UINT32_C(5)
 #define PP_RESOLUTION_ERROR UINT32_C(6)
 
+typedef uint32_t pp_representation_availability_t;
+
+#define PP_AVAILABILITY_ONLINE UINT32_C(1)
+#define PP_AVAILABILITY_PARTIAL UINT32_C(2)
+#define PP_AVAILABILITY_OFFLINE UINT32_C(3)
+#define PP_AVAILABILITY_AMBIGUOUS UINT32_C(4)
+#define PP_AVAILABILITY_ERROR UINT32_C(5)
+
+typedef uint32_t pp_resource_resolution_state_t;
+
+#define PP_RESOURCE_ONLINE_AT_KNOWN_LOCATOR UINT32_C(1)
+#define PP_RESOURCE_RESOLVED_EXACT UINT32_C(2)
+#define PP_RESOURCE_RESOLVED_PROBABLE UINT32_C(3)
+#define PP_RESOURCE_OFFLINE UINT32_C(4)
+#define PP_RESOURCE_AMBIGUOUS UINT32_C(5)
+#define PP_RESOURCE_RESOLUTION_ERROR UINT32_C(6)
+
+typedef uint32_t pp_availability_issue_kind_t;
+
+#define PP_AVAILABILITY_ISSUE_OFFLINE_RESOURCE UINT32_C(1)
+#define PP_AVAILABILITY_ISSUE_AMBIGUOUS_RESOURCE UINT32_C(2)
+#define PP_AVAILABILITY_ISSUE_RESOURCE_ERROR UINT32_C(3)
+#define PP_AVAILABILITY_ISSUE_MISSING_FRAMES UINT32_C(4)
+
 typedef uint32_t pp_evidence_kind_t;
 
 #define PP_EVIDENCE_KNOWN_LOCATOR_AVAILABLE UINT32_C(1)
@@ -202,6 +226,44 @@ PP_API pp_error_code_t pp_project_resolve_asset(
     pp_resolution_set_t **out_resolutions, pp_error_t **out_error);
 PP_API uint64_t
 pp_resolution_set_count(const pp_resolution_set_t *resolutions);
+PP_API uint64_t pp_resolution_set_representation_count(
+    const pp_resolution_set_t *resolutions);
+PP_API pp_error_code_t pp_resolution_set_get_representation(
+    const pp_resolution_set_t *resolutions, uint64_t representation_index,
+    pp_uuid_t *out_representation_id,
+    pp_representation_availability_t *out_availability,
+    uint64_t *out_resource_count, uint64_t *out_issue_count,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_resolution_set_get_resource(
+    const pp_resolution_set_t *resolutions, uint64_t representation_index,
+    uint64_t resource_index, pp_uuid_t *out_resource_id,
+    pp_resource_resolution_state_t *out_state,
+    uint64_t *out_candidate_count, uint64_t *out_evidence_count,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_resolution_set_get_issue(
+    const pp_resolution_set_t *resolutions, uint64_t representation_index,
+    uint64_t issue_index, pp_uuid_t *out_resource_id, uint8_t *out_required,
+    pp_availability_issue_kind_t *out_kind, uint64_t *out_frame_count,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_resolution_set_get_issue_frame(
+    const pp_resolution_set_t *resolutions, uint64_t representation_index,
+    uint64_t issue_index, uint64_t frame_index, int64_t *out_frame,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_resolution_set_get_candidate(
+    const pp_resolution_set_t *resolutions, uint64_t representation_index,
+    uint64_t resource_index, uint64_t candidate_index, const char **out_uri,
+    uint16_t *out_confidence_basis_points, uint64_t *out_evidence_count,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_resolution_set_get_resource_evidence(
+    const pp_resolution_set_t *resolutions, uint64_t representation_index,
+    uint64_t resource_index, uint64_t evidence_index,
+    pp_evidence_kind_t *out_kind, const char **out_detail,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_resolution_set_get_candidate_evidence(
+    const pp_resolution_set_t *resolutions, uint64_t representation_index,
+    uint64_t resource_index, uint64_t candidate_index,
+    uint64_t evidence_index, pp_evidence_kind_t *out_kind,
+    const char **out_detail, pp_error_t **out_error);
 PP_API pp_error_code_t pp_resolution_set_get(
     const pp_resolution_set_t *resolutions, uint64_t resolution_index,
     pp_uuid_t *out_representation_id, pp_uuid_t *out_resource_id,
