@@ -1,8 +1,8 @@
 //! Explicit SQLite-backed domain transactions.
 
 use postproject_core::{
-    ContentStructure, ContentStructureKind, Error, ErrorKind, ExternalIdentifier, Locator,
-    LocatorAvailability, MediaRoot, MetadataProperty, MetadataValue, ObjectRef,
+    Activity, ContentStructure, ContentStructureKind, Error, ErrorKind, ExternalIdentifier,
+    Locator, LocatorAvailability, MediaRoot, MetadataProperty, MetadataValue, ObjectRef,
     OriginalMediaImport, Project, ProjectStoreTransaction, Resource, Result, TransactionId,
     TransactionLifecycle, TransactionState,
 };
@@ -232,8 +232,7 @@ impl<'project> SqliteTransaction<'project> {
     /// # Errors
     ///
     /// Returns [`ErrorKind::NotFound`] when the target does not exist,
-    /// [`ErrorKind::Unsupported`] for activity metadata before activities are
-    /// persisted, or a transaction/encoding/storage error.
+    /// or a transaction/encoding/storage error.
     pub fn add_metadata_value(
         &mut self,
         target: ObjectRef,
@@ -262,8 +261,7 @@ impl<'project> SqliteTransaction<'project> {
     /// # Errors
     ///
     /// Returns [`ErrorKind::NotFound`] when the target does not exist,
-    /// [`ErrorKind::Unsupported`] for activity metadata before activities are
-    /// persisted, or a transaction/encoding/storage error.
+    /// or a transaction/encoding/storage error.
     pub fn replace_metadata_values(
         &mut self,
         target: ObjectRef,
@@ -316,6 +314,92 @@ impl<'project> SqliteTransaction<'project> {
             return Err(Error::new(
                 ErrorKind::NotFound,
                 "metadata property does not exist on target",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Stages a complete production activity and its provenance edges.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when an edge references an absent
+    /// representation, [`ErrorKind::AlreadyExists`] for a duplicate activity,
+    /// [`ErrorKind::Conflict`] when the new edges create a cycle, or a
+    /// transaction/storage error.
+    pub fn create_activity(&mut self, activity: &Activity) -> Result<()> {
+        let transaction = self.open_transaction()?;
+        let tool = activity.tool();
+        let agent = activity.agent();
+        let agent_identifier = agent.and_then(postproject_core::AgentIdentity::identifier);
+        transaction
+            .execute(
+                "INSERT INTO activities (
+                    id, kind, started_at_micros, finished_at_micros,
+                    tool_name, tool_version, tool_uri, agent_name,
+                    agent_identifier_scheme, agent_identifier_value,
+                    agent_identifier_qualifier
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    activity.id().as_bytes().as_slice(),
+                    activity.kind().as_str(),
+                    activity
+                        .started_at()
+                        .map(postproject_core::Timestamp::as_unix_micros),
+                    activity
+                        .finished_at()
+                        .map(postproject_core::Timestamp::as_unix_micros),
+                    tool.map(postproject_core::ToolIdentity::name),
+                    tool.and_then(postproject_core::ToolIdentity::version),
+                    tool.and_then(postproject_core::ToolIdentity::uri),
+                    agent.and_then(postproject_core::AgentIdentity::name),
+                    agent_identifier.map(|identifier| identifier.scheme().as_str()),
+                    agent_identifier.map(postproject_core::ExternalIdentifier::value),
+                    agent_identifier.and_then(postproject_core::ExternalIdentifier::qualifier),
+                ],
+            )
+            .map_err(mutation_error("persist activity"))?;
+
+        let edge_result = (|| {
+            for input in activity.inputs() {
+                transaction
+                    .execute(
+                        "INSERT INTO activity_inputs (
+                            activity_id, representation_id, role
+                         ) VALUES (?1, ?2, ?3)",
+                        params![
+                            activity.id().as_bytes().as_slice(),
+                            input.representation_id().as_bytes().as_slice(),
+                            input.role().map(postproject_core::ActivityRole::as_str),
+                        ],
+                    )
+                    .map_err(activity_edge_error("persist activity input"))?;
+            }
+            for output in activity.outputs() {
+                transaction
+                    .execute(
+                        "INSERT INTO activity_outputs (
+                            activity_id, representation_id, role
+                         ) VALUES (?1, ?2, ?3)",
+                        params![
+                            activity.id().as_bytes().as_slice(),
+                            output.representation_id().as_bytes().as_slice(),
+                            output.role().map(postproject_core::ActivityRole::as_str),
+                        ],
+                    )
+                    .map_err(activity_edge_error("persist activity output"))?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = edge_result {
+            delete_activity(transaction, activity)?;
+            return Err(error);
+        }
+        if activity_creates_cycle(transaction, activity)? {
+            delete_activity(transaction, activity)?;
+            return Err(Error::new(
+                ErrorKind::Conflict,
+                "activity would create a provenance cycle",
             ));
         }
         Ok(())
@@ -439,6 +523,10 @@ impl ProjectStoreTransaction for SqliteTransaction<'_> {
         property: &MetadataProperty,
     ) -> Result<()> {
         SqliteTransaction::remove_metadata_property(self, target, property)
+    }
+
+    fn create_activity(&mut self, activity: &Activity) -> Result<()> {
+        SqliteTransaction::create_activity(self, activity)
     }
 
     fn commit(&mut self) -> Result<()> {
@@ -638,12 +726,7 @@ fn ensure_metadata_target_exists(
         1 => "assets",
         2 => "representations",
         3 => "resources",
-        4 => {
-            return Err(Error::new(
-                ErrorKind::Unsupported,
-                "activity metadata requires activity persistence",
-            ));
-        }
+        4 => "activities",
         _ => {
             return Err(Error::new(
                 ErrorKind::Unsupported,
@@ -746,4 +829,50 @@ fn mutation_error(context: &'static str) -> impl FnOnce(rusqlite::Error) -> Erro
         };
         Error::new(kind, format!("{context}: {error}"))
     }
+}
+
+fn activity_edge_error(context: &'static str) -> impl FnOnce(rusqlite::Error) -> Error {
+    move |error| {
+        let kind = if error.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) {
+            ErrorKind::NotFound
+        } else {
+            ErrorKind::Storage
+        };
+        Error::new(kind, format!("{context}: {error}"))
+    }
+}
+
+fn activity_creates_cycle(transaction: &Transaction<'_>, activity: &Activity) -> Result<bool> {
+    transaction
+        .query_row(
+            "WITH RECURSIVE descendants(representation_id) AS (
+                SELECT representation_id FROM activity_outputs WHERE activity_id = ?1
+                UNION
+                SELECT outputs.representation_id
+                FROM descendants
+                JOIN activity_inputs inputs
+                  ON inputs.representation_id = descendants.representation_id
+                JOIN activity_outputs outputs
+                  ON outputs.activity_id = inputs.activity_id
+             )
+             SELECT EXISTS(
+                SELECT 1 FROM descendants
+                JOIN activity_inputs inputs
+                  ON inputs.activity_id = ?1
+                 AND inputs.representation_id = descendants.representation_id
+             )",
+            [activity.id().as_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .map_err(sqlite_error("check activity cycle"))
+}
+
+fn delete_activity(transaction: &Transaction<'_>, activity: &Activity) -> Result<()> {
+    transaction
+        .execute(
+            "DELETE FROM activities WHERE id = ?1",
+            [activity.id().as_bytes().as_slice()],
+        )
+        .map(|_| ())
+        .map_err(sqlite_error("discard invalid activity"))
 }

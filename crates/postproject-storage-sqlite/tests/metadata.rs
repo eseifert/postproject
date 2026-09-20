@@ -187,9 +187,9 @@ fn metadata_mutations_are_atomic_and_validate_targets() {
     assert_eq!(
         transaction
             .add_metadata_value(ObjectRef::Activity(ActivityId::new()), &title, &value)
-            .expect_err("activity persistence is not present")
+            .expect_err("missing activity target")
             .kind(),
-        ErrorKind::Unsupported
+        ErrorKind::NotFound
     );
     transaction.rollback().unwrap();
 }

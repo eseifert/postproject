@@ -1,10 +1,10 @@
 //! Domain-shaped contracts implemented by persistence backends.
 
 use crate::{
-    Asset, AssetId, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot, MetadataAssertion,
-    MetadataMatch, MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, Project,
-    Representation, RepresentationId, Resource, ResourceId, Result, TransactionId,
-    TransactionState,
+    Activity, Asset, AssetId, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot,
+    MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
+    OriginalMediaImport, Project, Representation, RepresentationId, Resource, ResourceId, Result,
+    TransactionId, TransactionState,
 };
 
 /// Read operations required from a project persistence backend.
@@ -191,6 +191,15 @@ pub trait ProjectStoreTransaction {
         target: ObjectRef,
         property: &MetadataProperty,
     ) -> Result<()>;
+
+    /// Stages a complete production activity with its input and output edges.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, a referenced
+    /// representation is absent, the activity already exists, its edges would
+    /// create a provenance cycle, or persistence fails.
+    fn create_activity(&mut self, activity: &Activity) -> Result<()>;
 
     /// Atomically makes every staged mutation durable.
     ///
