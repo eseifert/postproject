@@ -10,11 +10,11 @@ use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, EvidenceKind, ExternalIdentifier,
     IdentifierScheme, Locator, LocatorAvailability, MetadataAssertion, MetadataField,
-    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, ProjectId, PropertyId,
-    Representation, RepresentationAvailability, RepresentationId, RepresentationKind,
-    RepresentationResolution, ResolutionEvidence, Resource, ResourceId, ResourceResolution,
-    ResourceResolutionState, Revision, RevisionEvent, RevisionEventKind, RevisionId, Timestamp,
-    ToolIdentity, VocabularyId,
+    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity, ProjectId,
+    ProjectStoreTransaction, PropertyId, Representation, RepresentationAvailability,
+    RepresentationId, RepresentationKind, RepresentationResolution, ResolutionEvidence, Resource,
+    ResourceId, ResourceResolution, ResourceResolutionState, Revision, RevisionContext,
+    RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
@@ -773,6 +773,7 @@ fn media_add(args: MediaAddArgs, json: bool) -> Result<()> {
     let mut transaction = project
         .begin_transaction()
         .context("begin import transaction")?;
+    set_cli_revision_context(&mut transaction, "Import media")?;
     transaction
         .import_original(&prepared)
         .context("stage media import")?;
@@ -863,6 +864,7 @@ fn root_add(args: RootAddArgs, json: bool) -> Result<()> {
     let mut transaction = project
         .begin_transaction()
         .context("begin root transaction")?;
+    set_cli_revision_context(&mut transaction, "Add media root")?;
     transaction
         .add_media_root(root)
         .context("stage media root")?;
@@ -886,6 +888,14 @@ fn identifier_mutate(args: IdentifierMutationArgs, remove: bool, json: bool) -> 
     let mut transaction = project
         .begin_transaction()
         .context("begin identifier transaction")?;
+    set_cli_revision_context(
+        &mut transaction,
+        if remove {
+            "Remove external identifier"
+        } else {
+            "Add external identifier"
+        },
+    )?;
     if remove {
         transaction
             .remove_external_identifier(target, &identifier)
@@ -973,6 +983,7 @@ fn metadata_add_text(args: MetadataAddTextArgs, json: bool) -> Result<()> {
     let mut transaction = project
         .begin_transaction()
         .context("begin metadata transaction")?;
+    set_cli_revision_context(&mut transaction, "Add metadata")?;
     transaction
         .add_metadata_value(target, &property, &value)
         .context("stage metadata value")?;
@@ -1016,6 +1027,7 @@ fn metadata_remove(args: MetadataPropertyArgs, json: bool) -> Result<()> {
     let mut transaction = project
         .begin_transaction()
         .context("begin metadata transaction")?;
+    set_cli_revision_context(&mut transaction, "Remove metadata")?;
     transaction
         .remove_metadata_property(target, &property)
         .context("stage metadata property removal")?;
@@ -1173,6 +1185,7 @@ fn activity_add(args: ActivityAddArgs, json: bool) -> Result<()> {
     let mut transaction = project
         .begin_transaction()
         .context("begin activity transaction")?;
+    set_cli_revision_context(&mut transaction, "Record activity")?;
     transaction
         .create_activity(&activity)
         .context("stage activity")?;
@@ -1483,6 +1496,7 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
         let mut transaction = project
             .begin_transaction()
             .context("begin confirmation transaction")?;
+        set_cli_revision_context(&mut transaction, "Confirm media locator")?;
         transaction
             .add_locator(&locator)
             .context("stage confirmed locator")?;
@@ -1869,6 +1883,23 @@ impl From<&ResolutionEvidence> for EvidenceView {
             detail: evidence.detail().map(str::to_owned),
         }
     }
+}
+
+fn set_cli_revision_context(
+    transaction: &mut impl ProjectStoreTransaction,
+    message: &str,
+) -> Result<()> {
+    let origin = OriginIdentity::new(
+        "postproject-cli",
+        Some(env!("CARGO_PKG_VERSION").to_owned()),
+        None,
+    )
+    .context("build CLI revision origin")?;
+    let context = RevisionContext::new(Some(origin), Some(message.to_owned()))
+        .context("build CLI revision context")?;
+    transaction
+        .set_revision_context(context)
+        .context("set CLI revision context")
 }
 
 fn print_json(value: &impl Serialize) -> Result<()> {

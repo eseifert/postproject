@@ -366,6 +366,9 @@ fn reads_revision_pages_and_semantic_events() {
     assert_eq!(revisions.len(), 1);
     assert_eq!(revisions[0]["sequence"], 1);
     assert!(revisions[0]["transaction_id"].is_string());
+    assert_eq!(revisions[0]["origin"]["name"], "postproject-cli");
+    assert!(revisions[0]["origin"]["version"].is_string());
+    assert_eq!(revisions[0]["message"], "Import media");
     let revision_id = revisions[0]["id"].as_str().expect("revision ID");
 
     let latest = run_json(&["revisions", "latest", project_path]);
