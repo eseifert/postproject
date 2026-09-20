@@ -456,4 +456,70 @@ mod tests {
         assert!(AgentIdentity::new(None, None).is_err());
         assert!(AgentIdentity::new(Some("bad\0name".to_owned()), None).is_err());
     }
+
+    #[test]
+    fn activity_supports_canonical_fan_in_and_fan_out() {
+        let first_input = RepresentationId::from_bytes([2; 16]);
+        let second_input = RepresentationId::from_bytes([1; 16]);
+        let first_output = RepresentationId::from_bytes([4; 16]);
+        let second_output = RepresentationId::from_bytes([3; 16]);
+        let activity = Activity::new(
+            ActivityId::new(),
+            ActivityKind::new("postproject:transcode").expect("valid kind"),
+            vec![
+                ActivityInput::new(first_input, None),
+                ActivityInput::new(second_input, None),
+            ],
+            vec![
+                ActivityOutput::new(first_output, None),
+                ActivityOutput::new(second_output, None),
+            ],
+        )
+        .expect("valid activity")
+        .with_timing(
+            Some(Timestamp::from_unix_micros(10)),
+            Some(Timestamp::from_unix_micros(20)),
+        )
+        .expect("valid timing");
+
+        assert_eq!(activity.inputs()[0].representation_id(), second_input);
+        assert_eq!(activity.inputs()[1].representation_id(), first_input);
+        assert_eq!(activity.outputs()[0].representation_id(), second_output);
+        assert_eq!(activity.outputs()[1].representation_id(), first_output);
+    }
+
+    #[test]
+    fn activity_rejects_incomplete_or_ambiguous_graph_facts() {
+        let representation = RepresentationId::new();
+        let kind = || ActivityKind::new("postproject:vfx-render").expect("valid kind");
+        let input = || ActivityInput::new(representation, None);
+        let output = || ActivityOutput::new(representation, None);
+
+        let no_outputs = Activity::new(ActivityId::new(), kind(), vec![input()], Vec::new());
+        assert!(no_outputs.is_err());
+
+        let duplicate = Activity::new(
+            ActivityId::new(),
+            kind(),
+            Vec::new(),
+            vec![output(), output()],
+        );
+        assert!(duplicate.is_err());
+
+        let self_edge = Activity::new(ActivityId::new(), kind(), vec![input()], vec![output()]);
+        assert!(self_edge.is_err());
+
+        let reversed_time = Activity::new(
+            ActivityId::new(),
+            kind(),
+            Vec::new(),
+            vec![ActivityOutput::new(RepresentationId::new(), None)],
+        )
+        .expect("valid activity")
+        .with_timing(
+            Some(Timestamp::from_unix_micros(2)),
+            Some(Timestamp::from_unix_micros(1)),
+        );
+        assert!(reversed_time.is_err());
+    }
 }
