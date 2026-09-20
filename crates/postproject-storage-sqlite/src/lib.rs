@@ -24,8 +24,8 @@ use postproject_core::{
     MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, Project, ProjectId, ProjectRead,
     ProjectStore, PropertyId, RationalRate, Representation, RepresentationFingerprint,
     RepresentationId, RepresentationKind, Resource, ResourceFingerprint, ResourceId,
-    ResourceMember, ResourceRole, Result, Revision, RevisionId, Timestamp, ToolIdentity,
-    TransactionId, VocabularyId,
+    ResourceMember, ResourceRole, Result, Revision, RevisionEvent, RevisionEventKind, RevisionId,
+    Timestamp, ToolIdentity, TransactionId, VocabularyId,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
 
@@ -65,6 +65,22 @@ struct StoredRevision {
     origin_version: Option<String>,
     origin_uri: Option<String>,
     message: Option<String>,
+}
+
+struct StoredRevisionEvent {
+    position: i64,
+    kind: i64,
+    target_kind: Option<i64>,
+    primary_id: Option<Vec<u8>>,
+    secondary_id: Option<Vec<u8>>,
+    structural_position: Option<i64>,
+    vocabulary: Option<String>,
+    property: Option<String>,
+    identifier_scheme: Option<String>,
+    identifier_value: Option<String>,
+    identifier_qualifier: Option<String>,
+    activity_kind: Option<String>,
+    role: Option<String>,
 }
 
 type StoredActivityEdge = (RepresentationId, Option<ActivityRole>);
@@ -900,6 +916,48 @@ impl SqliteProject {
             .collect()
     }
 
+    /// Loads one revision's semantic events in stable position order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when `revision_id` is absent, or
+    /// [`ErrorKind::Storage`] when persisted event data is malformed.
+    pub fn events_for_revision(&self, revision_id: RevisionId) -> Result<Vec<RevisionEvent>> {
+        let exists = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM revisions WHERE id = ?1)",
+                [revision_id.as_bytes().as_slice()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(sqlite_error("check revision existence"))?;
+        if !exists {
+            return Err(Error::new(ErrorKind::NotFound, "revision does not exist"));
+        }
+
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT position, kind, target_kind, primary_id, secondary_id,
+                        structural_position, vocabulary, property,
+                        identifier_scheme, identifier_value, identifier_qualifier,
+                        activity_kind, role
+                 FROM revision_events WHERE revision_id = ?1 ORDER BY position",
+            )
+            .map_err(sqlite_error("prepare revision event query"))?;
+        statement
+            .query_map(
+                [revision_id.as_bytes().as_slice()],
+                stored_revision_event_row,
+            )
+            .map_err(sqlite_error("query revision events"))?
+            .map(|row| {
+                row.map_err(sqlite_error("read revision event row"))
+                    .and_then(|event| decode_revision_event(revision_id, event))
+            })
+            .collect()
+    }
+
     fn related_representations(
         &self,
         representation_id: RepresentationId,
@@ -1067,6 +1125,10 @@ impl ProjectRead for SqliteProject {
 
     fn changes_since(&self, sequence: u64, limit: u32) -> Result<Vec<Revision>> {
         SqliteProject::changes_since(self, sequence, limit)
+    }
+
+    fn events_for_revision(&self, revision_id: RevisionId) -> Result<Vec<RevisionEvent>> {
+        SqliteProject::events_for_revision(self, revision_id)
     }
 }
 
@@ -1395,6 +1457,162 @@ fn decode_revision(stored: StoredRevision) -> Result<Revision> {
         stored.message,
     )
     .map_err(stored_domain_error("revision"))
+}
+
+fn stored_revision_event_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredRevisionEvent> {
+    Ok(StoredRevisionEvent {
+        position: row.get(0)?,
+        kind: row.get(1)?,
+        target_kind: row.get(2)?,
+        primary_id: row.get(3)?,
+        secondary_id: row.get(4)?,
+        structural_position: row.get(5)?,
+        vocabulary: row.get(6)?,
+        property: row.get(7)?,
+        identifier_scheme: row.get(8)?,
+        identifier_value: row.get(9)?,
+        identifier_qualifier: row.get(10)?,
+        activity_kind: row.get(11)?,
+        role: row.get(12)?,
+    })
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeping the exhaustive semantic-event schema mapping together is auditable"
+)]
+fn decode_revision_event(
+    revision_id: RevisionId,
+    stored: StoredRevisionEvent,
+) -> Result<RevisionEvent> {
+    let position = stored_u32(stored.position, "revision event position")?;
+    let primary_id = |label| required_stored_id(stored.primary_id.clone(), label);
+    let secondary_id = |label| required_stored_id(stored.secondary_id.clone(), label);
+    let target = || {
+        let kind = required_stored(stored.target_kind, "revision event target kind")?;
+        decode_metadata_target(
+            kind,
+            required_stored(stored.primary_id.clone(), "target ID")?,
+        )
+    };
+    let identifier = || {
+        decode_external_identifier(
+            required_stored(
+                stored.identifier_scheme.clone(),
+                "revision event identifier scheme",
+            )?,
+            required_stored(
+                stored.identifier_value.clone(),
+                "revision event identifier value",
+            )?,
+            stored.identifier_qualifier.clone(),
+        )
+    };
+    let property = || {
+        let vocabulary = VocabularyId::new(required_stored(
+            stored.vocabulary.clone(),
+            "revision event vocabulary",
+        )?)
+        .map_err(stored_domain_error("revision event vocabulary"))?;
+        let property = PropertyId::new(required_stored(
+            stored.property.clone(),
+            "revision event property",
+        )?)
+        .map_err(stored_domain_error("revision event property"))?;
+        Ok(MetadataProperty::new(vocabulary, property))
+    };
+
+    let kind = match stored.kind {
+        1 => RevisionEventKind::AssetImported {
+            asset_id: AssetId::from_bytes(primary_id("asset")?),
+        },
+        2 => RevisionEventKind::RepresentationAdded {
+            asset_id: AssetId::from_bytes(secondary_id("asset")?),
+            representation_id: RepresentationId::from_bytes(primary_id("representation")?),
+        },
+        3 => RevisionEventKind::ResourceAdded {
+            resource_id: ResourceId::from_bytes(primary_id("resource")?),
+        },
+        4 => RevisionEventKind::RepresentationResourceAdded {
+            representation_id: RepresentationId::from_bytes(primary_id("representation")?),
+            resource_id: ResourceId::from_bytes(secondary_id("resource")?),
+            position: stored_u32(
+                required_stored(
+                    stored.structural_position,
+                    "revision event structural position",
+                )?,
+                "revision event structural position",
+            )?,
+        },
+        5 => RevisionEventKind::LocatorAdded {
+            resource_id: ResourceId::from_bytes(secondary_id("resource")?),
+            locator_id: LocatorId::from_bytes(primary_id("locator")?),
+        },
+        6 => RevisionEventKind::MediaRootAdded {
+            media_root_id: MediaRootId::from_bytes(primary_id("media root")?),
+        },
+        7 => RevisionEventKind::ExternalIdentifierAdded {
+            target: target()?,
+            identifier: identifier()?,
+        },
+        8 => RevisionEventKind::ExternalIdentifierRemoved {
+            target: target()?,
+            identifier: identifier()?,
+        },
+        9 => RevisionEventKind::MetadataAddedOrReplaced {
+            target: target()?,
+            property: property()?,
+        },
+        10 => RevisionEventKind::MetadataRemoved {
+            target: target()?,
+            property: property()?,
+        },
+        11 => RevisionEventKind::ActivityCreated {
+            activity_id: ActivityId::from_bytes(primary_id("activity")?),
+            kind: ActivityKind::new(required_stored(
+                stored.activity_kind,
+                "revision event activity kind",
+            )?)
+            .map_err(stored_domain_error("revision event activity kind"))?,
+        },
+        12 | 13 => {
+            let activity_id = ActivityId::from_bytes(primary_id("activity")?);
+            let representation_id = RepresentationId::from_bytes(secondary_id("representation")?);
+            let role = stored
+                .role
+                .map(ActivityRole::new)
+                .transpose()
+                .map_err(stored_domain_error("revision event role"))?;
+            if stored.kind == 12 {
+                RevisionEventKind::ActivityInputAdded {
+                    activity_id,
+                    representation_id,
+                    role,
+                }
+            } else {
+                RevisionEventKind::ActivityOutputAdded {
+                    activity_id,
+                    representation_id,
+                    role,
+                }
+            }
+        }
+        kind => {
+            return Err(Error::new(
+                ErrorKind::Storage,
+                format!("stored revision event kind {kind} is invalid"),
+            ));
+        }
+    };
+    Ok(RevisionEvent::new(revision_id, position, kind))
+}
+
+fn required_stored<T>(value: Option<T>, label: &'static str) -> Result<T> {
+    value.ok_or_else(|| Error::new(ErrorKind::Storage, format!("stored {label} is missing")))
+}
+
+fn required_stored_id(value: Option<Vec<u8>>, label: &'static str) -> Result<[u8; 16]> {
+    id_bytes(required_stored(value, label)?, label)
 }
 
 pub(crate) fn encode_identifier_target(target: &ObjectRef) -> Result<(i64, &[u8; 16])> {

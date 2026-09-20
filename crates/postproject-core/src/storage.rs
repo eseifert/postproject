@@ -4,7 +4,7 @@ use crate::{
     Activity, Asset, AssetId, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot,
     MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
     OriginalMediaImport, Project, Representation, RepresentationId, Resource, ResourceId, Result,
-    Revision, RevisionContext, TransactionId, TransactionState,
+    Revision, RevisionContext, RevisionEvent, RevisionId, TransactionId, TransactionState,
 };
 
 /// Read operations required from a project persistence backend.
@@ -149,6 +149,14 @@ pub trait ProjectRead {
     /// Returns a domain error when `limit` is zero or excessive, or when
     /// persisted revision data is invalid.
     fn changes_since(&self, sequence: u64, limit: u32) -> Result<Vec<Revision>>;
+
+    /// Loads the semantic events for one revision in stable position order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the revision is absent or persisted event
+    /// data is invalid.
+    fn events_for_revision(&self, revision_id: RevisionId) -> Result<Vec<RevisionEvent>>;
 }
 
 /// Transactional mutation operations required from a persistence backend.
