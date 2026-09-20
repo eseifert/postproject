@@ -173,6 +173,19 @@ fn exercise_provenance(project: &str, input_representation_id: &str, directory: 
     );
     assert_eq!(created["outputs"][0]["role"], "postproject:output.proxy");
 
+    let parameter = run_json(&[
+        "metadata",
+        "add-text",
+        project,
+        "activity",
+        activity_id,
+        "com.example.transcode",
+        "preset",
+        "editorial-proxy-h264",
+    ]);
+    assert_eq!(parameter["target_kind"], "activity");
+    assert_eq!(parameter["value"]["value"], "editorial-proxy-h264");
+
     let listed = run_json(&["activity", "list", project]);
     assert_eq!(listed.as_array().expect("activity array").len(), 1);
     assert_eq!(listed[0]["id"], activity_id);

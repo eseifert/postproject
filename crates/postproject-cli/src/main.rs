@@ -201,6 +201,7 @@ enum MetadataTargetKind {
     Asset,
     Representation,
     Resource,
+    Activity,
 }
 
 #[derive(Debug, Args)]
@@ -1236,6 +1237,9 @@ fn parse_metadata_target(kind: MetadataTargetKind, value: &str) -> Result<Object
         MetadataTargetKind::Resource => ResourceId::from_str(value)
             .map(ObjectRef::Resource)
             .context("parse resource ID"),
+        MetadataTargetKind::Activity => ActivityId::from_str(value)
+            .map(ObjectRef::Activity)
+            .context("parse activity ID"),
     }
 }
 
