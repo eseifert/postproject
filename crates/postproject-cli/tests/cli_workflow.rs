@@ -135,8 +135,38 @@ fn exercise_provenance(project: &str, input_representation_id: &str, directory: 
         &input,
         "--output",
         &output,
+        "--started-at-unix-micros",
+        "100",
+        "--finished-at-unix-micros",
+        "200",
+        "--tool-name",
+        "FFmpeg",
+        "--tool-version",
+        "8.0",
+        "--tool-uri",
+        "https://ffmpeg.org",
+        "--agent-name",
+        "Render worker",
+        "--agent-identifier-scheme",
+        "com.example.worker",
+        "--agent-identifier-value",
+        "worker-42",
+        "--agent-identifier-qualifier",
+        "primary",
     ]);
     let activity_id = created["id"].as_str().expect("activity ID");
+    assert_eq!(created["started_at_unix_micros"], 100);
+    assert_eq!(created["finished_at_unix_micros"], 200);
+    assert_eq!(created["tool"]["name"], "FFmpeg");
+    assert_eq!(created["tool"]["version"], "8.0");
+    assert_eq!(created["tool"]["uri"], "https://ffmpeg.org/");
+    assert_eq!(created["agent"]["name"], "Render worker");
+    assert_eq!(
+        created["agent"]["identifier"]["scheme"],
+        "com.example.worker"
+    );
+    assert_eq!(created["agent"]["identifier"]["value"], "worker-42");
+    assert_eq!(created["agent"]["identifier"]["qualifier"], "primary");
     assert_eq!(
         created["inputs"][0]["role"],
         "postproject:input.primary-video"

@@ -7,13 +7,13 @@ use std::{path::PathBuf, process::ExitCode, str::FromStr};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
-    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, Asset,
-    AssetId, AvailabilityIssue, AvailabilityIssueKind, EvidenceKind, ExternalIdentifier,
+    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
+    Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, EvidenceKind, ExternalIdentifier,
     IdentifierScheme, Locator, LocatorAvailability, MetadataAssertion, MetadataField,
     MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, ProjectId, PropertyId,
     Representation, RepresentationAvailability, RepresentationId, RepresentationKind,
     RepresentationResolution, ResolutionEvidence, Resource, ResourceId, ResourceResolution,
-    ResourceResolutionState, VocabularyId,
+    ResourceResolutionState, Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
@@ -247,7 +247,7 @@ struct ActivityArgs {
 #[derive(Debug, Subcommand)]
 enum ActivityCommand {
     /// Record a completed production activity.
-    Add(ActivityAddArgs),
+    Add(Box<ActivityAddArgs>),
     /// List production activities with their inputs and outputs.
     List(ProjectArgs),
     /// List activities that produced a representation.
@@ -275,6 +275,26 @@ struct ActivityAddArgs {
         required = true
     )]
     outputs: Vec<ActivityEdgeArg>,
+    /// Optional activity start as Unix microseconds.
+    #[arg(long)]
+    started_at_unix_micros: Option<i64>,
+    /// Optional activity finish as Unix microseconds.
+    #[arg(long)]
+    finished_at_unix_micros: Option<i64>,
+    #[arg(long)]
+    tool_name: Option<String>,
+    #[arg(long)]
+    tool_version: Option<String>,
+    #[arg(long)]
+    tool_uri: Option<String>,
+    #[arg(long)]
+    agent_name: Option<String>,
+    #[arg(long)]
+    agent_identifier_scheme: Option<String>,
+    #[arg(long)]
+    agent_identifier_value: Option<String>,
+    #[arg(long)]
+    agent_identifier_qualifier: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -571,7 +591,7 @@ fn execute(cli: Cli) -> Result<()> {
             MetadataCommand::Find(args) => metadata_find(args, cli.json),
         },
         Command::Activity(args) => match args.command {
-            ActivityCommand::Add(args) => activity_add(args, cli.json),
+            ActivityCommand::Add(args) => activity_add(*args, cli.json),
             ActivityCommand::List(args) => activity_list(&args, cli.json),
             ActivityCommand::Producing(args) => {
                 activity_lookup(&args, ActivityLookup::Producing, cli.json)
@@ -981,8 +1001,40 @@ fn activity_add(args: ActivityAddArgs, json: bool) -> Result<()> {
         .into_iter()
         .map(|edge| ActivityOutput::new(edge.representation_id, edge.role))
         .collect();
-    let activity =
-        Activity::new(ActivityId::new(), kind, inputs, outputs).context("validate activity")?;
+    let mut activity = Activity::new(ActivityId::new(), kind, inputs, outputs)
+        .context("validate activity")?
+        .with_timing(
+            args.started_at_unix_micros.map(Timestamp::from_unix_micros),
+            args.finished_at_unix_micros
+                .map(Timestamp::from_unix_micros),
+        )
+        .context("validate activity timing")?;
+    if let Some(name) = args.tool_name {
+        let tool = ToolIdentity::new(name, args.tool_version, args.tool_uri)
+            .context("validate activity tool")?;
+        activity = activity.with_tool(tool);
+    } else if args.tool_version.is_some() || args.tool_uri.is_some() {
+        bail!("--tool-version and --tool-uri require --tool-name");
+    }
+    let agent_identifier = match (args.agent_identifier_scheme, args.agent_identifier_value) {
+        (Some(scheme), Some(value)) => Some(
+            ExternalIdentifier::new(
+                IdentifierScheme::new(scheme).context("validate agent identifier scheme")?,
+                value,
+                args.agent_identifier_qualifier,
+            )
+            .context("validate agent identifier")?,
+        ),
+        (None, None) if args.agent_identifier_qualifier.is_none() => None,
+        _ => bail!(
+            "agent identifier scheme and value must be supplied together; qualifier is optional"
+        ),
+    };
+    if args.agent_name.is_some() || agent_identifier.is_some() {
+        let agent = AgentIdentity::new(args.agent_name, agent_identifier)
+            .context("validate activity agent")?;
+        activity = activity.with_agent(agent);
+    }
     let view = activity_view(&activity);
     let mut project = SqliteProject::open(&args.project).context("open project")?;
     let mut transaction = project
