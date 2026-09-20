@@ -14,9 +14,10 @@ industry exchange models without claiming normative compliance.
 
 Current capabilities include stable logical asset IDs, single-resource and
 compound representations, compact image-sequence descriptors, multiple
-resource locators, typed fingerprints, deterministic relinking with explicit
-ambiguity, SQLite persistence, a public C ABI, a C++17 RAII wrapper, and a
-demonstrator CLI. Broader metadata, provenance, and revision work is underway.
+resource locators, typed fingerprints, structured metadata, activity-based
+provenance, deterministic relinking with explicit ambiguity, and a durable
+semantic revision feed. SQLite persistence, the public C ABI, the C++17 RAII
+wrapper, and the demonstrator CLI expose those capabilities.
 
 PostProject deliberately does not provide a timeline editor, decoder/encoder,
 job runner, collaboration server, MAM service, or automatic registry/network
@@ -51,6 +52,7 @@ library:
 cargo run -p postproject-cli -- init production.pproj --name "Documentary"
 cargo run -p postproject-cli -- media add production.pproj rushes/A001.mov
 cargo run -p postproject-cli -- media list production.pproj
+cargo run -p postproject-cli -- --json revisions since production.pproj --after 0
 ```
 
 Pass `--json` before or after a subcommand for structured output. An ambiguous
