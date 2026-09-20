@@ -237,21 +237,34 @@ int main(int argc, char **argv) {
   pp_resolution_set_t *resolutions = NULL;
   status = pp_project_resolve_asset(project, &asset_id, &resolutions, &error);
   if (status != PP_OK || resolutions == NULL ||
-      pp_resolution_set_count(resolutions) != UINT64_C(1)) {
+      pp_resolution_set_representation_count(resolutions) != UINT64_C(1)) {
     pp_resolution_set_release(resolutions);
     pp_project_release(project);
     pp_error_release(error);
     return 17;
   }
-  pp_resolution_state_t state = 0;
+  pp_representation_availability_t availability = 0;
+  uint64_t resource_count = 0;
+  uint64_t issue_count = 0;
+  status = pp_resolution_set_get_representation(
+      resolutions, 0, &representation_id, &availability, &resource_count,
+      &issue_count, &error);
+  if (status != PP_OK || availability != PP_AVAILABILITY_ONLINE ||
+      resource_count != UINT64_C(1) || issue_count != 0 ||
+      uuid_is_zero(&representation_id)) {
+    pp_resolution_set_release(resolutions);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 18;
+  }
+  pp_resource_resolution_state_t state = 0;
   uint64_t candidate_count = 0;
   uint64_t result_evidence_count = 0;
-  status = pp_resolution_set_get(
-      resolutions, 0, &representation_id, &resource_id, &state,
-      &candidate_count, &result_evidence_count, &error);
-  if (status != PP_OK || state != PP_RESOLUTION_RESOLVED_EXACT ||
-      candidate_count != UINT64_C(1) || uuid_is_zero(&representation_id) ||
-      uuid_is_zero(&resource_id)) {
+  status = pp_resolution_set_get_resource(
+      resolutions, 0, 0, &resource_id, &state, &candidate_count,
+      &result_evidence_count, &error);
+  if (status != PP_OK || state != PP_RESOURCE_RESOLVED_EXACT ||
+      candidate_count != UINT64_C(1) || uuid_is_zero(&resource_id)) {
     pp_resolution_set_release(resolutions);
     pp_project_release(project);
     pp_error_release(error);
@@ -260,8 +273,8 @@ int main(int argc, char **argv) {
   const char *candidate_uri = NULL;
   uint16_t confidence = 0;
   uint64_t candidate_evidence_count = 0;
-  status = pp_resolution_candidate_get(
-      resolutions, 0, 0, &candidate_uri, &confidence,
+  status = pp_resolution_set_get_candidate(
+      resolutions, 0, 0, 0, &candidate_uri, &confidence,
       &candidate_evidence_count, &error);
   if (status != PP_OK || candidate_uri == NULL ||
       confidence != UINT16_C(10000) || candidate_evidence_count == 0) {
@@ -272,8 +285,8 @@ int main(int argc, char **argv) {
   }
   pp_evidence_kind_t evidence_kind = 0;
   const char *evidence_detail = NULL;
-  status = pp_resolution_candidate_evidence_get(
-      resolutions, 0, 0, 0, &evidence_kind, &evidence_detail, &error);
+  status = pp_resolution_set_get_candidate_evidence(
+      resolutions, 0, 0, 0, 0, &evidence_kind, &evidence_detail, &error);
   if (status != PP_OK || evidence_kind == 0) {
     pp_resolution_set_release(resolutions);
     pp_project_release(project);
@@ -302,10 +315,14 @@ int main(int argc, char **argv) {
   if (status != PP_OK ||
       pp_project_resolve_asset(project, &asset_id, &resolutions, &error) !=
           PP_OK ||
-      pp_resolution_set_get(resolutions, 0, &representation_id, &resource_id,
-                            &state, &candidate_count, &result_evidence_count,
-                            &error) != PP_OK ||
-      state != PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATOR) {
+      pp_resolution_set_get_representation(
+          resolutions, 0, &representation_id, &availability, &resource_count,
+          &issue_count, &error) != PP_OK ||
+      pp_resolution_set_get_resource(
+          resolutions, 0, 0, &resource_id, &state, &candidate_count,
+          &result_evidence_count, &error) != PP_OK ||
+      availability != PP_AVAILABILITY_ONLINE ||
+      state != PP_RESOURCE_ONLINE_AT_KNOWN_LOCATOR) {
     pp_resolution_set_release(resolutions);
     pp_project_release(project);
     pp_error_release(error);
