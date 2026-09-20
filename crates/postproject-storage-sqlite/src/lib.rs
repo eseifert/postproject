@@ -10,19 +10,21 @@ mod migrations;
 mod transaction;
 
 use std::{
+    collections::BTreeMap,
     fs::OpenOptions,
     path::{Path, PathBuf},
     time::Duration,
 };
 
 use postproject_core::{
+    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     Asset, AssetId, ContentStructure, Error, ErrorKind, ExternalIdentifier, FileFacts, FrameRange,
     IdentifierScheme, ImageSequenceDescriptor, ImageSequencePattern, Locator, LocatorAvailability,
     LocatorId, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch, MetadataProperty,
     MetadataValue, ObjectRef, Project, ProjectId, ProjectRead, ProjectStore, PropertyId,
     RationalRate, Representation, RepresentationFingerprint, RepresentationId, RepresentationKind,
     Resource, ResourceFingerprint, ResourceId, ResourceMember, ResourceRole, Result, Timestamp,
-    VocabularyId,
+    ToolIdentity, VocabularyId,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
 
@@ -38,6 +40,23 @@ pub struct SqliteProject {
     connection: Connection,
     project: Project,
 }
+
+struct StoredActivity {
+    id: Vec<u8>,
+    kind: String,
+    started_at: Option<i64>,
+    finished_at: Option<i64>,
+    tool_name: Option<String>,
+    tool_version: Option<String>,
+    tool_uri: Option<String>,
+    agent_name: Option<String>,
+    agent_scheme: Option<String>,
+    agent_value: Option<String>,
+    agent_qualifier: Option<String>,
+}
+
+type StoredActivityEdge = (RepresentationId, Option<ActivityRole>);
+type ActivityEdgesById<Edge> = BTreeMap<ActivityId, Vec<Edge>>;
 
 impl SqliteProject {
     /// Creates a new project file and persists its identity atomically.
@@ -651,6 +670,101 @@ impl SqliteProject {
         .collect()
     }
 
+    /// Loads all production activities in stable identity order.
+    ///
+    /// Activity edges are loaded in two set-oriented queries rather than one
+    /// query per activity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Storage`] for query failures, malformed activity
+    /// values, invalid edges, or orphaned edge rows.
+    pub fn activities(&self) -> Result<Vec<Activity>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, kind, started_at_micros, finished_at_micros,
+                        tool_name, tool_version, tool_uri, agent_name,
+                        agent_identifier_scheme, agent_identifier_value,
+                        agent_identifier_qualifier
+                 FROM activities ORDER BY id",
+            )
+            .map_err(sqlite_error("prepare activity query"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(StoredActivity {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    started_at: row.get(2)?,
+                    finished_at: row.get(3)?,
+                    tool_name: row.get(4)?,
+                    tool_version: row.get(5)?,
+                    tool_uri: row.get(6)?,
+                    agent_name: row.get(7)?,
+                    agent_scheme: row.get(8)?,
+                    agent_value: row.get(9)?,
+                    agent_qualifier: row.get(10)?,
+                })
+            })
+            .map_err(sqlite_error("query activities"))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sqlite_error("read activity row"))?;
+        let mut inputs = self.load_activity_inputs()?;
+        let mut outputs = self.load_activity_outputs()?;
+        let activities = rows
+            .into_iter()
+            .map(|stored| {
+                let id = ActivityId::from_bytes(id_bytes(stored.id.clone(), "activity")?);
+                decode_activity(
+                    id,
+                    stored,
+                    inputs.remove(&id).unwrap_or_default(),
+                    outputs.remove(&id).unwrap_or_default(),
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if !inputs.is_empty() || !outputs.is_empty() {
+            return Err(stored_invariant(
+                "activity edge refers to an absent activity",
+            ));
+        }
+        Ok(activities)
+    }
+
+    fn load_activity_inputs(&self) -> Result<ActivityEdgesById<ActivityInput>> {
+        Ok(load_activity_edges(
+            &self.connection,
+            "SELECT activity_id, representation_id, role
+             FROM activity_inputs
+             ORDER BY activity_id, representation_id, role, id",
+        )?
+        .into_iter()
+        .fold(BTreeMap::new(), |mut result, (activity_id, edge)| {
+            result
+                .entry(activity_id)
+                .or_default()
+                .push(ActivityInput::new(edge.0, edge.1));
+            result
+        }))
+    }
+
+    fn load_activity_outputs(&self) -> Result<ActivityEdgesById<ActivityOutput>> {
+        Ok(load_activity_edges(
+            &self.connection,
+            "SELECT activity_id, representation_id, role
+             FROM activity_outputs
+             ORDER BY activity_id, representation_id, role, id",
+        )?
+        .into_iter()
+        .fold(BTreeMap::new(), |mut result, (activity_id, edge)| {
+            result
+                .entry(activity_id)
+                .or_default()
+                .push(ActivityOutput::new(edge.0, edge.1));
+            result
+        }))
+    }
+
     /// Reports whether SQLite foreign-key enforcement is active on this connection.
     ///
     /// This is primarily useful for diagnostics and integration tests.
@@ -715,6 +829,10 @@ impl ProjectRead for SqliteProject {
         property: &MetadataProperty,
     ) -> Result<Vec<MetadataMatch>> {
         SqliteProject::query_by_metadata_property(self, property)
+    }
+
+    fn activities(&self) -> Result<Vec<Activity>> {
+        SqliteProject::activities(self)
     }
 }
 
@@ -930,6 +1048,81 @@ fn decode_metadata_assertion(
         MetadataProperty::new(vocabulary, property),
         value,
     ))
+}
+
+fn load_activity_edges(
+    connection: &Connection,
+    query: &'static str,
+) -> Result<Vec<(ActivityId, StoredActivityEdge)>> {
+    let mut statement = connection
+        .prepare(query)
+        .map_err(sqlite_error("prepare activity-edge query"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .map_err(sqlite_error("query activity edges"))?;
+    rows.map(|row| {
+        let (activity_id, representation_id, role) =
+            row.map_err(sqlite_error("read activity-edge row"))?;
+        let activity_id = ActivityId::from_bytes(id_bytes(activity_id, "activity edge")?);
+        let representation_id =
+            RepresentationId::from_bytes(id_bytes(representation_id, "activity representation")?);
+        let role = role
+            .map(ActivityRole::new)
+            .transpose()
+            .map_err(stored_domain_error("activity role"))?;
+        Ok((activity_id, (representation_id, role)))
+    })
+    .collect()
+}
+
+fn decode_activity(
+    id: ActivityId,
+    stored: StoredActivity,
+    inputs: Vec<ActivityInput>,
+    outputs: Vec<ActivityOutput>,
+) -> Result<Activity> {
+    let kind = ActivityKind::new(stored.kind).map_err(stored_domain_error("activity kind"))?;
+    let mut activity = Activity::new(id, kind, inputs, outputs)
+        .map_err(stored_domain_error("activity edges"))?
+        .with_timing(
+            stored.started_at.map(Timestamp::from_unix_micros),
+            stored.finished_at.map(Timestamp::from_unix_micros),
+        )
+        .map_err(stored_domain_error("activity timing"))?;
+    match (stored.tool_name, stored.tool_version, stored.tool_uri) {
+        (Some(name), version, uri) => {
+            activity = activity.with_tool(
+                ToolIdentity::new(name, version, uri)
+                    .map_err(stored_domain_error("activity tool"))?,
+            );
+        }
+        (None, None, None) => {}
+        (None, _, _) => return Err(stored_invariant("activity tool detail has no name")),
+    }
+    let identifier = match (
+        stored.agent_scheme,
+        stored.agent_value,
+        stored.agent_qualifier,
+    ) {
+        (Some(scheme), Some(value), qualifier) => {
+            Some(decode_external_identifier(scheme, value, qualifier)?)
+        }
+        (None, None, None) => None,
+        _ => return Err(stored_invariant("activity agent identifier is incomplete")),
+    };
+    if stored.agent_name.is_some() || identifier.is_some() {
+        activity = activity.with_agent(
+            AgentIdentity::new(stored.agent_name, identifier)
+                .map_err(stored_domain_error("activity agent"))?,
+        );
+    }
+    Ok(activity)
 }
 
 pub(crate) fn encode_identifier_target(target: &ObjectRef) -> Result<(i64, &[u8; 16])> {

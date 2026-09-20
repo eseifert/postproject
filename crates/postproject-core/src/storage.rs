@@ -94,6 +94,14 @@ pub trait ProjectRead {
     /// Returns a domain error when persisted data cannot be decoded safely.
     fn query_by_metadata_property(&self, property: &MetadataProperty)
     -> Result<Vec<MetadataMatch>>;
+
+    /// Loads all production activities in deterministic identity order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage-domain error when persisted activity data cannot be
+    /// read or decoded safely.
+    fn activities(&self) -> Result<Vec<Activity>>;
 }
 
 /// Transactional mutation operations required from a persistence backend.
