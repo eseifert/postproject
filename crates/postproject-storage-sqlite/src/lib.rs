@@ -731,6 +731,97 @@ impl SqliteProject {
         Ok(activities)
     }
 
+    /// Returns transitive input ancestry in stable identity order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the representation is absent, or
+    /// [`ErrorKind::Storage`] when traversal fails or stored IDs are malformed.
+    pub fn ancestors(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>> {
+        self.related_representations(
+            representation_id,
+            "WITH RECURSIVE related(representation_id) AS (
+                SELECT inputs.representation_id
+                FROM activity_outputs outputs
+                JOIN activity_inputs inputs ON inputs.activity_id = outputs.activity_id
+                WHERE outputs.representation_id = ?1
+                UNION
+                SELECT inputs.representation_id
+                FROM related
+                JOIN activity_outputs outputs
+                  ON outputs.representation_id = related.representation_id
+                JOIN activity_inputs inputs ON inputs.activity_id = outputs.activity_id
+             )
+             SELECT representation_id FROM related ORDER BY representation_id",
+            "ancestor",
+        )
+    }
+
+    /// Returns transitive output descendants in stable identity order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the representation is absent, or
+    /// [`ErrorKind::Storage`] when traversal fails or stored IDs are malformed.
+    pub fn descendants(
+        &self,
+        representation_id: RepresentationId,
+    ) -> Result<Vec<RepresentationId>> {
+        self.related_representations(
+            representation_id,
+            "WITH RECURSIVE related(representation_id) AS (
+                SELECT outputs.representation_id
+                FROM activity_inputs inputs
+                JOIN activity_outputs outputs ON outputs.activity_id = inputs.activity_id
+                WHERE inputs.representation_id = ?1
+                UNION
+                SELECT outputs.representation_id
+                FROM related
+                JOIN activity_inputs inputs
+                  ON inputs.representation_id = related.representation_id
+                JOIN activity_outputs outputs ON outputs.activity_id = inputs.activity_id
+             )
+             SELECT representation_id FROM related ORDER BY representation_id",
+            "descendant",
+        )
+    }
+
+    fn related_representations(
+        &self,
+        representation_id: RepresentationId,
+        query: &'static str,
+        label: &'static str,
+    ) -> Result<Vec<RepresentationId>> {
+        let exists = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM representations WHERE id = ?1)",
+                [representation_id.as_bytes().as_slice()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(sqlite_error("check provenance representation"))?;
+        if !exists {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                "provenance representation does not exist",
+            ));
+        }
+        let mut statement = self
+            .connection
+            .prepare(query)
+            .map_err(sqlite_error("prepare provenance traversal"))?;
+        let rows = statement
+            .query_map([representation_id.as_bytes().as_slice()], |row| {
+                row.get::<_, Vec<u8>>(0)
+            })
+            .map_err(sqlite_error("query provenance traversal"))?;
+        rows.map(|row| {
+            let id = row.map_err(sqlite_error("read provenance traversal row"))?;
+            Ok(RepresentationId::from_bytes(id_bytes(id, label)?))
+        })
+        .collect()
+    }
+
     fn load_activity_inputs(&self) -> Result<ActivityEdgesById<ActivityInput>> {
         Ok(load_activity_edges(
             &self.connection,
@@ -833,6 +924,14 @@ impl ProjectRead for SqliteProject {
 
     fn activities(&self) -> Result<Vec<Activity>> {
         SqliteProject::activities(self)
+    }
+
+    fn ancestors(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>> {
+        SqliteProject::ancestors(self, representation_id)
+    }
+
+    fn descendants(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>> {
+        SqliteProject::descendants(self, representation_id)
     }
 }
 

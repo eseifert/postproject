@@ -102,6 +102,22 @@ pub trait ProjectRead {
     /// Returns a storage-domain error when persisted activity data cannot be
     /// read or decoded safely.
     fn activities(&self) -> Result<Vec<Activity>>;
+
+    /// Returns every transitive provenance ancestor of `representation_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the representation is absent or persisted
+    /// provenance cannot be traversed safely.
+    fn ancestors(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>>;
+
+    /// Returns every transitive provenance descendant of `representation_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the representation is absent or persisted
+    /// provenance cannot be traversed safely.
+    fn descendants(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>>;
 }
 
 /// Transactional mutation operations required from a persistence backend.

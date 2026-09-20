@@ -179,6 +179,23 @@ fn invalid_activities_leave_no_partial_rows() {
         .create_activity(&activity(ActivityId::new(), proxy_id, delivery_id))
         .expect("transaction remains usable");
     transaction.commit().expect("commit valid activity");
+    drop(transaction);
+
+    assert_eq!(
+        project.ancestors(delivery_id).expect("load ancestry"),
+        [source_id, proxy_id]
+    );
+    assert_eq!(
+        project.descendants(source_id).expect("load descendants"),
+        [proxy_id, delivery_id]
+    );
+    assert_eq!(
+        project
+            .ancestors(RepresentationId::new())
+            .expect_err("missing representation must fail")
+            .kind(),
+        ErrorKind::NotFound
+    );
 }
 
 #[test]
