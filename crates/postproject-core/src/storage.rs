@@ -103,6 +103,22 @@ pub trait ProjectRead {
     /// read or decoded safely.
     fn activities(&self) -> Result<Vec<Activity>>;
 
+    /// Loads activities that produce `representation_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the representation is absent or persisted
+    /// activity data cannot be read safely.
+    fn activities_producing(&self, representation_id: RepresentationId) -> Result<Vec<Activity>>;
+
+    /// Loads activities that consume `representation_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the representation is absent or persisted
+    /// activity data cannot be read safely.
+    fn activities_consuming(&self, representation_id: RepresentationId) -> Result<Vec<Activity>>;
+
     /// Returns every transitive provenance ancestor of `representation_id`.
     ///
     /// # Errors

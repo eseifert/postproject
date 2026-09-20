@@ -731,6 +731,52 @@ impl SqliteProject {
         Ok(activities)
     }
 
+    /// Loads activities that produce `representation_id` in stable order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the representation is absent, or
+    /// [`ErrorKind::Storage`] when activity data cannot be decoded safely.
+    pub fn activities_producing(
+        &self,
+        representation_id: RepresentationId,
+    ) -> Result<Vec<Activity>> {
+        self.ensure_representation_exists(representation_id)?;
+        Ok(self
+            .activities()?
+            .into_iter()
+            .filter(|activity| {
+                activity
+                    .outputs()
+                    .iter()
+                    .any(|output| output.representation_id() == representation_id)
+            })
+            .collect())
+    }
+
+    /// Loads activities that consume `representation_id` in stable order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the representation is absent, or
+    /// [`ErrorKind::Storage`] when activity data cannot be decoded safely.
+    pub fn activities_consuming(
+        &self,
+        representation_id: RepresentationId,
+    ) -> Result<Vec<Activity>> {
+        self.ensure_representation_exists(representation_id)?;
+        Ok(self
+            .activities()?
+            .into_iter()
+            .filter(|activity| {
+                activity
+                    .inputs()
+                    .iter()
+                    .any(|input| input.representation_id() == representation_id)
+            })
+            .collect())
+    }
+
     /// Returns transitive input ancestry in stable identity order.
     ///
     /// # Errors
@@ -792,20 +838,7 @@ impl SqliteProject {
         query: &'static str,
         label: &'static str,
     ) -> Result<Vec<RepresentationId>> {
-        let exists = self
-            .connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM representations WHERE id = ?1)",
-                [representation_id.as_bytes().as_slice()],
-                |row| row.get::<_, bool>(0),
-            )
-            .map_err(sqlite_error("check provenance representation"))?;
-        if !exists {
-            return Err(Error::new(
-                ErrorKind::NotFound,
-                "provenance representation does not exist",
-            ));
-        }
+        self.ensure_representation_exists(representation_id)?;
         let mut statement = self
             .connection
             .prepare(query)
@@ -820,6 +853,24 @@ impl SqliteProject {
             Ok(RepresentationId::from_bytes(id_bytes(id, label)?))
         })
         .collect()
+    }
+
+    fn ensure_representation_exists(&self, representation_id: RepresentationId) -> Result<()> {
+        let exists = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM representations WHERE id = ?1)",
+                [representation_id.as_bytes().as_slice()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(sqlite_error("check provenance representation"))?;
+        if !exists {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                "provenance representation does not exist",
+            ));
+        }
+        Ok(())
     }
 
     fn load_activity_inputs(&self) -> Result<ActivityEdgesById<ActivityInput>> {
@@ -924,6 +975,14 @@ impl ProjectRead for SqliteProject {
 
     fn activities(&self) -> Result<Vec<Activity>> {
         SqliteProject::activities(self)
+    }
+
+    fn activities_producing(&self, representation_id: RepresentationId) -> Result<Vec<Activity>> {
+        SqliteProject::activities_producing(self, representation_id)
+    }
+
+    fn activities_consuming(&self, representation_id: RepresentationId) -> Result<Vec<Activity>> {
+        SqliteProject::activities_consuming(self, representation_id)
     }
 
     fn ancestors(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>> {

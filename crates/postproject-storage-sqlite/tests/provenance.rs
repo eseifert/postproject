@@ -116,7 +116,22 @@ fn activity_metadata_is_atomic_with_activity_creation() {
     }
 
     let reopened = SqliteProject::open(&path).expect("reopen project");
-    assert_eq!(reopened.activities().expect("load activities"), [activity]);
+    assert_eq!(
+        reopened.activities().expect("load activities"),
+        std::slice::from_ref(&activity)
+    );
+    assert_eq!(
+        reopened
+            .activities_producing(proxy_id)
+            .expect("load producing activities"),
+        std::slice::from_ref(&activity)
+    );
+    assert_eq!(
+        reopened
+            .activities_consuming(source_id)
+            .expect("load consuming activities"),
+        std::slice::from_ref(&activity)
+    );
     assert_eq!(
         reopened
             .metadata_values(ObjectRef::Activity(activity_id), &property)
