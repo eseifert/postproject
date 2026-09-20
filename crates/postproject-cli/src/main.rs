@@ -7,10 +7,10 @@ use std::{path::PathBuf, process::ExitCode, str::FromStr};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
-    Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, EvidenceKind, ExternalIdentifier,
-    IdentifierScheme, Locator, LocatorAvailability, MetadataAssertion, MetadataField,
-    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, ProjectId, PropertyId,
-    Representation, RepresentationAvailability, RepresentationId, RepresentationKind,
+    Activity, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, EvidenceKind,
+    ExternalIdentifier, IdentifierScheme, Locator, LocatorAvailability, MetadataAssertion,
+    MetadataField, MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, ProjectId,
+    PropertyId, Representation, RepresentationAvailability, RepresentationId, RepresentationKind,
     RepresentationResolution, ResolutionEvidence, Resource, ResourceId, ResourceResolution,
     ResourceResolutionState, VocabularyId,
 };
@@ -43,6 +43,8 @@ enum Command {
     Identifier(IdentifierArgs),
     /// Inspect and manage standards-aware metadata assertions.
     Metadata(MetadataArgs),
+    /// Inspect production provenance activities.
+    Activity(ActivityArgs),
 }
 
 #[derive(Debug, Args)]
@@ -235,6 +237,18 @@ struct MetadataFindArgs {
     property: String,
 }
 
+#[derive(Debug, Args)]
+struct ActivityArgs {
+    #[command(subcommand)]
+    command: ActivityCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ActivityCommand {
+    /// List production activities with their inputs and outputs.
+    List(ProjectArgs),
+}
+
 #[derive(Debug, Serialize)]
 struct ProjectView {
     id: String,
@@ -409,6 +423,44 @@ struct MetadataFieldView {
     value: MetadataValueView,
 }
 
+#[derive(Debug, Serialize)]
+struct ActivityView {
+    id: String,
+    kind: String,
+    started_at_unix_micros: Option<i64>,
+    finished_at_unix_micros: Option<i64>,
+    tool: Option<ToolView>,
+    agent: Option<AgentView>,
+    inputs: Vec<ActivityEdgeView>,
+    outputs: Vec<ActivityEdgeView>,
+}
+
+#[derive(Debug, Serialize)]
+struct ToolView {
+    name: String,
+    version: Option<String>,
+    uri: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AgentView {
+    name: Option<String>,
+    identifier: Option<AgentIdentifierView>,
+}
+
+#[derive(Debug, Serialize)]
+struct AgentIdentifierView {
+    scheme: String,
+    value: String,
+    qualifier: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ActivityEdgeView {
+    representation_id: String,
+    role: Option<String>,
+}
+
 fn main() -> ExitCode {
     match execute(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -442,6 +494,9 @@ fn execute(cli: Cli) -> Result<()> {
             MetadataCommand::List(args) => metadata_list(&args, cli.json),
             MetadataCommand::Remove(args) => metadata_remove(args, cli.json),
             MetadataCommand::Find(args) => metadata_find(args, cli.json),
+        },
+        Command::Activity(args) => match args.command {
+            ActivityCommand::List(args) => activity_list(&args, cli.json),
         },
     }
 }
@@ -749,6 +804,73 @@ fn metadata_find(args: MetadataFindArgs, json: bool) -> Result<()> {
         .collect::<Result<Vec<_>>>()?;
 
     print_metadata_assertions(&views, json)
+}
+
+fn activity_list(args: &ProjectArgs, json: bool) -> Result<()> {
+    let project = SqliteProject::open(&args.project).context("open project")?;
+    let views: Vec<_> = project
+        .activities()
+        .context("load activities")?
+        .iter()
+        .map(activity_view)
+        .collect();
+
+    if json {
+        print_json(&views)
+    } else {
+        for view in views {
+            println!(
+                "{}\t{}\t{} input(s)\t{} output(s)",
+                view.id,
+                view.kind,
+                view.inputs.len(),
+                view.outputs.len()
+            );
+        }
+        Ok(())
+    }
+}
+
+fn activity_view(activity: &Activity) -> ActivityView {
+    ActivityView {
+        id: activity.id().to_string(),
+        kind: activity.kind().as_str().to_owned(),
+        started_at_unix_micros: activity
+            .started_at()
+            .map(postproject_core::Timestamp::as_unix_micros),
+        finished_at_unix_micros: activity
+            .finished_at()
+            .map(postproject_core::Timestamp::as_unix_micros),
+        tool: activity.tool().map(|tool| ToolView {
+            name: tool.name().to_owned(),
+            version: tool.version().map(str::to_owned),
+            uri: tool.uri().map(str::to_owned),
+        }),
+        agent: activity.agent().map(|agent| AgentView {
+            name: agent.name().map(str::to_owned),
+            identifier: agent.identifier().map(|identifier| AgentIdentifierView {
+                scheme: identifier.scheme().as_str().to_owned(),
+                value: identifier.value().to_owned(),
+                qualifier: identifier.qualifier().map(str::to_owned),
+            }),
+        }),
+        inputs: activity
+            .inputs()
+            .iter()
+            .map(|input| ActivityEdgeView {
+                representation_id: input.representation_id().to_string(),
+                role: input.role().map(|role| role.as_str().to_owned()),
+            })
+            .collect(),
+        outputs: activity
+            .outputs()
+            .iter()
+            .map(|output| ActivityEdgeView {
+                representation_id: output.representation_id().to_string(),
+                role: output.role().map(|role| role.as_str().to_owned()),
+            })
+            .collect(),
+    }
 }
 
 fn print_metadata_assertions(views: &[MetadataAssertionView], json: bool) -> Result<()> {
