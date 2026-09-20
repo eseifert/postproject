@@ -79,6 +79,45 @@ int main(int argc, char **argv) {
         resolutions[0].resources[0].candidates[0].evidence.empty()) {
       return 11;
     }
+
+    const postproject::ActivitySpec activity_spec{
+        "postproject:ingest",
+        100,
+        200,
+        postproject::ToolIdentity{
+            "C++ ingest", std::string("1.0"),
+            std::string("https://example.com/tools/ingest")},
+        postproject::AgentIdentity{
+            std::string("C++ operator"),
+            postproject::ExternalIdentifier{"com.example.agent", "operator-1",
+                                            std::string("primary")}},
+        {},
+        {{resolutions[0].representation_id,
+          std::string("postproject:output.master")}}};
+    auto provenance = project.beginTransaction();
+    const auto activity_id = provenance.createActivity(activity_spec);
+    provenance.commit();
+
+    const auto activities = project.activities();
+    const auto producing =
+        project.activitiesProducing(resolutions[0].representation_id);
+    if (activities.size() != 1 || producing.size() != 1 ||
+        activities[0].id != activity_id ||
+        activities[0].kind != "postproject:ingest" ||
+        activities[0].started_at_unix_micros != 100 ||
+        activities[0].finished_at_unix_micros != 200 ||
+        !activities[0].tool.has_value() ||
+        activities[0].tool->name != "C++ ingest" ||
+        !activities[0].agent.has_value() ||
+        activities[0].agent->name != std::string("C++ operator") ||
+        activities[0].outputs.size() != 1 ||
+        activities[0].outputs[0].representation_id !=
+            resolutions[0].representation_id ||
+        activities[0].outputs[0].role !=
+            std::string("postproject:output.master") ||
+        !project.ancestors(resolutions[0].representation_id).empty()) {
+      return 14;
+    }
     auto confirmation = project.beginTransaction();
     confirmation.confirmLocator(
         resolutions[0].resources[0].resource_id,
