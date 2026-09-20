@@ -70,7 +70,7 @@ private:
 };
 
 enum class ObjectKind : std::uint32_t {
-  project = PP_OBJECT_PROJECT,
+  production = PP_OBJECT_PRODUCTION,
   asset = PP_OBJECT_ASSET,
   representation = PP_OBJECT_REPRESENTATION,
   resource = PP_OBJECT_RESOURCE,
@@ -840,7 +840,7 @@ public:
   }
 
 private:
-  friend class Project;
+  friend class Production;
 
   explicit Transaction(pp_transaction_t *transaction) noexcept
       : transaction_(transaction) {}
@@ -903,48 +903,48 @@ private:
   pp_transaction_t *transaction_ = nullptr;
 };
 
-class Project final {
+class Production final {
 public:
-  static Project create(std::string_view path) {
+  static Production create(std::string_view path) {
     return create_impl(path, nullptr);
   }
 
-  static Project create(std::string_view path, std::string_view display_name) {
+  static Production create(std::string_view path, std::string_view display_name) {
     const std::string name =
         detail::checked_string(display_name, "display_name");
     return create_impl(path, name.c_str());
   }
 
-  static Project open(std::string_view path) {
+  static Production open(std::string_view path) {
     const std::string native_path = detail::checked_string(path, "path");
-    pp_project_t *project = nullptr;
+    pp_production_t *production = nullptr;
     pp_error_t *error = nullptr;
     const pp_error_code_t status =
-        pp_project_open(native_path.c_str(), &project, &error);
+        pp_production_open(native_path.c_str(), &production, &error);
     detail::throw_if_error(status, error);
-    return Project(project);
+    return Production(production);
   }
 
-  Project(const Project &) = delete;
-  Project &operator=(const Project &) = delete;
+  Production(const Production &) = delete;
+  Production &operator=(const Production &) = delete;
 
-  Project(Project &&other) noexcept
-      : project_(std::exchange(other.project_, nullptr)) {}
+  Production(Production &&other) noexcept
+      : production_(std::exchange(other.production_, nullptr)) {}
 
-  Project &operator=(Project &&other) noexcept {
+  Production &operator=(Production &&other) noexcept {
     if (this != &other) {
-      pp_project_release(project_);
-      project_ = std::exchange(other.project_, nullptr);
+      pp_production_release(production_);
+      production_ = std::exchange(other.production_, nullptr);
     }
     return *this;
   }
 
-  ~Project() { pp_project_release(project_); }
+  ~Production() { pp_production_release(production_); }
 
   [[nodiscard]] Uuid id() const {
     pp_uuid_t value{};
     pp_error_t *error = nullptr;
-    const pp_error_code_t status = pp_project_id(project_, &value, &error);
+    const pp_error_code_t status = pp_production_id(production_, &value, &error);
     detail::throw_if_error(status, error);
 
     return detail::uuid(value);
@@ -955,7 +955,7 @@ public:
     std::uint8_t exists = 0;
     pp_error_t *error = nullptr;
     const pp_error_code_t status =
-        pp_project_asset_exists(project_, &value, &exists, &error);
+        pp_production_asset_exists(production_, &value, &exists, &error);
     detail::throw_if_error(status, error);
     return exists != 0;
   }
@@ -965,8 +965,8 @@ public:
     const pp_object_ref_t native_target = detail::native_object_ref(target);
     pp_external_identifier_set_t *raw_identifiers = nullptr;
     pp_error_t *error = nullptr;
-    const pp_error_code_t status = pp_project_external_identifiers(
-        project_, &native_target, &raw_identifiers, &error);
+    const pp_error_code_t status = pp_production_external_identifiers(
+        production_, &native_target, &raw_identifiers, &error);
     detail::throw_if_error(status, error);
     detail::ExternalIdentifierSetHandle identifiers(raw_identifiers);
 
@@ -1000,8 +1000,8 @@ public:
     const std::string native_value = detail::checked_string(value, "value");
     pp_object_ref_set_t *raw_objects = nullptr;
     pp_error_t *error = nullptr;
-    const pp_error_code_t status = pp_project_find_by_external_identifier(
-        project_, native_scheme.c_str(), native_value.c_str(), &raw_objects,
+    const pp_error_code_t status = pp_production_find_by_external_identifier(
+        production_, native_scheme.c_str(), native_value.c_str(), &raw_objects,
         &error);
     detail::throw_if_error(status, error);
     detail::ObjectRefSetHandle objects(raw_objects);
@@ -1025,8 +1025,8 @@ public:
     const pp_uuid_t value = detail::native_uuid(asset_id);
     pp_resolution_set_t *raw_resolutions = nullptr;
     pp_error_t *error = nullptr;
-    const pp_error_code_t status = pp_project_resolve_asset(
-        project_, &value, &raw_resolutions, &error);
+    const pp_error_code_t status = pp_production_resolve_asset(
+        production_, &value, &raw_resolutions, &error);
     detail::throw_if_error(status, error);
     detail::ResolutionSetHandle resolutions(raw_resolutions);
 
@@ -1137,7 +1137,7 @@ public:
     pp_activity_set_t *raw_activities = nullptr;
     pp_error_t *error = nullptr;
     const pp_error_code_t status =
-        pp_project_activities(project_, &raw_activities, &error);
+        pp_production_activities(production_, &raw_activities, &error);
     detail::throw_if_error(status, error);
     detail::ActivitySetHandle activities(raw_activities);
 
@@ -1153,32 +1153,32 @@ public:
   [[nodiscard]] std::vector<Activity>
   activitiesProducing(const Uuid &representation_id) const {
     return activities_for_representation(
-        representation_id, pp_project_activities_producing);
+        representation_id, pp_production_activities_producing);
   }
 
   [[nodiscard]] std::vector<Activity>
   activitiesConsuming(const Uuid &representation_id) const {
     return activities_for_representation(
-        representation_id, pp_project_activities_consuming);
+        representation_id, pp_production_activities_consuming);
   }
 
   [[nodiscard]] std::vector<Uuid>
   ancestors(const Uuid &representation_id) const {
     return provenance_relatives(representation_id,
-                                pp_project_provenance_ancestors);
+                                pp_production_provenance_ancestors);
   }
 
   [[nodiscard]] std::vector<Uuid>
   descendants(const Uuid &representation_id) const {
     return provenance_relatives(representation_id,
-                                pp_project_provenance_descendants);
+                                pp_production_provenance_descendants);
   }
 
   [[nodiscard]] std::optional<Revision> latestRevision() const {
     pp_revision_set_t *raw_revisions = nullptr;
     pp_error_t *error = nullptr;
     const pp_error_code_t status =
-        pp_project_latest_revision(project_, &raw_revisions, &error);
+        pp_production_latest_revision(production_, &raw_revisions, &error);
     detail::throw_if_error(status, error);
     detail::RevisionSetHandle revisions(raw_revisions);
     if (pp_revision_set_count(revisions.get()) == 0) {
@@ -1191,8 +1191,8 @@ public:
   changesSince(std::uint64_t sequence, std::uint32_t limit = 100) const {
     pp_revision_set_t *raw_revisions = nullptr;
     pp_error_t *error = nullptr;
-    const pp_error_code_t status = pp_project_changes_since(
-        project_, sequence, limit, &raw_revisions, &error);
+    const pp_error_code_t status = pp_production_changes_since(
+        production_, sequence, limit, &raw_revisions, &error);
     detail::throw_if_error(status, error);
     detail::RevisionSetHandle revisions(raw_revisions);
     std::vector<Revision> result;
@@ -1209,8 +1209,8 @@ public:
     const pp_uuid_t native_id = detail::native_uuid(revision_id);
     pp_revision_event_set_t *raw_events = nullptr;
     pp_error_t *error = nullptr;
-    const pp_error_code_t status = pp_project_revision_events(
-        project_, &native_id, &raw_events, &error);
+    const pp_error_code_t status = pp_production_revision_events(
+        production_, &native_id, &raw_events, &error);
     detail::throw_if_error(status, error);
     detail::RevisionEventSetHandle events(raw_events);
     std::vector<RevisionEvent> result;
@@ -1226,24 +1226,24 @@ public:
     pp_transaction_t *transaction = nullptr;
     pp_error_t *error = nullptr;
     const pp_error_code_t status =
-        pp_project_begin_transaction(project_, &transaction, &error);
+        pp_production_begin_transaction(production_, &transaction, &error);
     detail::throw_if_error(status, error);
     return Transaction(transaction);
   }
 
   [[nodiscard]] explicit operator bool() const noexcept {
-    return project_ != nullptr;
+    return production_ != nullptr;
   }
 
 private:
   using ActivityQuery = pp_error_code_t (*)(
-      const pp_project_t *, const pp_uuid_t *, pp_activity_set_t **,
+      const pp_production_t *, const pp_uuid_t *, pp_activity_set_t **,
       pp_error_t **);
   using ProvenanceQuery = pp_error_code_t (*)(
-      const pp_project_t *, const pp_uuid_t *, pp_object_ref_set_t **,
+      const pp_production_t *, const pp_uuid_t *, pp_object_ref_set_t **,
       pp_error_t **);
 
-  explicit Project(pp_project_t *project) noexcept : project_(project) {}
+  explicit Production(pp_production_t *production) noexcept : production_(production) {}
 
   [[nodiscard]] std::vector<Activity>
   activities_for_representation(const Uuid &representation_id,
@@ -1252,7 +1252,7 @@ private:
     pp_activity_set_t *raw_activities = nullptr;
     pp_error_t *error = nullptr;
     const pp_error_code_t status =
-        query(project_, &native_id, &raw_activities, &error);
+        query(production_, &native_id, &raw_activities, &error);
     detail::throw_if_error(status, error);
     detail::ActivitySetHandle activities(raw_activities);
 
@@ -1272,7 +1272,7 @@ private:
     pp_object_ref_set_t *raw_objects = nullptr;
     pp_error_t *error = nullptr;
     const pp_error_code_t status =
-        query(project_, &native_id, &raw_objects, &error);
+        query(production_, &native_id, &raw_objects, &error);
     detail::throw_if_error(status, error);
     detail::ObjectRefSetHandle objects(raw_objects);
 
@@ -1294,17 +1294,17 @@ private:
     return result;
   }
 
-  static Project create_impl(std::string_view path, const char *display_name) {
+  static Production create_impl(std::string_view path, const char *display_name) {
     const std::string native_path = detail::checked_string(path, "path");
-    pp_project_t *project = nullptr;
+    pp_production_t *production = nullptr;
     pp_error_t *error = nullptr;
     const pp_error_code_t status =
-        pp_project_create(native_path.c_str(), display_name, &project, &error);
+        pp_production_create(native_path.c_str(), display_name, &production, &error);
     detail::throw_if_error(status, error);
-    return Project(project);
+    return Production(production);
   }
 
-  pp_project_t *project_ = nullptr;
+  pp_production_t *production_ = nullptr;
 };
 
 [[nodiscard]] inline std::uint32_t abi_version() noexcept {
