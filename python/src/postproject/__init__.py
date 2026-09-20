@@ -10,6 +10,7 @@ from ._errors import (
     UnsupportedError,
 )
 from ._native import ABI_VERSION, NativeLibrary
+from ._production import Production, Transaction
 from ._model import (
     AssetId,
     OriginIdentity,
@@ -30,11 +31,13 @@ __all__ = [
     "NotFoundError",
     "OriginIdentity",
     "PostProjectError",
+    "Production",
     "ProductionId",
     "Revision",
     "RevisionContext",
     "RevisionId",
     "StorageError",
     "TransactionId",
+    "Transaction",
     "UnsupportedError",
 ]
