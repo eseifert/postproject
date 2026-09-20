@@ -104,8 +104,7 @@ fn benchmark_resolver_scan(criterion: &mut Criterion) {
         bencher.iter(|| {
             black_box(
                 resolver
-                    .resolve(
-                        import.representation().id(),
+                    .resolve_resource(
                         &import.resources()[0],
                         import.locators(),
                         std::slice::from_ref(&root),

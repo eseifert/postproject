@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use postproject_core::ResolutionState;
+use postproject_core::ResourceResolutionState;
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
 };
@@ -47,9 +47,9 @@ fn moved_media_resolves_and_confirmed_location_persists() {
         .locators(resource.id())
         .expect("load known locators");
     let missing = resolver
-        .resolve(representation.id(), &resource, &known_locators, &[])
+        .resolve_resource(&resource, &known_locators, &[])
         .expect("resolve without roots");
-    assert_eq!(missing.state(), ResolutionState::Missing);
+    assert_eq!(missing.state(), ResourceResolutionState::Offline);
 
     let root = prepare_media_root(&relocated_directory, None, 0).expect("prepare new root");
     let mut transaction = project.begin_transaction().expect("begin root transaction");
@@ -60,26 +60,16 @@ fn moved_media_resolves_and_confirmed_location_persists() {
     drop(transaction);
 
     let unique = resolver
-        .resolve(
-            representation.id(),
-            &resource,
-            &known_locators,
-            project.project().media_roots(),
-        )
+        .resolve_resource(&resource, &known_locators, project.project().media_roots())
         .expect("resolve unique media");
-    assert_eq!(unique.state(), ResolutionState::ResolvedExact);
+    assert_eq!(unique.state(), ResourceResolutionState::ResolvedExact);
 
     let duplicate_path = relocated_directory.join("duplicate.mov");
     fs::copy(&relocated_path, &duplicate_path).expect("create duplicate");
     let ambiguous = resolver
-        .resolve(
-            representation.id(),
-            &resource,
-            &known_locators,
-            project.project().media_roots(),
-        )
+        .resolve_resource(&resource, &known_locators, project.project().media_roots())
         .expect("resolve duplicate media");
-    assert_eq!(ambiguous.state(), ResolutionState::Ambiguous);
+    assert_eq!(ambiguous.state(), ResourceResolutionState::Ambiguous);
     assert_eq!(ambiguous.candidates().len(), 2);
 
     let chosen_uri = ambiguous
@@ -107,13 +97,11 @@ fn moved_media_resolves_and_confirmed_location_persists() {
         .expect("load confirmed locators");
     assert_eq!(locators.len(), 2);
     let online = resolver
-        .resolve(
-            representation.id(),
-            &resource,
-            &locators,
-            reopened.project().media_roots(),
-        )
+        .resolve_resource(&resource, &locators, reopened.project().media_roots())
         .expect("resolve confirmed locator");
-    assert_eq!(online.state(), ResolutionState::OnlineAtKnownLocation);
+    assert_eq!(
+        online.state(),
+        ResourceResolutionState::OnlineAtKnownLocator
+    );
     assert_eq!(online.candidates()[0].uri(), confirmed.uri());
 }

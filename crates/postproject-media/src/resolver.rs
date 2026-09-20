@@ -9,7 +9,7 @@ use std::{
 use postproject_core::{
     Confidence, Error, ErrorKind, EvidenceKind, FileFacts, Locator, MediaRoot, RepresentationId,
     Resolution, ResolutionCandidate, ResolutionEvidence, ResolutionState, Resource,
-    ResourceFingerprint, Result,
+    ResourceFingerprint, ResourceResolution, ResourceResolutionState, Result,
 };
 use url::Url;
 use walkdir::WalkDir;
@@ -67,15 +67,14 @@ impl MediaResolver {
     /// Returns [`ErrorKind::InvalidArgument`] if a known locator belongs to a
     /// different resource, and otherwise only when a result value cannot
     /// be constructed.
-    /// Filesystem discovery failures are represented as [`ResolutionState::Error`]
-    /// with [`EvidenceKind::DiscoveryError`].
-    pub fn resolve(
+    /// Filesystem discovery failures are represented as
+    /// [`ResourceResolutionState::Error`] with [`EvidenceKind::DiscoveryError`].
+    pub fn resolve_resource(
         &self,
-        representation_id: RepresentationId,
         resource: &Resource,
         known_locators: &[Locator],
         media_roots: &[MediaRoot],
-    ) -> Result<Resolution> {
+    ) -> Result<ResourceResolution> {
         if known_locators
             .iter()
             .any(|locator| locator.resource_id() != resource.id())
@@ -86,9 +85,9 @@ impl MediaResolver {
             ));
         }
         if let Some(candidate) = online_known_candidate(known_locators)? {
-            return Resolution::new(
-                representation_id,
-                ResolutionState::OnlineAtKnownLocation,
+            return ResourceResolution::new(
+                resource.id(),
+                ResourceResolutionState::OnlineAtKnownLocator,
                 vec![candidate],
                 Vec::new(),
             );
@@ -106,7 +105,7 @@ impl MediaResolver {
             original_name.as_deref(),
         ) {
             Ok(discovered) => discovered,
-            Err(detail) => return error_resolution(representation_id, detail),
+            Err(detail) => return error_resolution(resource.id(), detail),
         };
 
         let mut candidates = Vec::new();
@@ -120,19 +119,19 @@ impl MediaResolver {
             match verify_candidate(&path, &uri, cheap_evidence, resource.fingerprints()) {
                 Ok(Some(candidate)) => candidates.push(candidate),
                 Ok(None) => {}
-                Err(detail) => return error_resolution(representation_id, detail),
+                Err(detail) => return error_resolution(resource.id(), detail),
             }
         }
 
         let state = match candidates.len() {
-            0 => ResolutionState::Missing,
+            0 => ResourceResolutionState::Offline,
             1 if candidates[0].confidence() == Confidence::CERTAIN => {
-                ResolutionState::ResolvedExact
+                ResourceResolutionState::ResolvedExact
             }
-            1 => ResolutionState::ResolvedProbable,
-            _ => ResolutionState::Ambiguous,
+            1 => ResourceResolutionState::ResolvedProbable,
+            _ => ResourceResolutionState::Ambiguous,
         };
-        let evidence = if state == ResolutionState::Ambiguous {
+        let evidence = if state == ResourceResolutionState::Ambiguous {
             vec![ResolutionEvidence::new(
                 EvidenceKind::ConflictingCandidate,
                 Some(format!(
@@ -143,7 +142,36 @@ impl MediaResolver {
         } else {
             Vec::new()
         };
-        Resolution::new(representation_id, state, candidates, evidence)
+        ResourceResolution::new(resource.id(), state, candidates, evidence)
+    }
+
+    /// Resolves one resource using a representation-keyed result.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors documented by [`Self::resolve_resource`].
+    pub fn resolve(
+        &self,
+        representation_id: RepresentationId,
+        resource: &Resource,
+        known_locators: &[Locator],
+        media_roots: &[MediaRoot],
+    ) -> Result<Resolution> {
+        let resource = self.resolve_resource(resource, known_locators, media_roots)?;
+        let state = match resource.state() {
+            ResourceResolutionState::OnlineAtKnownLocator => ResolutionState::OnlineAtKnownLocation,
+            ResourceResolutionState::ResolvedExact => ResolutionState::ResolvedExact,
+            ResourceResolutionState::ResolvedProbable => ResolutionState::ResolvedProbable,
+            ResourceResolutionState::Offline => ResolutionState::Missing,
+            ResourceResolutionState::Ambiguous => ResolutionState::Ambiguous,
+            _ => ResolutionState::Error,
+        };
+        Resolution::new(
+            representation_id,
+            state,
+            resource.candidates().to_vec(),
+            resource.evidence().to_vec(),
+        )
     }
 
     fn discover(
@@ -295,10 +323,13 @@ fn verify_candidate(
         .map_err(|error| error.to_string())
 }
 
-fn error_resolution(representation_id: RepresentationId, detail: String) -> Result<Resolution> {
-    Resolution::new(
-        representation_id,
-        ResolutionState::Error,
+fn error_resolution(
+    resource_id: postproject_core::ResourceId,
+    detail: String,
+) -> Result<ResourceResolution> {
+    ResourceResolution::new(
+        resource_id,
+        ResourceResolutionState::Error,
         Vec::new(),
         vec![ResolutionEvidence::new(
             EvidenceKind::DiscoveryError,
@@ -326,7 +357,7 @@ fn file_uri_to_path(uri: &str) -> Result<PathBuf> {
 mod tests {
     use std::fs;
 
-    use postproject_core::ResolutionState;
+    use postproject_core::ResourceResolutionState;
 
     use super::*;
     use crate::{prepare_media_root, prepare_original_media};
@@ -339,15 +370,13 @@ mod tests {
         let prepared = prepare_original_media(&path, None, None).expect("prepare import");
 
         let resolution = MediaResolver::default()
-            .resolve(
-                prepared.representation().id(),
-                &prepared.resources()[0],
-                prepared.locators(),
-                &[],
-            )
+            .resolve_resource(&prepared.resources()[0], prepared.locators(), &[])
             .expect("resolve known location");
 
-        assert_eq!(resolution.state(), ResolutionState::OnlineAtKnownLocation);
+        assert_eq!(
+            resolution.state(),
+            ResourceResolutionState::OnlineAtKnownLocator
+        );
         assert_eq!(
             resolution.candidates()[0].uri(),
             prepared.locators()[0].uri()
@@ -369,15 +398,10 @@ mod tests {
         let root = prepare_media_root(&new_directory, None, 0).expect("prepare root");
 
         let resolution = MediaResolver::default()
-            .resolve(
-                prepared.representation().id(),
-                &prepared.resources()[0],
-                prepared.locators(),
-                &[root],
-            )
+            .resolve_resource(&prepared.resources()[0], prepared.locators(), &[root])
             .expect("resolve moved media");
 
-        assert_eq!(resolution.state(), ResolutionState::ResolvedExact);
+        assert_eq!(resolution.state(), ResourceResolutionState::ResolvedExact);
         assert_eq!(resolution.candidates().len(), 1);
         assert!(
             resolution.candidates()[0]
@@ -399,15 +423,10 @@ mod tests {
         let root = prepare_media_root(directory.path(), None, 0).expect("prepare root");
 
         let resolution = MediaResolver::default()
-            .resolve(
-                prepared.representation().id(),
-                &prepared.resources()[0],
-                prepared.locators(),
-                &[root],
-            )
+            .resolve_resource(&prepared.resources()[0], prepared.locators(), &[root])
             .expect("resolve ambiguous media");
 
-        assert_eq!(resolution.state(), ResolutionState::Ambiguous);
+        assert_eq!(resolution.state(), ResourceResolutionState::Ambiguous);
         assert_eq!(resolution.candidates().len(), 2);
         assert!(resolution.candidates()[0].uri() < resolution.candidates()[1].uri());
     }
@@ -428,15 +447,10 @@ mod tests {
         .expect("valid limits");
 
         let resolution = resolver
-            .resolve(
-                prepared.representation().id(),
-                &prepared.resources()[0],
-                prepared.locators(),
-                &[root],
-            )
+            .resolve_resource(&prepared.resources()[0], prepared.locators(), &[root])
             .expect("create error result");
 
-        assert_eq!(resolution.state(), ResolutionState::Error);
+        assert_eq!(resolution.state(), ResourceResolutionState::Error);
         assert_eq!(
             resolution.evidence()[0].kind(),
             EvidenceKind::DiscoveryError

@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, fs};
 
-use postproject_core::{AssetId, RepresentationId, ResolutionState};
+use postproject_core::{AssetId, RepresentationId, ResourceResolutionState};
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
 };
@@ -67,19 +67,6 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
     let mut project = SqliteProject::open(&project_path).expect("reopen moved project");
     let resolver = MediaResolver::default();
     for representation_id in identities.values() {
-        let representation = project
-            .representations(
-                prepared
-                    .iter()
-                    .find(|import| import.representation().id() == *representation_id)
-                    .expect("known representation")
-                    .asset()
-                    .id(),
-            )
-            .expect("load representation")
-            .into_iter()
-            .find(|representation| representation.id() == *representation_id)
-            .expect("representation exists");
         let resource = project
             .resources(*representation_id)
             .expect("load resources")
@@ -88,9 +75,9 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
             .locators(resource.id())
             .expect("load known locators");
         let resolution = resolver
-            .resolve(representation.id(), &resource, &locators, &[])
+            .resolve_resource(&resource, &locators, &[])
             .expect("resolve without roots");
-        assert_eq!(resolution.state(), ResolutionState::Missing);
+        assert_eq!(resolution.state(), ResourceResolutionState::Offline);
     }
 
     let root = prepare_media_root(&relocated_parent, Some("relocated".to_owned()), 0)
@@ -113,18 +100,13 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
                 .remove(0);
             let locators = project.locators(resource.id()).expect("load locators");
             let resolution = resolver
-                .resolve(
-                    representation.id(),
-                    &resource,
-                    &locators,
-                    project.project().media_roots(),
-                )
+                .resolve_resource(&resource, &locators, project.project().media_roots())
                 .expect("resolve relocated media");
             match resolution.state() {
-                ResolutionState::ResolvedExact => {
+                ResourceResolutionState::ResolvedExact => {
                     assert_eq!(resolution.candidates().len(), 1);
                 }
-                ResolutionState::Ambiguous => {
+                ResourceResolutionState::Ambiguous => {
                     ambiguous_count += 1;
                     assert_eq!(resolution.candidates().len(), 2);
                 }
@@ -155,13 +137,7 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
     drop(project);
 
     let project = SqliteProject::open(&project_path).expect("reopen confirmed project");
-    for (asset_id, representation_id) in identities {
-        let representation = project
-            .representations(asset_id)
-            .expect("load persisted representation")
-            .into_iter()
-            .find(|representation| representation.id() == representation_id)
-            .expect("persisted representation exists");
+    for (_, representation_id) in identities {
         let resource = project
             .resources(representation_id)
             .expect("load persisted resources")
@@ -171,8 +147,11 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
             .expect("load persisted locators");
         assert_eq!(locators.len(), 2);
         let resolution = resolver
-            .resolve(representation.id(), &resource, &locators, &[])
+            .resolve_resource(&resource, &locators, &[])
             .expect("resolve from confirmed locator without roots");
-        assert_eq!(resolution.state(), ResolutionState::OnlineAtKnownLocation);
+        assert_eq!(
+            resolution.state(),
+            ResourceResolutionState::OnlineAtKnownLocator
+        );
     }
 }
