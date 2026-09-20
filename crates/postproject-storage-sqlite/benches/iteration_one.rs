@@ -13,7 +13,7 @@ use postproject_core::{
     Representation, RepresentationId, RepresentationKind, Resource, ResourceId, Timestamp,
 };
 use postproject_media::{MediaResolver, prepare_media_root, prepare_original_media};
-use postproject_storage_sqlite::SqliteProject;
+use postproject_storage_sqlite::SqliteProduction;
 use tempfile::TempDir;
 
 const BULK_IMPORT_COUNT: usize = 1_000;
@@ -22,7 +22,7 @@ const RESOLVER_ENTRY_COUNT: usize = 3_000;
 
 fn benchmarks(criterion: &mut Criterion) {
     benchmark_bulk_import(criterion);
-    benchmark_large_project_open(criterion);
+    benchmark_large_production_open(criterion);
     benchmark_resolver_scan(criterion);
     benchmark_transaction_commit(criterion);
 }
@@ -34,8 +34,9 @@ fn benchmark_bulk_import(criterion: &mut Criterion) {
         bencher.iter_batched(
             || media_fixture(BULK_IMPORT_COUNT, "bulk"),
             |(directory, media)| {
-                let mut project = SqliteProject::create(directory.path().join("bulk.pproj"), None)
-                    .expect("create benchmark project");
+                let mut production =
+                    SqliteProduction::create(directory.path().join("bulk.pproj"), None)
+                        .expect("create benchmark production");
                 let prepared: Vec<_> = media
                     .iter()
                     .map(|path| {
@@ -43,7 +44,7 @@ fn benchmark_bulk_import(criterion: &mut Criterion) {
                             .expect("prepare benchmark import")
                     })
                     .collect();
-                let mut transaction = project
+                let mut transaction = production
                     .begin_transaction()
                     .expect("begin bulk-import transaction");
                 for import in &prepared {
@@ -53,7 +54,7 @@ fn benchmark_bulk_import(criterion: &mut Criterion) {
                 }
                 transaction.commit().expect("commit benchmark imports");
                 drop(transaction);
-                black_box(project);
+                black_box(production);
             },
             BatchSize::LargeInput,
         );
@@ -61,24 +62,27 @@ fn benchmark_bulk_import(criterion: &mut Criterion) {
     group.finish();
 }
 
-fn benchmark_large_project_open(criterion: &mut Criterion) {
-    let directory = tempfile::tempdir().expect("create large-project fixture");
+fn benchmark_large_production_open(criterion: &mut Criterion) {
+    let directory = tempfile::tempdir().expect("create large-production fixture");
     let path = directory.path().join("large.pproj");
-    let mut project = SqliteProject::create(&path, None).expect("create large project");
-    let mut transaction = project
+    let mut production = SqliteProduction::create(&path, None).expect("create large production");
+    let mut transaction = production
         .begin_transaction()
-        .expect("begin large-project transaction");
+        .expect("begin large-production transaction");
     for index in 0..LARGE_PROJECT_ASSET_COUNT {
         transaction
             .import_original(&synthetic_import(index))
             .expect("stage synthetic import");
     }
-    transaction.commit().expect("commit large-project fixture");
+    transaction
+        .commit()
+        .expect("commit large-production fixture");
     drop(transaction);
-    drop(project);
+    drop(production);
 
-    criterion.bench_function("project_open/10000_assets", |bencher| {
-        bencher.iter(|| black_box(SqliteProject::open(&path).expect("open benchmark project")));
+    criterion.bench_function("production_open/10000_assets", |bencher| {
+        bencher
+            .iter(|| black_box(SqliteProduction::open(&path).expect("open benchmark production")));
     });
 }
 
@@ -117,15 +121,16 @@ fn benchmark_resolver_scan(criterion: &mut Criterion) {
 
 fn benchmark_transaction_commit(criterion: &mut Criterion) {
     let directory = tempfile::tempdir().expect("create transaction fixture");
-    let mut project = SqliteProject::create(directory.path().join("transactions.pproj"), None)
-        .expect("create transaction project");
+    let mut production =
+        SqliteProduction::create(directory.path().join("transactions.pproj"), None)
+            .expect("create transaction production");
     let mut index = 0_usize;
 
     criterion.bench_function("transaction_commit/single_import", |bencher| {
         bencher.iter(|| {
             let import = synthetic_import(index);
             index = index.wrapping_add(1);
-            let mut transaction = project
+            let mut transaction = production
                 .begin_transaction()
                 .expect("begin benchmark transaction");
             transaction
