@@ -92,13 +92,28 @@ struct ExternalIdentifier final {
   std::optional<std::string> qualifier;
 };
 
-enum class ResolutionState : std::uint32_t {
-  online_at_known_locator = PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATOR,
-  resolved_exact = PP_RESOLUTION_RESOLVED_EXACT,
-  resolved_probable = PP_RESOLUTION_RESOLVED_PROBABLE,
-  missing = PP_RESOLUTION_MISSING,
-  ambiguous = PP_RESOLUTION_AMBIGUOUS,
-  error = PP_RESOLUTION_ERROR,
+enum class RepresentationAvailability : std::uint32_t {
+  online = PP_AVAILABILITY_ONLINE,
+  partial = PP_AVAILABILITY_PARTIAL,
+  offline = PP_AVAILABILITY_OFFLINE,
+  ambiguous = PP_AVAILABILITY_AMBIGUOUS,
+  error = PP_AVAILABILITY_ERROR,
+};
+
+enum class ResourceResolutionState : std::uint32_t {
+  online_at_known_locator = PP_RESOURCE_ONLINE_AT_KNOWN_LOCATOR,
+  resolved_exact = PP_RESOURCE_RESOLVED_EXACT,
+  resolved_probable = PP_RESOURCE_RESOLVED_PROBABLE,
+  offline = PP_RESOURCE_OFFLINE,
+  ambiguous = PP_RESOURCE_AMBIGUOUS,
+  error = PP_RESOURCE_RESOLUTION_ERROR,
+};
+
+enum class AvailabilityIssueKind : std::uint32_t {
+  offline_resource = PP_AVAILABILITY_ISSUE_OFFLINE_RESOURCE,
+  ambiguous_resource = PP_AVAILABILITY_ISSUE_AMBIGUOUS_RESOURCE,
+  resource_error = PP_AVAILABILITY_ISSUE_RESOURCE_ERROR,
+  missing_frames = PP_AVAILABILITY_ISSUE_MISSING_FRAMES,
 };
 
 enum class EvidenceKind : std::uint32_t {
@@ -125,12 +140,25 @@ struct ResolutionCandidate final {
   std::vector<Evidence> evidence;
 };
 
-struct Resolution final {
-  Uuid representation_id;
+struct ResourceResolution final {
   Uuid resource_id;
-  ResolutionState state;
+  ResourceResolutionState state;
   std::vector<ResolutionCandidate> candidates;
   std::vector<Evidence> evidence;
+};
+
+struct AvailabilityIssue final {
+  Uuid resource_id;
+  bool required;
+  AvailabilityIssueKind kind;
+  std::vector<std::int64_t> frames;
+};
+
+struct RepresentationResolution final {
+  Uuid representation_id;
+  RepresentationAvailability availability;
+  std::vector<ResourceResolution> resources;
+  std::vector<AvailabilityIssue> issues;
 };
 
 namespace detail {
@@ -213,14 +241,16 @@ inline pp_object_ref_t native_object_ref(const ObjectRef &value) {
   return {static_cast<pp_object_kind_t>(value.kind), native_uuid(value.id)};
 }
 
-inline Evidence resolution_evidence(const pp_resolution_set_t *resolutions,
-                                    std::uint64_t resolution_index,
-                                    std::uint64_t evidence_index) {
+inline Evidence resource_evidence(const pp_resolution_set_t *resolutions,
+                                  std::uint64_t representation_index,
+                                  std::uint64_t resource_index,
+                                  std::uint64_t evidence_index) {
   pp_evidence_kind_t kind = 0;
   const char *detail = nullptr;
   pp_error_t *error = nullptr;
-  const pp_error_code_t status = pp_resolution_evidence_get(
-      resolutions, resolution_index, evidence_index, &kind, &detail, &error);
+  const pp_error_code_t status = pp_resolution_set_get_resource_evidence(
+      resolutions, representation_index, resource_index, evidence_index, &kind,
+      &detail, &error);
   throw_if_error(status, error);
   return {static_cast<EvidenceKind>(kind),
           detail != nullptr
@@ -229,15 +259,16 @@ inline Evidence resolution_evidence(const pp_resolution_set_t *resolutions,
 }
 
 inline Evidence candidate_evidence(const pp_resolution_set_t *resolutions,
-                                   std::uint64_t resolution_index,
+                                   std::uint64_t representation_index,
+                                   std::uint64_t resource_index,
                                    std::uint64_t candidate_index,
                                    std::uint64_t evidence_index) {
   pp_evidence_kind_t kind = 0;
   const char *detail = nullptr;
   pp_error_t *error = nullptr;
-  const pp_error_code_t status = pp_resolution_candidate_evidence_get(
-      resolutions, resolution_index, candidate_index, evidence_index, &kind,
-      &detail, &error);
+  const pp_error_code_t status = pp_resolution_set_get_candidate_evidence(
+      resolutions, representation_index, resource_index, candidate_index,
+      evidence_index, &kind, &detail, &error);
   throw_if_error(status, error);
   return {static_cast<EvidenceKind>(kind),
           detail != nullptr
@@ -498,7 +529,7 @@ public:
     return result;
   }
 
-  [[nodiscard]] std::vector<Resolution>
+  [[nodiscard]] std::vector<RepresentationResolution>
   resolveAsset(const Uuid &asset_id) const {
     const pp_uuid_t value = detail::native_uuid(asset_id);
     pp_resolution_set_t *raw_resolutions = nullptr;
@@ -508,55 +539,105 @@ public:
     detail::throw_if_error(status, error);
     detail::ResolutionSetHandle resolutions(raw_resolutions);
 
-    std::vector<Resolution> result;
-    const std::uint64_t count = pp_resolution_set_count(resolutions.get());
-    for (std::uint64_t resolution_index = 0; resolution_index < count;
-         ++resolution_index) {
+    std::vector<RepresentationResolution> result;
+    const std::uint64_t count =
+        pp_resolution_set_representation_count(resolutions.get());
+    for (std::uint64_t representation_index = 0;
+         representation_index < count; ++representation_index) {
       pp_uuid_t representation_id{};
-      pp_uuid_t resource_id{};
-      pp_resolution_state_t state = 0;
-      std::uint64_t candidate_count = 0;
-      std::uint64_t evidence_count = 0;
+      pp_representation_availability_t availability = 0;
+      std::uint64_t resource_count = 0;
+      std::uint64_t issue_count = 0;
       pp_error_t *item_error = nullptr;
-      const pp_error_code_t item_status = pp_resolution_set_get(
-          resolutions.get(), resolution_index, &representation_id, &resource_id,
-          &state, &candidate_count, &evidence_count, &item_error);
+      const pp_error_code_t item_status =
+          pp_resolution_set_get_representation(
+              resolutions.get(), representation_index, &representation_id,
+              &availability, &resource_count, &issue_count, &item_error);
       detail::throw_if_error(item_status, item_error);
 
-      std::vector<ResolutionCandidate> candidates;
-      for (std::uint64_t candidate_index = 0;
-           candidate_index < candidate_count; ++candidate_index) {
-        const char *uri = nullptr;
-        std::uint16_t confidence = 0;
-        std::uint64_t candidate_evidence_count = 0;
-        pp_error_t *candidate_error = nullptr;
-        const pp_error_code_t candidate_status = pp_resolution_candidate_get(
-            resolutions.get(), resolution_index, candidate_index, &uri,
-            &confidence, &candidate_evidence_count, &candidate_error);
-        detail::throw_if_error(candidate_status, candidate_error);
+      std::vector<ResourceResolution> resources;
+      for (std::uint64_t resource_index = 0; resource_index < resource_count;
+           ++resource_index) {
+        pp_uuid_t resource_id{};
+        pp_resource_resolution_state_t state = 0;
+        std::uint64_t candidate_count = 0;
+        std::uint64_t evidence_count = 0;
+        pp_error_t *resource_error = nullptr;
+        const pp_error_code_t resource_status = pp_resolution_set_get_resource(
+            resolutions.get(), representation_index, resource_index,
+            &resource_id, &state, &candidate_count, &evidence_count,
+            &resource_error);
+        detail::throw_if_error(resource_status, resource_error);
+
+        std::vector<ResolutionCandidate> candidates;
+        for (std::uint64_t candidate_index = 0;
+             candidate_index < candidate_count; ++candidate_index) {
+          const char *uri = nullptr;
+          std::uint16_t confidence = 0;
+          std::uint64_t candidate_evidence_count = 0;
+          pp_error_t *candidate_error = nullptr;
+          const pp_error_code_t candidate_status =
+              pp_resolution_set_get_candidate(
+                  resolutions.get(), representation_index, resource_index,
+                  candidate_index, &uri, &confidence, &candidate_evidence_count,
+                  &candidate_error);
+          detail::throw_if_error(candidate_status, candidate_error);
+
+          std::vector<Evidence> evidence;
+          for (std::uint64_t evidence_index = 0;
+               evidence_index < candidate_evidence_count; ++evidence_index) {
+            evidence.push_back(detail::candidate_evidence(
+                resolutions.get(), representation_index, resource_index,
+                candidate_index, evidence_index));
+          }
+          candidates.push_back(
+              {uri != nullptr ? std::string(uri) : std::string(), confidence,
+               std::move(evidence)});
+        }
 
         std::vector<Evidence> evidence;
         for (std::uint64_t evidence_index = 0;
-             evidence_index < candidate_evidence_count; ++evidence_index) {
-          evidence.push_back(detail::candidate_evidence(
-              resolutions.get(), resolution_index, candidate_index,
+             evidence_index < evidence_count; ++evidence_index) {
+          evidence.push_back(detail::resource_evidence(
+              resolutions.get(), representation_index, resource_index,
               evidence_index));
         }
-        candidates.push_back(
-            {uri != nullptr ? std::string(uri) : std::string(), confidence,
-             std::move(evidence)});
+        resources.push_back({detail::uuid(resource_id),
+                             static_cast<ResourceResolutionState>(state),
+                             std::move(candidates), std::move(evidence)});
       }
 
-      std::vector<Evidence> evidence;
-      for (std::uint64_t evidence_index = 0;
-           evidence_index < evidence_count; ++evidence_index) {
-        evidence.push_back(detail::resolution_evidence(
-            resolutions.get(), resolution_index, evidence_index));
+      std::vector<AvailabilityIssue> issues;
+      for (std::uint64_t issue_index = 0; issue_index < issue_count;
+           ++issue_index) {
+        pp_uuid_t resource_id{};
+        std::uint8_t required = 0;
+        pp_availability_issue_kind_t kind = 0;
+        std::uint64_t frame_count = 0;
+        pp_error_t *issue_error = nullptr;
+        const pp_error_code_t issue_status = pp_resolution_set_get_issue(
+            resolutions.get(), representation_index, issue_index, &resource_id,
+            &required, &kind, &frame_count, &issue_error);
+        detail::throw_if_error(issue_status, issue_error);
+        std::vector<std::int64_t> frames;
+        for (std::uint64_t frame_index = 0; frame_index < frame_count;
+             ++frame_index) {
+          std::int64_t frame = 0;
+          pp_error_t *frame_error = nullptr;
+          const pp_error_code_t frame_status =
+              pp_resolution_set_get_issue_frame(
+                  resolutions.get(), representation_index, issue_index,
+                  frame_index, &frame, &frame_error);
+          detail::throw_if_error(frame_status, frame_error);
+          frames.push_back(frame);
+        }
+        issues.push_back({detail::uuid(resource_id), required != 0,
+                          static_cast<AvailabilityIssueKind>(kind),
+                          std::move(frames)});
       }
       result.push_back({detail::uuid(representation_id),
-                        detail::uuid(resource_id),
-                        static_cast<ResolutionState>(state),
-                        std::move(candidates), std::move(evidence)});
+                        static_cast<RepresentationAvailability>(availability),
+                        std::move(resources), std::move(issues)});
     }
     return result;
   }

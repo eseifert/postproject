@@ -66,15 +66,23 @@ int main(int argc, char **argv) {
     std::filesystem::rename(media_path, moved_media_path);
     const auto resolutions = project.resolveAsset(asset_id);
     if (resolutions.size() != 1 ||
-        resolutions[0].state != postproject::ResolutionState::resolved_exact ||
-        resolutions[0].candidates.size() != 1 ||
-        resolutions[0].candidates[0].confidence_basis_points != 10000 ||
-        resolutions[0].candidates[0].evidence.empty()) {
+        resolutions[0].availability !=
+            postproject::RepresentationAvailability::online ||
+        resolutions[0].resources.size() != 1 ||
+        resolutions[0].resources[0].state !=
+            postproject::ResourceResolutionState::resolved_exact ||
+        resolutions[0].resources[0].candidates.size() != 1 ||
+        resolutions[0]
+                .resources[0]
+                .candidates[0]
+                .confidence_basis_points != 10000 ||
+        resolutions[0].resources[0].candidates[0].evidence.empty()) {
       return 11;
     }
     auto confirmation = project.beginTransaction();
-    confirmation.confirmLocator(resolutions[0].resource_id,
-                                resolutions[0].candidates[0].uri);
+    confirmation.confirmLocator(
+        resolutions[0].resources[0].resource_id,
+        resolutions[0].resources[0].candidates[0].uri);
     confirmation.commit();
 
     auto moved = std::move(project);
@@ -88,8 +96,11 @@ int main(int argc, char **argv) {
     }
     const auto persisted = reopened.resolveAsset(asset_id);
     if (persisted.size() != 1 ||
-        persisted[0].state !=
-            postproject::ResolutionState::online_at_known_locator) {
+        persisted[0].availability !=
+            postproject::RepresentationAvailability::online ||
+        persisted[0].resources.size() != 1 ||
+        persisted[0].resources[0].state !=
+            postproject::ResourceResolutionState::online_at_known_locator) {
       return 12;
     }
 
