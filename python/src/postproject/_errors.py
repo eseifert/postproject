@@ -14,19 +14,19 @@ class InvalidArgumentError(PostProjectError, ValueError):
 
 
 class NotFoundError(PostProjectError):
-    """A requested project object does not exist."""
+    """A requested production object does not exist."""
 
 
 class AlreadyExistsError(PostProjectError):
-    """A unique project object or attachment already exists."""
+    """A unique production object or attachment already exists."""
 
 
 class StorageError(PostProjectError):
-    """Persistent project data could not be read or written safely."""
+    """Persistent production data could not be read or written safely."""
 
 
 class ConflictError(PostProjectError):
-    """An operation conflicts with current transaction or project state."""
+    """An operation conflicts with current transaction or production state."""
 
 
 class UnsupportedError(PostProjectError):
@@ -41,4 +41,3 @@ ERROR_TYPES: dict[int, type[PostProjectError]] = {
     7: ConflictError,
     10: UnsupportedError,
 }
-
