@@ -92,6 +92,33 @@ struct ExternalIdentifier final {
   std::optional<std::string> qualifier;
 };
 
+struct ActivityEdge final {
+  Uuid representation_id;
+  std::optional<std::string> role;
+};
+
+struct ToolIdentity final {
+  std::string name;
+  std::optional<std::string> version;
+  std::optional<std::string> uri;
+};
+
+struct AgentIdentity final {
+  std::optional<std::string> name;
+  std::optional<ExternalIdentifier> identifier;
+};
+
+struct Activity final {
+  Uuid id;
+  std::string kind;
+  std::optional<std::int64_t> started_at_unix_micros;
+  std::optional<std::int64_t> finished_at_unix_micros;
+  std::optional<ToolIdentity> tool;
+  std::optional<AgentIdentity> agent;
+  std::vector<ActivityEdge> inputs;
+  std::vector<ActivityEdge> outputs;
+};
+
 enum class RepresentationAvailability : std::uint32_t {
   online = PP_AVAILABILITY_ONLINE,
   partial = PP_AVAILABILITY_PARTIAL,
@@ -196,6 +223,15 @@ struct ObjectRefSetDeleter final {
 using ObjectRefSetHandle =
     std::unique_ptr<pp_object_ref_set_t, ObjectRefSetDeleter>;
 
+struct ActivitySetDeleter final {
+  void operator()(pp_activity_set_t *activities) const noexcept {
+    pp_activity_set_release(activities);
+  }
+};
+
+using ActivitySetHandle =
+    std::unique_ptr<pp_activity_set_t, ActivitySetDeleter>;
+
 inline void throw_if_error(pp_error_code_t status, pp_error_t *raw_error) {
   ErrorHandle error(raw_error);
   if (status == PP_OK) {
@@ -239,6 +275,96 @@ inline ObjectRef object_ref(const pp_object_ref_t &value) {
 
 inline pp_object_ref_t native_object_ref(const ObjectRef &value) {
   return {static_cast<pp_object_kind_t>(value.kind), native_uuid(value.id)};
+}
+
+inline std::optional<std::string> optional_string(const char *value) {
+  return value != nullptr
+             ? std::optional<std::string>(std::string(value))
+             : std::nullopt;
+}
+
+inline Activity activity(const pp_activity_set_t *activities,
+                         std::uint64_t index) {
+  pp_uuid_t id{};
+  const char *kind = nullptr;
+  std::uint8_t has_started_at = 0;
+  std::int64_t started_at = 0;
+  std::uint8_t has_finished_at = 0;
+  std::int64_t finished_at = 0;
+  std::uint64_t input_count = 0;
+  std::uint64_t output_count = 0;
+  pp_error_t *error = nullptr;
+  pp_error_code_t status = pp_activity_set_get(
+      activities, index, &id, &kind, &has_started_at, &started_at,
+      &has_finished_at, &finished_at, &input_count, &output_count, &error);
+  throw_if_error(status, error);
+
+  const char *tool_name = nullptr;
+  const char *tool_version = nullptr;
+  const char *tool_uri = nullptr;
+  error = nullptr;
+  status = pp_activity_set_get_tool(activities, index, &tool_name,
+                                    &tool_version, &tool_uri, &error);
+  throw_if_error(status, error);
+  std::optional<ToolIdentity> tool;
+  if (tool_name != nullptr) {
+    tool = ToolIdentity{std::string(tool_name), optional_string(tool_version),
+                        optional_string(tool_uri)};
+  }
+
+  const char *agent_name = nullptr;
+  const char *agent_scheme = nullptr;
+  const char *agent_value = nullptr;
+  const char *agent_qualifier = nullptr;
+  error = nullptr;
+  status = pp_activity_set_get_agent(
+      activities, index, &agent_name, &agent_scheme, &agent_value,
+      &agent_qualifier, &error);
+  throw_if_error(status, error);
+  std::optional<AgentIdentity> agent;
+  if (agent_name != nullptr || agent_scheme != nullptr) {
+    std::optional<ExternalIdentifier> identifier;
+    if (agent_scheme != nullptr && agent_value != nullptr) {
+      identifier = ExternalIdentifier{std::string(agent_scheme),
+                                      std::string(agent_value),
+                                      optional_string(agent_qualifier)};
+    }
+    agent = AgentIdentity{optional_string(agent_name), std::move(identifier)};
+  }
+
+  std::vector<ActivityEdge> inputs;
+  inputs.reserve(static_cast<std::size_t>(input_count));
+  for (std::uint64_t edge_index = 0; edge_index < input_count; ++edge_index) {
+    pp_uuid_t representation_id{};
+    const char *role = nullptr;
+    error = nullptr;
+    status = pp_activity_set_get_input(activities, index, edge_index,
+                                       &representation_id, &role, &error);
+    throw_if_error(status, error);
+    inputs.push_back({uuid(representation_id), optional_string(role)});
+  }
+  std::vector<ActivityEdge> outputs;
+  outputs.reserve(static_cast<std::size_t>(output_count));
+  for (std::uint64_t edge_index = 0; edge_index < output_count; ++edge_index) {
+    pp_uuid_t representation_id{};
+    const char *role = nullptr;
+    error = nullptr;
+    status = pp_activity_set_get_output(activities, index, edge_index,
+                                        &representation_id, &role, &error);
+    throw_if_error(status, error);
+    outputs.push_back({uuid(representation_id), optional_string(role)});
+  }
+
+  return {uuid(id),
+          kind != nullptr ? std::string(kind) : std::string(),
+          has_started_at != 0 ? std::optional<std::int64_t>(started_at)
+                              : std::nullopt,
+          has_finished_at != 0 ? std::optional<std::int64_t>(finished_at)
+                               : std::nullopt,
+          std::move(tool),
+          std::move(agent),
+          std::move(inputs),
+          std::move(outputs)};
 }
 
 inline Evidence resource_evidence(const pp_resolution_set_t *resolutions,
@@ -638,6 +764,23 @@ public:
       result.push_back({detail::uuid(representation_id),
                         static_cast<RepresentationAvailability>(availability),
                         std::move(resources), std::move(issues)});
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::vector<Activity> activities() const {
+    pp_activity_set_t *raw_activities = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_project_activities(project_, &raw_activities, &error);
+    detail::throw_if_error(status, error);
+    detail::ActivitySetHandle activities(raw_activities);
+
+    std::vector<Activity> result;
+    const std::uint64_t count = pp_activity_set_count(activities.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      result.push_back(detail::activity(activities.get(), index));
     }
     return result;
   }
