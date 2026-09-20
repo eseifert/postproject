@@ -4,7 +4,8 @@ use postproject_core::{
     Activity, ContentStructure, ContentStructureKind, Error, ErrorKind, ExternalIdentifier,
     Locator, LocatorAvailability, MediaRoot, MetadataProperty, MetadataValue, ObjectRef,
     OriginalMediaImport, Project, ProjectStoreTransaction, Resource, Result, RevisionContext,
-    RevisionEventKind, TransactionId, TransactionLifecycle, TransactionState,
+    RevisionEventKind, RevisionId, Timestamp, TransactionId, TransactionLifecycle,
+    TransactionState,
 };
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 
@@ -542,6 +543,21 @@ impl<'project> SqliteTransaction<'project> {
     /// [`ErrorKind::Storage`] if SQLite cannot commit.
     pub fn commit(&mut self) -> Result<()> {
         self.lifecycle.ensure_open()?;
+        if !self.pending_events.is_empty() {
+            let revision_id = RevisionId::new();
+            let transaction_id = self.id();
+            let committed_at = Timestamp::now()?;
+            let context = self.revision_context.clone();
+            let events = self.pending_events.clone();
+            persist_revision(
+                self.open_transaction()?,
+                revision_id,
+                transaction_id,
+                committed_at,
+                &context,
+                &events,
+            )?;
+        }
         let transaction = self.take_transaction()?;
         if let Err(error) = transaction.commit() {
             self.lifecycle.mark_rolled_back()?;
@@ -551,6 +567,7 @@ impl<'project> SqliteTransaction<'project> {
         let mut roots = self.project.media_roots().to_vec();
         roots.append(&mut self.pending_roots);
         self.project.set_media_roots(roots);
+        self.pending_events.clear();
         Ok(())
     }
 
@@ -590,6 +607,220 @@ impl<'project> SqliteTransaction<'project> {
             )
         })
     }
+}
+
+struct StoredEvent<'event> {
+    kind: i64,
+    target_kind: Option<i64>,
+    primary_id: Option<Vec<u8>>,
+    secondary_id: Option<Vec<u8>>,
+    structural_position: Option<i64>,
+    vocabulary: Option<&'event str>,
+    property: Option<&'event str>,
+    identifier_scheme: Option<&'event str>,
+    identifier_value: Option<&'event str>,
+    identifier_qualifier: Option<&'event str>,
+    activity_kind: Option<&'event str>,
+    role: Option<&'event str>,
+}
+
+fn persist_revision(
+    transaction: &Transaction<'_>,
+    revision_id: RevisionId,
+    transaction_id: TransactionId,
+    committed_at: Timestamp,
+    context: &RevisionContext,
+    events: &[RevisionEventKind],
+) -> Result<()> {
+    let sequence: i64 = transaction
+        .query_row(
+            "SELECT coalesce(max(sequence), 0) + 1 FROM revisions",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(mutation_error("allocate revision sequence"))?;
+    let origin = context.origin();
+    transaction
+        .execute(
+            "INSERT INTO revisions (
+                id, sequence, transaction_id, committed_at_micros,
+                origin_name, origin_version, origin_uri, message
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                revision_id.as_bytes().as_slice(),
+                sequence,
+                transaction_id.as_bytes().as_slice(),
+                committed_at.as_unix_micros(),
+                origin.map(postproject_core::OriginIdentity::name),
+                origin.and_then(postproject_core::OriginIdentity::version),
+                origin.and_then(postproject_core::OriginIdentity::uri),
+                context.message(),
+            ],
+        )
+        .map_err(mutation_error("persist revision"))?;
+
+    let event_result = events.iter().enumerate().try_for_each(|(position, event)| {
+        let position = i64::try_from(position).map_err(|error| {
+            Error::new(
+                ErrorKind::Unsupported,
+                format!("revision event position cannot be stored: {error}"),
+            )
+        })?;
+        let event = stored_event(event)?;
+        transaction
+            .execute(
+                "INSERT INTO revision_events (
+                    revision_id, position, kind, target_kind, primary_id,
+                    secondary_id, structural_position, vocabulary, property,
+                    identifier_scheme, identifier_value, identifier_qualifier,
+                    activity_kind, role
+                 ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                    ?13, ?14
+                 )",
+                params![
+                    revision_id.as_bytes().as_slice(),
+                    position,
+                    event.kind,
+                    event.target_kind,
+                    event.primary_id,
+                    event.secondary_id,
+                    event.structural_position,
+                    event.vocabulary,
+                    event.property,
+                    event.identifier_scheme,
+                    event.identifier_value,
+                    event.identifier_qualifier,
+                    event.activity_kind,
+                    event.role,
+                ],
+            )
+            .map(|_| ())
+            .map_err(mutation_error("persist revision event"))
+    });
+    if let Err(error) = event_result {
+        transaction
+            .execute(
+                "DELETE FROM revisions WHERE id = ?1",
+                params![revision_id.as_bytes().as_slice()],
+            )
+            .map_err(mutation_error("clean failed revision"))?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeping the exhaustive semantic-event schema mapping together is auditable"
+)]
+fn stored_event(event: &RevisionEventKind) -> Result<StoredEvent<'_>> {
+    let mut stored = StoredEvent {
+        kind: 0,
+        target_kind: None,
+        primary_id: None,
+        secondary_id: None,
+        structural_position: None,
+        vocabulary: None,
+        property: None,
+        identifier_scheme: None,
+        identifier_value: None,
+        identifier_qualifier: None,
+        activity_kind: None,
+        role: None,
+    };
+    match event {
+        RevisionEventKind::AssetImported { asset_id } => {
+            stored.kind = 1;
+            stored.primary_id = Some(asset_id.into_bytes().to_vec());
+        }
+        RevisionEventKind::RepresentationAdded {
+            asset_id,
+            representation_id,
+        } => {
+            stored.kind = 2;
+            stored.primary_id = Some(representation_id.into_bytes().to_vec());
+            stored.secondary_id = Some(asset_id.into_bytes().to_vec());
+        }
+        RevisionEventKind::ResourceAdded { resource_id } => {
+            stored.kind = 3;
+            stored.primary_id = Some(resource_id.into_bytes().to_vec());
+        }
+        RevisionEventKind::RepresentationResourceAdded {
+            representation_id,
+            resource_id,
+            position,
+        } => {
+            stored.kind = 4;
+            stored.primary_id = Some(representation_id.into_bytes().to_vec());
+            stored.secondary_id = Some(resource_id.into_bytes().to_vec());
+            stored.structural_position = Some(i64::from(*position));
+        }
+        RevisionEventKind::LocatorAdded {
+            resource_id,
+            locator_id,
+        } => {
+            stored.kind = 5;
+            stored.primary_id = Some(locator_id.into_bytes().to_vec());
+            stored.secondary_id = Some(resource_id.into_bytes().to_vec());
+        }
+        RevisionEventKind::MediaRootAdded { media_root_id } => {
+            stored.kind = 6;
+            stored.primary_id = Some(media_root_id.into_bytes().to_vec());
+        }
+        RevisionEventKind::ExternalIdentifierAdded { target, identifier }
+        | RevisionEventKind::ExternalIdentifierRemoved { target, identifier } => {
+            stored.kind = i64::from(matches!(
+                event,
+                RevisionEventKind::ExternalIdentifierRemoved { .. }
+            )) + 7;
+            let (target_kind, target_id) = encode_metadata_target(target)?;
+            stored.target_kind = Some(target_kind);
+            stored.primary_id = Some(target_id.to_vec());
+            stored.identifier_scheme = Some(identifier.scheme().as_str());
+            stored.identifier_value = Some(identifier.value());
+            stored.identifier_qualifier = identifier.qualifier();
+        }
+        RevisionEventKind::MetadataAddedOrReplaced { target, property }
+        | RevisionEventKind::MetadataRemoved { target, property } => {
+            stored.kind = i64::from(matches!(event, RevisionEventKind::MetadataRemoved { .. })) + 9;
+            let (target_kind, target_id) = encode_metadata_target(target)?;
+            stored.target_kind = Some(target_kind);
+            stored.primary_id = Some(target_id.to_vec());
+            stored.vocabulary = Some(property.vocabulary().as_str());
+            stored.property = Some(property.property().as_str());
+        }
+        RevisionEventKind::ActivityCreated { activity_id, kind } => {
+            stored.kind = 11;
+            stored.primary_id = Some(activity_id.into_bytes().to_vec());
+            stored.activity_kind = Some(kind.as_str());
+        }
+        RevisionEventKind::ActivityInputAdded {
+            activity_id,
+            representation_id,
+            role,
+        }
+        | RevisionEventKind::ActivityOutputAdded {
+            activity_id,
+            representation_id,
+            role,
+        } => {
+            stored.kind = i64::from(matches!(
+                event,
+                RevisionEventKind::ActivityOutputAdded { .. }
+            )) + 12;
+            stored.primary_id = Some(activity_id.into_bytes().to_vec());
+            stored.secondary_id = Some(representation_id.into_bytes().to_vec());
+            stored.role = role.as_ref().map(postproject_core::ActivityRole::as_str);
+        }
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "revision event kind is not supported by this schema",
+            ));
+        }
+    }
+    Ok(stored)
 }
 
 impl ProjectStoreTransaction for SqliteTransaction<'_> {
