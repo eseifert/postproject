@@ -119,6 +119,16 @@ struct Activity final {
   std::vector<ActivityEdge> outputs;
 };
 
+struct ActivitySpec final {
+  std::string kind;
+  std::optional<std::int64_t> started_at_unix_micros;
+  std::optional<std::int64_t> finished_at_unix_micros;
+  std::optional<ToolIdentity> tool;
+  std::optional<AgentIdentity> agent;
+  std::vector<ActivityEdge> inputs;
+  std::vector<ActivityEdge> outputs;
+};
+
 enum class RepresentationAvailability : std::uint32_t {
   online = PP_AVAILABILITY_ONLINE,
   partial = PP_AVAILABILITY_PARTIAL,
@@ -283,6 +293,14 @@ inline std::optional<std::string> optional_string(const char *value) {
              : std::nullopt;
 }
 
+inline std::optional<std::string>
+checked_optional_string(const std::optional<std::string> &value,
+                        std::string_view label) {
+  return value.has_value()
+             ? std::optional<std::string>(checked_string(*value, label))
+             : std::nullopt;
+}
+
 inline Activity activity(const pp_activity_set_t *activities,
                          std::uint64_t index) {
   pp_uuid_t id{};
@@ -443,6 +461,89 @@ public:
   void removeExternalIdentifier(const ObjectRef &target,
                                 const ExternalIdentifier &identifier) {
     mutate_external_identifier(true, target, identifier);
+  }
+
+  Uuid createActivity(const ActivitySpec &spec) {
+    const std::string kind = detail::checked_string(spec.kind, "kind");
+    std::vector<pp_activity_edge_t> inputs;
+    inputs.reserve(spec.inputs.size());
+    for (const ActivityEdge &edge : spec.inputs) {
+      if (edge.role.has_value()) {
+        static_cast<void>(detail::checked_string(*edge.role, "input role"));
+      }
+      inputs.push_back(
+          {detail::native_uuid(edge.representation_id),
+           edge.role.has_value() ? edge.role->c_str() : nullptr});
+    }
+    std::vector<pp_activity_edge_t> outputs;
+    outputs.reserve(spec.outputs.size());
+    for (const ActivityEdge &edge : spec.outputs) {
+      if (edge.role.has_value()) {
+        static_cast<void>(detail::checked_string(*edge.role, "output role"));
+      }
+      outputs.push_back(
+          {detail::native_uuid(edge.representation_id),
+           edge.role.has_value() ? edge.role->c_str() : nullptr});
+    }
+
+    const std::optional<std::string> tool_name =
+        spec.tool.has_value()
+            ? std::optional<std::string>(
+                  detail::checked_string(spec.tool->name, "tool name"))
+            : std::nullopt;
+    const std::optional<std::string> tool_version =
+        spec.tool.has_value()
+            ? detail::checked_optional_string(spec.tool->version,
+                                              "tool version")
+            : std::nullopt;
+    const std::optional<std::string> tool_uri =
+        spec.tool.has_value()
+            ? detail::checked_optional_string(spec.tool->uri, "tool URI")
+            : std::nullopt;
+    const std::optional<std::string> agent_name =
+        spec.agent.has_value()
+            ? detail::checked_optional_string(spec.agent->name, "agent name")
+            : std::nullopt;
+    const std::optional<ExternalIdentifier> identifier =
+        spec.agent.has_value() ? spec.agent->identifier : std::nullopt;
+    const std::optional<std::string> agent_scheme =
+        identifier.has_value()
+            ? std::optional<std::string>(detail::checked_string(
+                  identifier->scheme, "agent identifier scheme"))
+            : std::nullopt;
+    const std::optional<std::string> agent_value =
+        identifier.has_value()
+            ? std::optional<std::string>(detail::checked_string(
+                  identifier->value, "agent identifier value"))
+            : std::nullopt;
+    const std::optional<std::string> agent_qualifier =
+        identifier.has_value()
+            ? detail::checked_optional_string(identifier->qualifier,
+                                              "agent identifier qualifier")
+            : std::nullopt;
+
+    pp_uuid_t activity_id{};
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_create_activity(
+        transaction_, kind.c_str(), inputs.data(),
+        static_cast<std::uint64_t>(inputs.size()), outputs.data(),
+        static_cast<std::uint64_t>(outputs.size()),
+        spec.started_at_unix_micros.has_value()
+            ? &*spec.started_at_unix_micros
+            : nullptr,
+        spec.finished_at_unix_micros.has_value()
+            ? &*spec.finished_at_unix_micros
+            : nullptr,
+        tool_name.has_value() ? tool_name->c_str() : nullptr,
+        tool_version.has_value() ? tool_version->c_str() : nullptr,
+        tool_uri.has_value() ? tool_uri->c_str() : nullptr,
+        agent_name.has_value() ? agent_name->c_str() : nullptr,
+        agent_scheme.has_value() ? agent_scheme->c_str() : nullptr,
+        agent_value.has_value() ? agent_value->c_str() : nullptr,
+        agent_qualifier.has_value() ? agent_qualifier->c_str() : nullptr,
+        &activity_id, &error);
+    detail::throw_if_error(status, error);
+    return detail::uuid(activity_id);
   }
 
   void commit() {
