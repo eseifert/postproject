@@ -21,6 +21,7 @@ int main(int argc, char **argv) {
   pp_uuid_t resource_id = {{0}};
   pp_uuid_t revision_id = {{0}};
   pp_uuid_t revision_transaction_id = {{0}};
+  pp_revision_event_t revision_event = {0};
   char media_path[4096];
   char moved_media_path[4096];
 
@@ -182,6 +183,61 @@ int main(int argc, char **argv) {
     return 37;
   }
   pp_revision_set_release(revisions);
+  pp_revision_event_set_t *revision_events = NULL;
+  status = pp_project_revision_events(project, &revision_id, &revision_events,
+                                      &error);
+  if (status != PP_OK || revision_events == NULL ||
+      pp_revision_event_set_count(revision_events) != UINT64_C(8) ||
+      pp_revision_event_set_get(revision_events, 0, &revision_event, &error) !=
+          PP_OK ||
+      revision_event.kind != PP_REVISION_ASSET_IMPORTED ||
+      revision_event.position != UINT32_C(0) ||
+      memcmp(revision_event.asset_id.bytes, asset_id.bytes,
+             sizeof(asset_id.bytes)) != 0) {
+    pp_revision_event_set_release(revision_events);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 38;
+  }
+  status = pp_revision_event_set_get(revision_events, 5, &revision_event,
+                                     &error);
+  if (status != PP_OK ||
+      revision_event.kind != PP_REVISION_EXTERNAL_IDENTIFIER_ADDED ||
+      revision_event.target.kind != PP_OBJECT_ASSET ||
+      memcmp(revision_event.target.id.bytes, asset_id.bytes,
+             sizeof(asset_id.bytes)) != 0 ||
+      strcmp(revision_event.identifier_scheme, "com.example.asset") != 0 ||
+      strcmp(revision_event.identifier_value, "asset-42") != 0 ||
+      strcmp(revision_event.identifier_qualifier, "primary") != 0) {
+    pp_revision_event_set_release(revision_events);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 39;
+  }
+  status = pp_revision_event_set_get(revision_events, 6, &revision_event,
+                                     &error);
+  if (status != PP_OK ||
+      revision_event.kind != PP_REVISION_METADATA_ADDED_OR_REPLACED ||
+      revision_event.target.kind != PP_OBJECT_ASSET ||
+      strcmp(revision_event.vocabulary, "com.example.metadata") != 0 ||
+      strcmp(revision_event.property, "title") != 0) {
+    pp_revision_event_set_release(revision_events);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 40;
+  }
+  status = pp_revision_event_set_get(revision_events, 7, &revision_event,
+                                     &error);
+  if (status != PP_OK ||
+      revision_event.kind != PP_REVISION_MEDIA_ROOT_ADDED ||
+      memcmp(revision_event.media_root_id.bytes, root_id.bytes,
+             sizeof(root_id.bytes)) != 0) {
+    pp_revision_event_set_release(revision_events);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 41;
+  }
+  pp_revision_event_set_release(revision_events);
   asset_exists = 0;
   status = pp_project_asset_exists(project, &asset_id, &asset_exists, &error);
   if (status != PP_OK || asset_exists != UINT8_C(1)) {
