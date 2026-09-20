@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "postproject"
+version = "0.2.0a1"
+description = "Python bindings for application-neutral post-production project infrastructure"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT OR Apache-2.0"
+authors = [{ name = "PostProject contributors" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Multimedia :: Video",
+]
+
+[project.urls]
+Homepage = "https://github.com/eseifert/postproject"
+Repository = "https://github.com/eseifert/postproject"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
