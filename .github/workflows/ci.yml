@@ -86,6 +86,31 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked -p postproject-ffi
+      - name: Verify generated ABI declarations
+        shell: bash
+        run: |
+          python3 -m unittest tools/test_generate_abi.py tools/test_check_abi_layout.py
+          diff -u python/src/postproject/_abi.py \
+            <(python3 tools/generate_abi.py include/postproject/postproject.h)
+          diff -u tests/abi/expected-symbols.txt \
+            <(python3 tools/generate_abi.py include/postproject/postproject.h --symbols)
+      - name: Install public ABI
+        shell: bash
+        run: |
+          cmake -S . -B target/cmake-abi \
+            -DPOSTPROJECT_LIBRARY="$PWD/target/release/libpostproject.so" \
+            -DCMAKE_INSTALL_PREFIX="$PWD/target/abi-install"
+          cmake --install target/cmake-abi
+      - name: Verify public struct layouts
+        shell: bash
+        run: |
+          python3 tools/generate_abi.py include/postproject/postproject.h \
+            --layout-c > target/abi-layout.c
+          cc -std=c11 -Wall -Wextra -Werror \
+            -Itarget/abi-install/include target/abi-layout.c \
+            -o target/abi-layout
+          target/abi-layout | \
+            python3 tools/check_abi_layout.py python/src/postproject/_abi.py
       - run: >-
           cc -std=c11 -Wall -Wextra -Werror
           -Iinclude tests/abi/c_smoke.c
