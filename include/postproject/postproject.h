@@ -28,6 +28,7 @@ typedef struct pp_metadata_set pp_metadata_set_t;
 typedef struct pp_metadata_value pp_metadata_value_t;
 typedef struct pp_activity_set pp_activity_set_t;
 typedef struct pp_revision_set pp_revision_set_t;
+typedef struct pp_revision_event_set pp_revision_event_set_t;
 typedef struct pp_error pp_error_t;
 
 typedef struct pp_uuid {
@@ -41,6 +42,22 @@ typedef uint32_t pp_object_kind_t;
 #define PP_OBJECT_REPRESENTATION UINT32_C(3)
 #define PP_OBJECT_RESOURCE UINT32_C(4)
 #define PP_OBJECT_ACTIVITY UINT32_C(5)
+
+typedef uint32_t pp_revision_event_kind_t;
+
+#define PP_REVISION_ASSET_IMPORTED UINT32_C(1)
+#define PP_REVISION_REPRESENTATION_ADDED UINT32_C(2)
+#define PP_REVISION_RESOURCE_ADDED UINT32_C(3)
+#define PP_REVISION_REPRESENTATION_RESOURCE_ADDED UINT32_C(4)
+#define PP_REVISION_LOCATOR_ADDED UINT32_C(5)
+#define PP_REVISION_MEDIA_ROOT_ADDED UINT32_C(6)
+#define PP_REVISION_EXTERNAL_IDENTIFIER_ADDED UINT32_C(7)
+#define PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED UINT32_C(8)
+#define PP_REVISION_METADATA_ADDED_OR_REPLACED UINT32_C(9)
+#define PP_REVISION_METADATA_REMOVED UINT32_C(10)
+#define PP_REVISION_ACTIVITY_CREATED UINT32_C(11)
+#define PP_REVISION_ACTIVITY_INPUT_ADDED UINT32_C(12)
+#define PP_REVISION_ACTIVITY_OUTPUT_ADDED UINT32_C(13)
 
 typedef uint32_t pp_metadata_value_kind_t;
 
@@ -62,6 +79,28 @@ typedef struct pp_object_ref {
   pp_object_kind_t kind;
   pp_uuid_t id;
 } pp_object_ref_t;
+
+/* Fields not used by an event kind are zero or NULL. String pointers borrow
+ * the owning pp_revision_event_set_t. */
+typedef struct pp_revision_event {
+  pp_revision_event_kind_t kind;
+  uint32_t position;
+  pp_uuid_t asset_id;
+  pp_uuid_t representation_id;
+  pp_uuid_t resource_id;
+  pp_uuid_t locator_id;
+  pp_uuid_t media_root_id;
+  pp_uuid_t activity_id;
+  pp_object_ref_t target;
+  uint32_t structural_position;
+  const char *identifier_scheme;
+  const char *identifier_value;
+  const char *identifier_qualifier;
+  const char *vocabulary;
+  const char *property;
+  const char *activity_kind;
+  const char *role;
+} pp_revision_event_t;
 
 typedef struct pp_activity_edge {
   pp_uuid_t representation_id;
@@ -273,6 +312,15 @@ PP_API pp_error_code_t pp_revision_set_get(
     const char **out_origin_version, const char **out_origin_uri,
     const char **out_message, pp_error_t **out_error);
 PP_API void pp_revision_set_release(pp_revision_set_t *revisions);
+PP_API pp_error_code_t pp_project_revision_events(
+    const pp_project_t *project, const pp_uuid_t *revision_id,
+    pp_revision_event_set_t **out_events, pp_error_t **out_error);
+PP_API uint64_t
+pp_revision_event_set_count(const pp_revision_event_set_t *events);
+PP_API pp_error_code_t pp_revision_event_set_get(
+    const pp_revision_event_set_t *events, uint64_t index,
+    pp_revision_event_t *out_event, pp_error_t **out_error);
+PP_API void pp_revision_event_set_release(pp_revision_event_set_t *events);
 /* Resolution is read-only. Borrowed candidate URI and evidence-detail strings
  * remain valid until pp_resolution_set_release(). */
 PP_API pp_error_code_t pp_project_resolve_asset(

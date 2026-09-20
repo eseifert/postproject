@@ -6,6 +6,7 @@
 
 mod metadata;
 mod provenance;
+mod revision_events;
 mod revisions;
 
 use std::{
@@ -24,7 +25,7 @@ use postproject_core::{
     ExternalIdentifier, IdentifierScheme, Locator, MAX_ACTIVITY_EDGES, MediaRoot, MetadataProperty,
     MetadataValue, ObjectRef, OriginalMediaImport, ProjectId, PropertyId,
     RepresentationAvailability, RepresentationId, RepresentationResolution, ResolutionEvidence,
-    ResourceId, ResourceResolutionState, Timestamp, ToolIdentity, TransactionLifecycle,
+    ResourceId, ResourceResolutionState, RevisionId, Timestamp, ToolIdentity, TransactionLifecycle,
     VocabularyId,
 };
 use postproject_media::{
@@ -36,6 +37,7 @@ use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
 use provenance::AbiActivityEdge;
 pub use provenance::PpActivitySet;
+pub use revision_events::PpRevisionEventSet;
 pub use revisions::PpRevisionSet;
 
 const PP_OK: u32 = 0;
@@ -86,6 +88,20 @@ const PP_OBJECT_REPRESENTATION: u32 = 3;
 const PP_OBJECT_RESOURCE: u32 = 4;
 const PP_OBJECT_ACTIVITY: u32 = 5;
 
+const PP_REVISION_ASSET_IMPORTED: u32 = 1;
+const PP_REVISION_REPRESENTATION_ADDED: u32 = 2;
+const PP_REVISION_RESOURCE_ADDED: u32 = 3;
+const PP_REVISION_REPRESENTATION_RESOURCE_ADDED: u32 = 4;
+const PP_REVISION_LOCATOR_ADDED: u32 = 5;
+const PP_REVISION_MEDIA_ROOT_ADDED: u32 = 6;
+const PP_REVISION_EXTERNAL_IDENTIFIER_ADDED: u32 = 7;
+const PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED: u32 = 8;
+const PP_REVISION_METADATA_ADDED_OR_REPLACED: u32 = 9;
+const PP_REVISION_METADATA_REMOVED: u32 = 10;
+const PP_REVISION_ACTIVITY_CREATED: u32 = 11;
+const PP_REVISION_ACTIVITY_INPUT_ADDED: u32 = 12;
+const PP_REVISION_ACTIVITY_OUTPUT_ADDED: u32 = 13;
+
 /// Current pre-1.0 ABI version.
 pub const ABI_VERSION: u32 = 7;
 
@@ -114,6 +130,46 @@ pub struct PpActivityEdge {
     /// Representation consumed or produced by the activity.
     pub representation_id: PpUuid,
     /// Optional NUL-terminated namespaced role.
+    pub role: *const c_char,
+}
+
+/// Borrowed, fixed-layout semantic revision event.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct PpRevisionEvent {
+    /// One of the `PP_REVISION_*` constants from the public header.
+    pub kind: u32,
+    /// Stable zero-based position within the owning revision.
+    pub position: u32,
+    /// Event asset identity, or zero when not applicable.
+    pub asset_id: PpUuid,
+    /// Event representation identity, or zero when not applicable.
+    pub representation_id: PpUuid,
+    /// Event resource identity, or zero when not applicable.
+    pub resource_id: PpUuid,
+    /// Event locator identity, or zero when not applicable.
+    pub locator_id: PpUuid,
+    /// Event media-root identity, or zero when not applicable.
+    pub media_root_id: PpUuid,
+    /// Event activity identity, or zero when not applicable.
+    pub activity_id: PpUuid,
+    /// Metadata/identifier target, with kind zero when not applicable.
+    pub target: PpObjectRef,
+    /// Structural member position for representation-resource events.
+    pub structural_position: u32,
+    /// Borrowed identifier scheme, or null when not applicable.
+    pub identifier_scheme: *const c_char,
+    /// Borrowed identifier value, or null when not applicable.
+    pub identifier_value: *const c_char,
+    /// Borrowed optional identifier qualifier.
+    pub identifier_qualifier: *const c_char,
+    /// Borrowed metadata vocabulary, or null when not applicable.
+    pub vocabulary: *const c_char,
+    /// Borrowed metadata property, or null when not applicable.
+    pub property: *const c_char,
+    /// Borrowed activity kind, or null when not applicable.
+    pub activity_kind: *const c_char,
+    /// Borrowed activity-edge role, or null when absent/not applicable.
     pub role: *const c_char,
 }
 
@@ -1311,6 +1367,100 @@ pub unsafe extern "C" fn pp_revision_set_release(revisions: *mut PpRevisionSet) 
     let _ = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: Ownership is transferred back exactly once by contract.
         drop(unsafe { Box::from_raw(revisions) });
+    }));
+}
+
+/// Loads one revision's ordered semantic events.
+///
+/// # Safety
+///
+/// `project` and `revision_id` must be readable live values,
+/// `out_events` must be writable, and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_project_revision_events(
+    project: *const PpProject,
+    revision_id: *const PpUuid,
+    out_events: *mut *mut PpRevisionEventSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before use and output ownership is explicit.
+    unsafe {
+        initialize_output(out_events);
+        ffi_call(out_error, || {
+            let project = project
+                .as_ref()
+                .ok_or_else(|| invalid_argument("project must not be null"))?;
+            let revision_id = revision_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("revision_id must not be null"))?;
+            require_output(out_events, "out_events")?;
+            let inner = project
+                .state
+                .inner
+                .try_borrow()
+                .map_err(|_| Error::new(ErrorKind::Conflict, "project is already in use"))?;
+            let events = inner.events_for_revision(RevisionId::from_bytes(revision_id.bytes))?;
+            out_events.write(Box::into_raw(Box::new(PpRevisionEventSet::new(&events)?)));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the number of events in a result set. Null returns zero.
+///
+/// # Safety
+///
+/// `events` must be null or a live result-set handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_revision_event_set_count(events: *const PpRevisionEventSet) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null handle is live by the caller contract.
+        unsafe { events.as_ref() }
+            .map_or(0, |set| u64::try_from(set.events.len()).unwrap_or(u64::MAX))
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one tagged semantic event. Borrowed strings live with the result set.
+///
+/// # Safety
+///
+/// `events` must be live, `out_event` must be writable, and `out_error` may be
+/// null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_revision_event_set_get(
+    events: *const PpRevisionEventSet,
+    index: u64,
+    out_event: *mut PpRevisionEvent,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_value(out_event, empty_revision_event());
+        ffi_call(out_error, || {
+            require_output(out_event, "out_event")?;
+            let events = events
+                .as_ref()
+                .ok_or_else(|| invalid_argument("events must not be null"))?;
+            out_event.write(item_at(&events.events, index, "revision event")?.as_abi());
+            Ok(())
+        })
+    }
+}
+
+/// Releases a revision-event result set. Null is a no-op.
+///
+/// # Safety
+///
+/// A non-null handle must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_revision_event_set_release(events: *mut PpRevisionEventSet) {
+    if events.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership is transferred back exactly once by contract.
+        drop(unsafe { Box::from_raw(events) });
     }));
 }
 
@@ -2756,6 +2906,31 @@ unsafe fn initialize_const_output<T>(output: *mut *const T) {
         // SAFETY: Non-null output pointers are required to be writable by every
         // exported caller contract using this helper.
         unsafe { output.write(ptr::null()) };
+    }
+}
+
+const fn empty_revision_event() -> PpRevisionEvent {
+    PpRevisionEvent {
+        kind: 0,
+        position: 0,
+        asset_id: PpUuid { bytes: [0; 16] },
+        representation_id: PpUuid { bytes: [0; 16] },
+        resource_id: PpUuid { bytes: [0; 16] },
+        locator_id: PpUuid { bytes: [0; 16] },
+        media_root_id: PpUuid { bytes: [0; 16] },
+        activity_id: PpUuid { bytes: [0; 16] },
+        target: PpObjectRef {
+            kind: 0,
+            id: PpUuid { bytes: [0; 16] },
+        },
+        structural_position: 0,
+        identifier_scheme: ptr::null(),
+        identifier_value: ptr::null(),
+        identifier_qualifier: ptr::null(),
+        vocabulary: ptr::null(),
+        property: ptr::null(),
+        activity_kind: ptr::null(),
+        role: ptr::null(),
     }
 }
 

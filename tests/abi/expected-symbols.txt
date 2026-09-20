@@ -51,6 +51,7 @@ pp_project_provenance_ancestors
 pp_project_provenance_descendants
 pp_project_release
 pp_project_resolve_asset
+pp_project_revision_events
 pp_resolution_set_get_candidate
 pp_resolution_set_get_candidate_evidence
 pp_resolution_set_get_issue
@@ -60,6 +61,9 @@ pp_resolution_set_get_resource
 pp_resolution_set_get_resource_evidence
 pp_resolution_set_release
 pp_resolution_set_representation_count
+pp_revision_event_set_count
+pp_revision_event_set_get
+pp_revision_event_set_release
 pp_revision_set_count
 pp_revision_set_get
 pp_revision_set_release
