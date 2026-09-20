@@ -1,0 +1,244 @@
+//! C-ABI-owned projections of semantic revision events.
+
+use std::{ffi::CString, ptr};
+
+use postproject_core::{Error, RevisionEvent, RevisionEventKind};
+
+use crate::{
+    PP_REVISION_ACTIVITY_CREATED, PP_REVISION_ACTIVITY_INPUT_ADDED,
+    PP_REVISION_ACTIVITY_OUTPUT_ADDED, PP_REVISION_ASSET_IMPORTED,
+    PP_REVISION_EXTERNAL_IDENTIFIER_ADDED, PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED,
+    PP_REVISION_LOCATOR_ADDED, PP_REVISION_MEDIA_ROOT_ADDED,
+    PP_REVISION_METADATA_ADDED_OR_REPLACED, PP_REVISION_METADATA_REMOVED,
+    PP_REVISION_REPRESENTATION_ADDED, PP_REVISION_REPRESENTATION_RESOURCE_ADDED,
+    PP_REVISION_RESOURCE_ADDED, PpObjectRef, PpRevisionEvent, PpUuid, exact_cstring,
+    object_ref_to_abi,
+};
+
+/// Opaque immutable revision-event result set owned by the C caller.
+pub struct PpRevisionEventSet {
+    pub(crate) events: Vec<AbiRevisionEvent>,
+}
+
+pub(crate) struct AbiRevisionEvent {
+    kind: u32,
+    position: u32,
+    asset_id: Option<PpUuid>,
+    representation_id: Option<PpUuid>,
+    resource_id: Option<PpUuid>,
+    locator_id: Option<PpUuid>,
+    media_root_id: Option<PpUuid>,
+    activity_id: Option<PpUuid>,
+    target: Option<PpObjectRef>,
+    structural_position: Option<u32>,
+    identifier_scheme: Option<CString>,
+    identifier_value: Option<CString>,
+    identifier_qualifier: Option<CString>,
+    vocabulary: Option<CString>,
+    property: Option<CString>,
+    activity_kind: Option<CString>,
+    role: Option<CString>,
+}
+
+impl PpRevisionEventSet {
+    pub(crate) fn new(events: &[RevisionEvent]) -> Result<Self, Error> {
+        let events = events
+            .iter()
+            .map(AbiRevisionEvent::try_from)
+            .collect::<Result<_, _>>()?;
+        Ok(Self { events })
+    }
+}
+
+impl AbiRevisionEvent {
+    pub(crate) fn as_abi(&self) -> PpRevisionEvent {
+        PpRevisionEvent {
+            kind: self.kind,
+            position: self.position,
+            asset_id: self.asset_id.unwrap_or_else(zero_uuid),
+            representation_id: self.representation_id.unwrap_or_else(zero_uuid),
+            resource_id: self.resource_id.unwrap_or_else(zero_uuid),
+            locator_id: self.locator_id.unwrap_or_else(zero_uuid),
+            media_root_id: self.media_root_id.unwrap_or_else(zero_uuid),
+            activity_id: self.activity_id.unwrap_or_else(zero_uuid),
+            target: self.target.unwrap_or_else(zero_object_ref),
+            structural_position: self.structural_position.unwrap_or(0),
+            identifier_scheme: c_string_ptr(self.identifier_scheme.as_ref()),
+            identifier_value: c_string_ptr(self.identifier_value.as_ref()),
+            identifier_qualifier: c_string_ptr(self.identifier_qualifier.as_ref()),
+            vocabulary: c_string_ptr(self.vocabulary.as_ref()),
+            property: c_string_ptr(self.property.as_ref()),
+            activity_kind: c_string_ptr(self.activity_kind.as_ref()),
+            role: c_string_ptr(self.role.as_ref()),
+        }
+    }
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the complete semantic event projection is clearest as one exhaustive mapping"
+)]
+impl TryFrom<&RevisionEvent> for AbiRevisionEvent {
+    type Error = Error;
+
+    fn try_from(event: &RevisionEvent) -> Result<Self, Self::Error> {
+        let mut projected = Self {
+            kind: 0,
+            position: event.position(),
+            asset_id: None,
+            representation_id: None,
+            resource_id: None,
+            locator_id: None,
+            media_root_id: None,
+            activity_id: None,
+            target: None,
+            structural_position: None,
+            identifier_scheme: None,
+            identifier_value: None,
+            identifier_qualifier: None,
+            vocabulary: None,
+            property: None,
+            activity_kind: None,
+            role: None,
+        };
+        match event.kind() {
+            RevisionEventKind::AssetImported { asset_id } => {
+                projected.kind = PP_REVISION_ASSET_IMPORTED;
+                projected.asset_id = Some(uuid(asset_id.into_bytes()));
+            }
+            RevisionEventKind::RepresentationAdded {
+                asset_id,
+                representation_id,
+            } => {
+                projected.kind = PP_REVISION_REPRESENTATION_ADDED;
+                projected.asset_id = Some(uuid(asset_id.into_bytes()));
+                projected.representation_id = Some(uuid(representation_id.into_bytes()));
+            }
+            RevisionEventKind::ResourceAdded { resource_id } => {
+                projected.kind = PP_REVISION_RESOURCE_ADDED;
+                projected.resource_id = Some(uuid(resource_id.into_bytes()));
+            }
+            RevisionEventKind::RepresentationResourceAdded {
+                representation_id,
+                resource_id,
+                position,
+            } => {
+                projected.kind = PP_REVISION_REPRESENTATION_RESOURCE_ADDED;
+                projected.representation_id = Some(uuid(representation_id.into_bytes()));
+                projected.resource_id = Some(uuid(resource_id.into_bytes()));
+                projected.structural_position = Some(*position);
+            }
+            RevisionEventKind::LocatorAdded {
+                resource_id,
+                locator_id,
+            } => {
+                projected.kind = PP_REVISION_LOCATOR_ADDED;
+                projected.resource_id = Some(uuid(resource_id.into_bytes()));
+                projected.locator_id = Some(uuid(locator_id.into_bytes()));
+            }
+            RevisionEventKind::MediaRootAdded { media_root_id } => {
+                projected.kind = PP_REVISION_MEDIA_ROOT_ADDED;
+                projected.media_root_id = Some(uuid(media_root_id.into_bytes()));
+            }
+            RevisionEventKind::ExternalIdentifierAdded { target, identifier }
+            | RevisionEventKind::ExternalIdentifierRemoved { target, identifier } => {
+                projected.kind = if matches!(
+                    event.kind(),
+                    RevisionEventKind::ExternalIdentifierAdded { .. }
+                ) {
+                    PP_REVISION_EXTERNAL_IDENTIFIER_ADDED
+                } else {
+                    PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED
+                };
+                projected.target = Some(object_ref_to_abi(*target)?);
+                projected.identifier_scheme = Some(exact_cstring(
+                    identifier.scheme().as_str(),
+                    "revision identifier scheme",
+                )?);
+                projected.identifier_value = Some(exact_cstring(
+                    identifier.value(),
+                    "revision identifier value",
+                )?);
+                projected.identifier_qualifier = identifier
+                    .qualifier()
+                    .map(|value| exact_cstring(value, "revision identifier qualifier"))
+                    .transpose()?;
+            }
+            RevisionEventKind::MetadataAddedOrReplaced { target, property }
+            | RevisionEventKind::MetadataRemoved { target, property } => {
+                projected.kind = if matches!(
+                    event.kind(),
+                    RevisionEventKind::MetadataAddedOrReplaced { .. }
+                ) {
+                    PP_REVISION_METADATA_ADDED_OR_REPLACED
+                } else {
+                    PP_REVISION_METADATA_REMOVED
+                };
+                projected.target = Some(object_ref_to_abi(*target)?);
+                projected.vocabulary = Some(exact_cstring(
+                    property.vocabulary().as_str(),
+                    "revision metadata vocabulary",
+                )?);
+                projected.property = Some(exact_cstring(
+                    property.property().as_str(),
+                    "revision metadata property",
+                )?);
+            }
+            RevisionEventKind::ActivityCreated { activity_id, kind } => {
+                projected.kind = PP_REVISION_ACTIVITY_CREATED;
+                projected.activity_id = Some(uuid(activity_id.into_bytes()));
+                projected.activity_kind =
+                    Some(exact_cstring(kind.as_str(), "revision activity kind")?);
+            }
+            RevisionEventKind::ActivityInputAdded {
+                activity_id,
+                representation_id,
+                role,
+            }
+            | RevisionEventKind::ActivityOutputAdded {
+                activity_id,
+                representation_id,
+                role,
+            } => {
+                projected.kind =
+                    if matches!(event.kind(), RevisionEventKind::ActivityInputAdded { .. }) {
+                        PP_REVISION_ACTIVITY_INPUT_ADDED
+                    } else {
+                        PP_REVISION_ACTIVITY_OUTPUT_ADDED
+                    };
+                projected.activity_id = Some(uuid(activity_id.into_bytes()));
+                projected.representation_id = Some(uuid(representation_id.into_bytes()));
+                projected.role = role
+                    .as_ref()
+                    .map(|value| exact_cstring(value.as_str(), "revision activity role"))
+                    .transpose()?;
+            }
+            _ => {
+                return Err(postproject_core::Error::new(
+                    postproject_core::ErrorKind::Unsupported,
+                    "revision event kind is not supported by this ABI",
+                ));
+            }
+        }
+        Ok(projected)
+    }
+}
+
+const fn uuid(bytes: [u8; 16]) -> PpUuid {
+    PpUuid { bytes }
+}
+
+const fn zero_uuid() -> PpUuid {
+    uuid([0; 16])
+}
+
+const fn zero_object_ref() -> PpObjectRef {
+    PpObjectRef {
+        kind: 0,
+        id: zero_uuid(),
+    }
+}
+
+fn c_string_ptr(value: Option<&CString>) -> *const std::ffi::c_char {
+    value.map_or(ptr::null(), |value| value.as_ptr())
+}
