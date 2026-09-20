@@ -14,6 +14,7 @@ representations of a logical asset. Future provenance records explain how a
 result was produced without claiming that the result is cryptographically
 trusted.
 
-A project file stores identity, locations, fingerprints, and project metadata.
-PostProject does not upload this data or contact identifier registries. There is
-no network service in the current release.
+A project file stores identity, representation structure, resource locators,
+fingerprint evidence, and project metadata. PostProject does not upload this
+data or contact identifier registries. There is no network service in the
+current release.

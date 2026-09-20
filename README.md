@@ -1,8 +1,8 @@
 # PostProject
 
 PostProject is application-neutral infrastructure for durable media identity,
-representations, locations, metadata, provenance, and project-local change
-tracking in professional post-production software.
+compound representations, storage resources and locators, metadata, provenance,
+and project-local change tracking in professional post-production software.
 
 > **Status:** early `0.2.0-alpha.1` development. No API, ABI, schema, CLI, or
 > binding compatibility is promised before an explicit stability milestone.
@@ -12,11 +12,11 @@ PostProject is standards-aware infrastructure, not a new media ontology. It
 preserves external identifiers and vocabulary terms and is designed to map to
 industry exchange models without claiming normative compliance.
 
-Current capabilities include stable logical asset IDs, concrete
-representations, multiple file locations, versioned fingerprints, deterministic
-relinking with explicit ambiguity, SQLite persistence, a public C ABI, a C++17
-RAII wrapper, and a demonstrator CLI. Work on external identifiers and the
-second-iteration model is underway.
+Current capabilities include stable logical asset IDs, single-resource and
+compound representations, compact image-sequence descriptors, multiple
+resource locators, typed fingerprints, deterministic relinking with explicit
+ambiguity, SQLite persistence, a public C ABI, a C++17 RAII wrapper, and a
+demonstrator CLI. Broader metadata, provenance, and revision work is underway.
 
 PostProject deliberately does not provide a timeline editor, decoder/encoder,
 job runner, collaboration server, MAM service, or automatic registry/network
