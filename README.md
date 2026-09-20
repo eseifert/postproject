@@ -2,7 +2,7 @@
 
 PostProject is application-neutral infrastructure for durable media identity,
 compound representations, storage resources and locators, metadata, provenance,
-and project-local change tracking in professional post-production software.
+and production-local change tracking in professional post-production software.
 
 > **Status:** early `0.2.0-alpha.1` development. No API, ABI, schema, CLI, or
 > binding compatibility is promised before an explicit stability milestone.
@@ -81,13 +81,13 @@ Minimal C usage:
 ```c
 #include <postproject/postproject.h>
 
-pp_project_t *project = NULL;
+pp_production_t *production = NULL;
 pp_error_t *error = NULL;
-if (pp_project_open("production.pproj", &project, &error) != PP_OK) {
+if (pp_production_open("production.pproj", &production, &error) != PP_OK) {
     pp_error_release(error);
     return 1;
 }
-pp_project_release(project);
+pp_production_release(production);
 ```
 
 Standalone installed-package examples live in [`examples/c`](examples/c) and
