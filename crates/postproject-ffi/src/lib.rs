@@ -2557,7 +2557,9 @@ fn panic_message(payload: &(dyn Any + Send)) -> String {
 mod tests {
     use super::*;
     use postproject_core::{
-        MetadataAssertion, MetadataField, MetadataProperty, PropertyId, VocabularyId,
+        Confidence, ContentStructure, EvidenceKind, FrameRange, ImageSequenceDescriptor,
+        ImageSequencePattern, MetadataAssertion, MetadataField, MetadataProperty, PropertyId,
+        RationalRate, ResolutionCandidate, ResourceResolution, VocabularyId,
     };
 
     #[test]
@@ -2715,6 +2717,112 @@ mod tests {
         }
         // SAFETY: Null is explicitly accepted by the count accessor.
         assert_eq!(unsafe { pp_resolution_set_count(ptr::null()) }, 0);
+    }
+
+    #[test]
+    fn nested_resolution_accessors_expose_missing_sequence_frames() {
+        let representation_id = RepresentationId::new();
+        let resource_id = ResourceId::new();
+        let descriptor = ImageSequenceDescriptor::new(
+            resource_id,
+            ImageSequencePattern::new("plate.", ".exr", 4).expect("valid pattern"),
+            FrameRange::new(1001, 1003, 1).expect("valid frames"),
+            RationalRate::new(24, 1).expect("valid rate"),
+            vec![1002],
+        )
+        .expect("valid sequence");
+        let candidate = ResolutionCandidate::new(
+            "file:///plates/",
+            Confidence::CERTAIN,
+            vec![ResolutionEvidence::new(
+                EvidenceKind::KnownLocatorAvailable,
+                None,
+            )],
+        )
+        .expect("valid candidate");
+        let resource = ResourceResolution::new(
+            resource_id,
+            ResourceResolutionState::OnlineAtKnownLocator,
+            vec![candidate],
+            Vec::new(),
+        )
+        .expect("valid resource result");
+        let representation = RepresentationResolution::aggregate(
+            representation_id,
+            &ContentStructure::image_sequence(descriptor),
+            vec![resource],
+        )
+        .expect("valid aggregate");
+        let resolutions = Box::into_raw(Box::new(PpResolutionSet::new(vec![representation])));
+        let mut id = PpUuid { bytes: [0; 16] };
+        let mut availability = 0;
+        let mut resource_count = 0;
+        let mut issue_count = 0;
+        let mut error = ptr::null_mut();
+
+        // SAFETY: The handle is live and all outputs are writable.
+        assert_eq!(
+            unsafe {
+                pp_resolution_set_get_representation(
+                    resolutions,
+                    0,
+                    &raw mut id,
+                    &raw mut availability,
+                    &raw mut resource_count,
+                    &raw mut issue_count,
+                    &raw mut error,
+                )
+            },
+            PP_OK
+        );
+        assert_eq!(id.bytes, representation_id.into_bytes());
+        assert_eq!(availability, PP_AVAILABILITY_PARTIAL);
+        assert_eq!(resource_count, 1);
+        assert_eq!(issue_count, 1);
+
+        let mut required = 0;
+        let mut kind = 0;
+        let mut frame_count = 0;
+        // SAFETY: The handle remains live and all outputs are writable.
+        assert_eq!(
+            unsafe {
+                pp_resolution_set_get_issue(
+                    resolutions,
+                    0,
+                    0,
+                    &raw mut id,
+                    &raw mut required,
+                    &raw mut kind,
+                    &raw mut frame_count,
+                    &raw mut error,
+                )
+            },
+            PP_OK
+        );
+        assert_eq!(id.bytes, resource_id.into_bytes());
+        assert_eq!(required, 1);
+        assert_eq!(kind, PP_AVAILABILITY_ISSUE_MISSING_FRAMES);
+        assert_eq!(frame_count, 1);
+
+        let mut frame = 0;
+        // SAFETY: The handle remains live and the output is writable.
+        assert_eq!(
+            unsafe {
+                pp_resolution_set_get_issue_frame(
+                    resolutions,
+                    0,
+                    0,
+                    0,
+                    &raw mut frame,
+                    &raw mut error,
+                )
+            },
+            PP_OK
+        );
+        assert_eq!(frame, 1002);
+        assert!(error.is_null());
+        // SAFETY: The live handle is released exactly once.
+        unsafe { pp_resolution_set_release(resolutions) };
     }
 
     #[test]
