@@ -59,8 +59,8 @@ pub use resource::{
     ResourceFingerprint,
 };
 pub use revision::{
-    MAX_REVISION_MESSAGE_BYTES, OriginIdentity, Revision, RevisionContext, RevisionEvent,
-    RevisionEventKind,
+    MAX_REVISION_MESSAGE_BYTES, MAX_REVISION_PAGE_SIZE, OriginIdentity, Revision, RevisionContext,
+    RevisionEvent, RevisionEventKind,
 };
 pub use storage::{ProjectRead, ProjectStore, ProjectStoreTransaction};
 pub use time::{RationalRate, RationalTime, TimeRange};

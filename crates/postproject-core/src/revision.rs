@@ -8,6 +8,8 @@ use crate::{
 
 /// Maximum UTF-8 byte length of a revision message.
 pub const MAX_REVISION_MESSAGE_BYTES: usize = 4_096;
+/// Maximum revisions returned by one change-feed page.
+pub const MAX_REVISION_PAGE_SIZE: u32 = 1_000;
 
 /// Identity of the integrating application or process that committed a revision.
 #[derive(Clone, Debug, Eq, PartialEq)]

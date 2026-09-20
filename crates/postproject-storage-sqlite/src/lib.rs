@@ -20,11 +20,12 @@ use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     Asset, AssetId, ContentStructure, Error, ErrorKind, ExternalIdentifier, FileFacts, FrameRange,
     IdentifierScheme, ImageSequenceDescriptor, ImageSequencePattern, Locator, LocatorAvailability,
-    LocatorId, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch, MetadataProperty,
-    MetadataValue, ObjectRef, Project, ProjectId, ProjectRead, ProjectStore, PropertyId,
-    RationalRate, Representation, RepresentationFingerprint, RepresentationId, RepresentationKind,
-    Resource, ResourceFingerprint, ResourceId, ResourceMember, ResourceRole, Result, Timestamp,
-    ToolIdentity, VocabularyId,
+    LocatorId, MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
+    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, Project, ProjectId, ProjectRead,
+    ProjectStore, PropertyId, RationalRate, Representation, RepresentationFingerprint,
+    RepresentationId, RepresentationKind, Resource, ResourceFingerprint, ResourceId,
+    ResourceMember, ResourceRole, Result, Revision, RevisionId, Timestamp, ToolIdentity,
+    TransactionId, VocabularyId,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
 
@@ -53,6 +54,17 @@ struct StoredActivity {
     agent_scheme: Option<String>,
     agent_value: Option<String>,
     agent_qualifier: Option<String>,
+}
+
+struct StoredRevision {
+    id: Vec<u8>,
+    sequence: i64,
+    transaction_id: Vec<u8>,
+    committed_at: i64,
+    origin_name: Option<String>,
+    origin_version: Option<String>,
+    origin_uri: Option<String>,
+    message: Option<String>,
 }
 
 type StoredActivityEdge = (RepresentationId, Option<ActivityRole>);
@@ -832,6 +844,62 @@ impl SqliteProject {
         )
     }
 
+    /// Returns the newest durable revision, if the journal is non-empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Storage`] when persisted revision data is malformed
+    /// or cannot be read.
+    pub fn latest_revision(&self) -> Result<Option<Revision>> {
+        self.connection
+            .query_row(
+                "SELECT id, sequence, transaction_id, committed_at_micros,
+                        origin_name, origin_version, origin_uri, message
+                 FROM revisions ORDER BY sequence DESC LIMIT 1",
+                [],
+                stored_revision_row,
+            )
+            .optional()
+            .map_err(sqlite_error("query latest revision"))?
+            .map(decode_revision)
+            .transpose()
+    }
+
+    /// Returns a bounded ascending page of revisions after `sequence`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] when `limit` is zero or exceeds
+    /// [`MAX_REVISION_PAGE_SIZE`], or [`ErrorKind::Storage`] for invalid data.
+    pub fn changes_since(&self, sequence: u64, limit: u32) -> Result<Vec<Revision>> {
+        if limit == 0 || limit > MAX_REVISION_PAGE_SIZE {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                format!("revision page limit must be 1-{MAX_REVISION_PAGE_SIZE}"),
+            ));
+        }
+        let Ok(sequence) = i64::try_from(sequence) else {
+            return Ok(Vec::new());
+        };
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, sequence, transaction_id, committed_at_micros,
+                        origin_name, origin_version, origin_uri, message
+                 FROM revisions WHERE sequence > ?1
+                 ORDER BY sequence LIMIT ?2",
+            )
+            .map_err(sqlite_error("prepare revision page query"))?;
+        statement
+            .query_map(params![sequence, i64::from(limit)], stored_revision_row)
+            .map_err(sqlite_error("query revision page"))?
+            .map(|row| {
+                row.map_err(sqlite_error("read revision row"))
+                    .and_then(decode_revision)
+            })
+            .collect()
+    }
+
     fn related_representations(
         &self,
         representation_id: RepresentationId,
@@ -991,6 +1059,14 @@ impl ProjectRead for SqliteProject {
 
     fn descendants(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>> {
         SqliteProject::descendants(self, representation_id)
+    }
+
+    fn latest_revision(&self) -> Result<Option<Revision>> {
+        SqliteProject::latest_revision(self)
+    }
+
+    fn changes_since(&self, sequence: u64, limit: u32) -> Result<Vec<Revision>> {
+        SqliteProject::changes_since(self, sequence, limit)
     }
 }
 
@@ -1281,6 +1357,44 @@ fn decode_activity(
         );
     }
     Ok(activity)
+}
+
+fn stored_revision_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredRevision> {
+    Ok(StoredRevision {
+        id: row.get(0)?,
+        sequence: row.get(1)?,
+        transaction_id: row.get(2)?,
+        committed_at: row.get(3)?,
+        origin_name: row.get(4)?,
+        origin_version: row.get(5)?,
+        origin_uri: row.get(6)?,
+        message: row.get(7)?,
+    })
+}
+
+fn decode_revision(stored: StoredRevision) -> Result<Revision> {
+    let id = RevisionId::from_bytes(id_bytes(stored.id, "revision")?);
+    let sequence = u64::try_from(stored.sequence)
+        .map_err(|_| stored_invariant("revision sequence is negative"))?;
+    let transaction_id =
+        TransactionId::from_bytes(id_bytes(stored.transaction_id, "revision transaction")?);
+    let origin = match (stored.origin_name, stored.origin_version, stored.origin_uri) {
+        (Some(name), version, uri) => Some(
+            OriginIdentity::new(name, version, uri)
+                .map_err(stored_domain_error("revision origin"))?,
+        ),
+        (None, None, None) => None,
+        (None, _, _) => return Err(stored_invariant("revision origin detail has no name")),
+    };
+    Revision::new(
+        id,
+        sequence,
+        transaction_id,
+        Timestamp::from_unix_micros(stored.committed_at),
+        origin,
+        stored.message,
+    )
+    .map_err(stored_domain_error("revision"))
 }
 
 pub(crate) fn encode_identifier_target(target: &ObjectRef) -> Result<(i64, &[u8; 16])> {

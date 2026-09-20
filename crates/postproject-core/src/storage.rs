@@ -4,7 +4,7 @@ use crate::{
     Activity, Asset, AssetId, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot,
     MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
     OriginalMediaImport, Project, Representation, RepresentationId, Resource, ResourceId, Result,
-    RevisionContext, TransactionId, TransactionState,
+    Revision, RevisionContext, TransactionId, TransactionState,
 };
 
 /// Read operations required from a project persistence backend.
@@ -134,6 +134,21 @@ pub trait ProjectRead {
     /// Returns a domain error when the representation is absent or persisted
     /// provenance cannot be traversed safely.
     fn descendants(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>>;
+
+    /// Returns the newest durable revision, or `None` for an empty journal.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage-domain error when persisted revision data is invalid.
+    fn latest_revision(&self) -> Result<Option<Revision>>;
+
+    /// Returns revisions after `sequence` in ascending order, capped by `limit`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when `limit` is zero or excessive, or when
+    /// persisted revision data is invalid.
+    fn changes_since(&self, sequence: u64, limit: u32) -> Result<Vec<Revision>>;
 }
 
 /// Transactional mutation operations required from a persistence backend.
