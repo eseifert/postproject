@@ -10,16 +10,31 @@ from ._errors import (
     UnsupportedError,
 )
 from ._native import ABI_VERSION, NativeLibrary
+from ._model import (
+    AssetId,
+    OriginIdentity,
+    ProjectId,
+    Revision,
+    RevisionContext,
+    RevisionId,
+    TransactionId,
+)
 
 __all__ = [
     "ABI_VERSION",
     "AlreadyExistsError",
+    "AssetId",
     "ConflictError",
     "InvalidArgumentError",
     "NativeLibrary",
     "NotFoundError",
+    "OriginIdentity",
     "PostProjectError",
+    "ProjectId",
+    "Revision",
+    "RevisionContext",
+    "RevisionId",
     "StorageError",
+    "TransactionId",
     "UnsupportedError",
 ]
-
