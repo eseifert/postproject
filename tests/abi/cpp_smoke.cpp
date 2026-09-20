@@ -32,6 +32,10 @@ int main(int argc, char **argv) {
       }
     }
     auto transaction = project.beginTransaction();
+    transaction.setRevisionContext(
+        {postproject::OriginIdentity{"C++ smoke", std::string("1.0"),
+                                     std::nullopt},
+         std::string("Import fixture")});
     const auto asset_id = transaction.importMedia(media_path, "C++ asset");
     const postproject::ObjectRef asset_ref{postproject::ObjectKind::asset,
                                            asset_id};
@@ -41,6 +45,17 @@ int main(int argc, char **argv) {
     static_cast<void>(transaction.addMediaRoot(
         std::filesystem::path(path).parent_path().string(), "fixtures"));
     transaction.commit();
+    const auto latest_revision = project.latestRevision();
+    const auto revision_page = project.changesSince(0, 1);
+    if (!latest_revision.has_value() || latest_revision->sequence != 1 ||
+        !latest_revision->origin.has_value() ||
+        latest_revision->origin->name != "C++ smoke" ||
+        latest_revision->origin->version != std::string("1.0") ||
+        latest_revision->message != std::string("Import fixture") ||
+        revision_page.size() != 1 ||
+        revision_page[0].id != latest_revision->id) {
+      return 15;
+    }
     if (!project.containsAsset(asset_id)) {
       return 8;
     }

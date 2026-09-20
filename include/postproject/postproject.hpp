@@ -129,6 +129,26 @@ struct ActivitySpec final {
   std::vector<ActivityEdge> outputs;
 };
 
+struct OriginIdentity final {
+  std::string name;
+  std::optional<std::string> version;
+  std::optional<std::string> uri;
+};
+
+struct RevisionContext final {
+  std::optional<OriginIdentity> origin;
+  std::optional<std::string> message;
+};
+
+struct Revision final {
+  Uuid id;
+  std::uint64_t sequence;
+  Uuid transaction_id;
+  std::int64_t committed_at_unix_micros;
+  std::optional<OriginIdentity> origin;
+  std::optional<std::string> message;
+};
+
 enum class RepresentationAvailability : std::uint32_t {
   online = PP_AVAILABILITY_ONLINE,
   partial = PP_AVAILABILITY_PARTIAL,
@@ -241,6 +261,15 @@ struct ActivitySetDeleter final {
 
 using ActivitySetHandle =
     std::unique_ptr<pp_activity_set_t, ActivitySetDeleter>;
+
+struct RevisionSetDeleter final {
+  void operator()(pp_revision_set_t *revisions) const noexcept {
+    pp_revision_set_release(revisions);
+  }
+};
+
+using RevisionSetHandle =
+    std::unique_ptr<pp_revision_set_t, RevisionSetDeleter>;
 
 inline void throw_if_error(pp_error_code_t status, pp_error_t *raw_error) {
   ErrorHandle error(raw_error);
@@ -385,6 +414,31 @@ inline Activity activity(const pp_activity_set_t *activities,
           std::move(outputs)};
 }
 
+inline Revision revision(const pp_revision_set_t *revisions,
+                         std::uint64_t index) {
+  pp_uuid_t id{};
+  std::uint64_t sequence = 0;
+  pp_uuid_t transaction_id{};
+  std::int64_t committed_at = 0;
+  const char *origin_name = nullptr;
+  const char *origin_version = nullptr;
+  const char *origin_uri = nullptr;
+  const char *message = nullptr;
+  pp_error_t *error = nullptr;
+  const pp_error_code_t status = pp_revision_set_get(
+      revisions, index, &id, &sequence, &transaction_id, &committed_at,
+      &origin_name, &origin_version, &origin_uri, &message, &error);
+  throw_if_error(status, error);
+  std::optional<OriginIdentity> origin;
+  if (origin_name != nullptr) {
+    origin = OriginIdentity{std::string(origin_name),
+                            optional_string(origin_version),
+                            optional_string(origin_uri)};
+  }
+  return {uuid(id), sequence, uuid(transaction_id), committed_at,
+          std::move(origin), optional_string(message)};
+}
+
 inline Evidence resource_evidence(const pp_resolution_set_t *resolutions,
                                   std::uint64_t representation_index,
                                   std::uint64_t resource_index,
@@ -424,6 +478,32 @@ inline Evidence candidate_evidence(const pp_resolution_set_t *resolutions,
 
 class Transaction final {
 public:
+  void setRevisionContext(const RevisionContext &context) {
+    const std::optional<std::string> origin_name =
+        context.origin.has_value()
+            ? std::optional<std::string>(checked_origin_name(*context.origin))
+            : std::nullopt;
+    const std::optional<std::string> origin_version =
+        context.origin.has_value()
+            ? detail::checked_optional_string(context.origin->version,
+                                              "origin version")
+            : std::nullopt;
+    const std::optional<std::string> origin_uri =
+        context.origin.has_value()
+            ? detail::checked_optional_string(context.origin->uri,
+                                              "origin URI")
+            : std::nullopt;
+    const std::optional<std::string> message =
+        detail::checked_optional_string(context.message, "revision message");
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_set_revision_context(
+        transaction_, origin_name.has_value() ? origin_name->c_str() : nullptr,
+        origin_version.has_value() ? origin_version->c_str() : nullptr,
+        origin_uri.has_value() ? origin_uri->c_str() : nullptr,
+        message.has_value() ? message->c_str() : nullptr, &error);
+    detail::throw_if_error(status, error);
+  }
+
   Uuid importMedia(std::string_view path) {
     return import_media_impl(path, nullptr);
   }
@@ -584,6 +664,10 @@ private:
 
   explicit Transaction(pp_transaction_t *transaction) noexcept
       : transaction_(transaction) {}
+
+  static std::string checked_origin_name(const OriginIdentity &origin) {
+    return detail::checked_string(origin.name, "origin name");
+  }
 
   Uuid import_media_impl(std::string_view path, const char *display_name) {
     const std::string native_path = detail::checked_string(path, "path");
@@ -908,6 +992,36 @@ public:
   descendants(const Uuid &representation_id) const {
     return provenance_relatives(representation_id,
                                 pp_project_provenance_descendants);
+  }
+
+  [[nodiscard]] std::optional<Revision> latestRevision() const {
+    pp_revision_set_t *raw_revisions = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_project_latest_revision(project_, &raw_revisions, &error);
+    detail::throw_if_error(status, error);
+    detail::RevisionSetHandle revisions(raw_revisions);
+    if (pp_revision_set_count(revisions.get()) == 0) {
+      return std::nullopt;
+    }
+    return detail::revision(revisions.get(), 0);
+  }
+
+  [[nodiscard]] std::vector<Revision>
+  changesSince(std::uint64_t sequence, std::uint32_t limit = 100) const {
+    pp_revision_set_t *raw_revisions = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_project_changes_since(
+        project_, sequence, limit, &raw_revisions, &error);
+    detail::throw_if_error(status, error);
+    detail::RevisionSetHandle revisions(raw_revisions);
+    std::vector<Revision> result;
+    const std::uint64_t count = pp_revision_set_count(revisions.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      result.push_back(detail::revision(revisions.get(), index));
+    }
+    return result;
   }
 
   [[nodiscard]] Transaction beginTransaction() {
