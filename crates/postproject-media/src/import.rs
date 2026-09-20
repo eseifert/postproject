@@ -12,8 +12,8 @@ use crate::{canonical_file_uri, fingerprint_file};
 
 /// Inspects a regular file and prepares a validated original-media import.
 ///
-/// This function does not mutate project state. Persist the returned aggregate
-/// inside an explicit project transaction.
+/// This function does not mutate production state. Persist the returned aggregate
+/// inside an explicit production transaction.
 ///
 /// # Errors
 ///

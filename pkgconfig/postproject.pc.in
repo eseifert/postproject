@@ -4,7 +4,7 @@ libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
 includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 
 Name: PostProject
-Description: Application-neutral post-production project and media infrastructure
+Description: Application-neutral production knowledge and media infrastructure
 Version: @POSTPROJECT_PACKAGE_VERSION@
 Libs: -L${libdir} -lpostproject
 Cflags: -I${includedir}

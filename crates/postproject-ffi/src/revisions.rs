@@ -1,4 +1,4 @@
-//! C-ABI-owned projections of durable project revisions.
+//! C-ABI-owned projections of durable production revisions.
 
 use std::ffi::CString;
 

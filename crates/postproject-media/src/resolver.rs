@@ -56,7 +56,7 @@ impl MediaResolver {
         Ok(Self { options })
     }
 
-    /// Resolves one resource without mutating project state.
+    /// Resolves one resource without mutating production state.
     ///
     /// Known locators are checked before roots. Root traversal does not follow
     /// symlinks, is ordered by filename, stops at configured bounds, filters by
