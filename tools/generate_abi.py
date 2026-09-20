@@ -261,8 +261,20 @@ def render_python(header: Header, source: str) -> str:
         for field in struct.fields:
             lines.append(f'    ("{field.name}", {_render_ctype(field.ctype)}),')
         lines.extend(["]", ""])
+    lines.extend(["", "PUBLIC_STRUCTS = {"])
+    for struct in header.structs:
+        if struct.fields is None:
+            continue
+        field_names = ", ".join(f'"{field.name}"' for field in struct.fields)
+        if len(struct.fields) == 1:
+            field_names += ","
+        lines.append(
+            f'    "{struct.alias}": ({_python_name(struct.alias)}, ({field_names})), '
+        )
     lines.extend(
         [
+            "}",
+            "",
             "",
             "EXPORTED_SYMBOLS = (",
             *(f'    "{function.name}",' for function in sorted(header.functions, key=lambda item: item.name)),
@@ -283,6 +295,30 @@ def render_python(header: Header, source: str) -> str:
 
 def render_symbols(header: Header) -> str:
     return "".join(f"{function.name}\n" for function in sorted(header.functions, key=lambda item: item.name))
+
+
+def render_layout_c(header: Header) -> str:
+    lines = [
+        "/* Generated layout probe; do not edit manually. */",
+        "#include <stddef.h>",
+        "#include <stdio.h>",
+        "#include <postproject/postproject.h>",
+        "",
+        "int main(void) {",
+    ]
+    for struct in header.structs:
+        if struct.fields is None:
+            continue
+        lines.append(
+            f'  printf("{struct.alias}.size=%zu\\n", sizeof({struct.alias}));'
+        )
+        for field in struct.fields:
+            lines.append(
+                f'  printf("{struct.alias}.{field.name}=%zu\\n", '
+                f"offsetof({struct.alias}, {field.name}));"
+            )
+    lines.extend(["  return 0;", "}"])
+    return "\n".join(lines) + "\n"
 
 
 def _render_ctype(ctype: CType) -> str:
@@ -314,14 +350,21 @@ def _one_line(value: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("header", type=Path)
-    parser.add_argument("--symbols", action="store_true")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--symbols", action="store_true")
+    output.add_argument("--layout-c", action="store_true")
     arguments = parser.parse_args()
     try:
         header = parse_header(arguments.header.read_text(encoding="utf-8"))
     except (OSError, HeaderError) as error:
         parser.error(str(error))
-    output = render_symbols(header) if arguments.symbols else render_python(header, str(arguments.header))
-    sys.stdout.write(output)
+    if arguments.symbols:
+        rendered = render_symbols(header)
+    elif arguments.layout_c:
+        rendered = render_layout_c(header)
+    else:
+        rendered = render_python(header, str(arguments.header))
+    sys.stdout.write(rendered)
     return 0
 
 

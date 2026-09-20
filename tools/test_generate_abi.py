@@ -47,6 +47,15 @@ class GenerateAbiTests(unittest.TestCase):
         with self.assertRaisesRegex(GENERATOR.HeaderError, "unsupported"):
             GENERATOR.parse_header(source)
 
+    def test_layout_probe_covers_every_public_struct_field(self) -> None:
+        probe = GENERATOR.render_layout_c(self.header)
+        for struct in self.header.structs:
+            if struct.fields is None:
+                continue
+            self.assertIn(f"sizeof({struct.alias})", probe)
+            for field in struct.fields:
+                self.assertIn(f"offsetof({struct.alias}, {field.name})", probe)
+
 
 if __name__ == "__main__":
     unittest.main()
