@@ -19,6 +19,8 @@ int main(int argc, char **argv) {
   pp_uuid_t root_id = {{0}};
   pp_uuid_t representation_id = {{0}};
   pp_uuid_t resource_id = {{0}};
+  pp_uuid_t revision_id = {{0}};
+  pp_uuid_t revision_transaction_id = {{0}};
   char media_path[4096];
   char moved_media_path[4096];
 
@@ -145,6 +147,41 @@ int main(int argc, char **argv) {
     pp_error_release(error);
     return 4;
   }
+  pp_revision_set_t *revisions = NULL;
+  uint64_t revision_sequence = 0;
+  int64_t revision_committed_at = 0;
+  const char *revision_origin_name = NULL;
+  const char *revision_origin_version = NULL;
+  const char *revision_origin_uri = NULL;
+  const char *revision_message = NULL;
+  status = pp_project_latest_revision(project, &revisions, &error);
+  if (status != PP_OK || revisions == NULL ||
+      pp_revision_set_count(revisions) != UINT64_C(1) ||
+      pp_revision_set_get(
+          revisions, 0, &revision_id, &revision_sequence,
+          &revision_transaction_id, &revision_committed_at,
+          &revision_origin_name, &revision_origin_version,
+          &revision_origin_uri, &revision_message, &error) != PP_OK ||
+      uuid_is_zero(&revision_id) || uuid_is_zero(&revision_transaction_id) ||
+      revision_sequence != UINT64_C(1) || revision_committed_at == 0 ||
+      revision_origin_name != NULL || revision_origin_version != NULL ||
+      revision_origin_uri != NULL || revision_message != NULL) {
+    pp_revision_set_release(revisions);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 36;
+  }
+  pp_revision_set_release(revisions);
+  revisions = NULL;
+  status = pp_project_changes_since(project, 0, 1, &revisions, &error);
+  if (status != PP_OK || revisions == NULL ||
+      pp_revision_set_count(revisions) != UINT64_C(1)) {
+    pp_revision_set_release(revisions);
+    pp_project_release(project);
+    pp_error_release(error);
+    return 37;
+  }
+  pp_revision_set_release(revisions);
   asset_exists = 0;
   status = pp_project_asset_exists(project, &asset_id, &asset_exists, &error);
   if (status != PP_OK || asset_exists != UINT8_C(1)) {
