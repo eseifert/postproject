@@ -6,7 +6,7 @@ use postproject_core::{AssetId, RepresentationId, ResourceResolutionState};
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
 };
-use postproject_storage_sqlite::SqliteProject;
+use postproject_storage_sqlite::SqliteProduction;
 
 #[test]
 #[allow(
@@ -15,7 +15,7 @@ use postproject_storage_sqlite::SqliteProject;
 )]
 fn relocation_workflow_handles_unique_and_ambiguous_media() {
     let directory = tempfile::tempdir().expect("create test directory");
-    let project_path = directory.path().join("production.pproj");
+    let production_path = directory.path().join("production.pproj");
     let original_root = directory.path().join("original");
     fs::create_dir(&original_root).expect("create original root");
     let fixtures = [
@@ -27,8 +27,9 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
         fs::write(original_root.join(name), bytes).expect("write media fixture");
     }
 
-    let mut project = SqliteProject::create(&project_path, Some("E2E production".to_owned()))
-        .expect("create project");
+    let mut production =
+        SqliteProduction::create(&production_path, Some("E2E production".to_owned()))
+            .expect("create production");
     let prepared: Vec<_> = fixtures
         .iter()
         .map(|(name, _)| {
@@ -40,7 +41,7 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
         .iter()
         .map(|import| (import.asset().id(), import.representation().id()))
         .collect();
-    let mut transaction = project
+    let mut transaction = production
         .begin_transaction()
         .expect("begin import transaction");
     for import in &prepared {
@@ -50,7 +51,7 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
     }
     transaction.commit().expect("commit media imports");
     drop(transaction);
-    drop(project);
+    drop(production);
 
     let relocated_parent = directory.path().join("relocated");
     let relocated_media = relocated_parent.join("media");
@@ -64,14 +65,14 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
     )
     .expect("create ambiguous candidate");
 
-    let mut project = SqliteProject::open(&project_path).expect("reopen moved project");
+    let mut production = SqliteProduction::open(&production_path).expect("reopen moved production");
     let resolver = MediaResolver::default();
     for representation_id in identities.values() {
-        let resource = project
+        let resource = production
             .resources(*representation_id)
             .expect("load resources")
             .remove(0);
-        let locators = project
+        let locators = production
             .locators(resource.id())
             .expect("load known locators");
         let resolution = resolver
@@ -82,25 +83,27 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
 
     let root = prepare_media_root(&relocated_parent, Some("relocated".to_owned()), 0)
         .expect("prepare relocated root");
-    let mut transaction = project.begin_transaction().expect("begin root transaction");
+    let mut transaction = production
+        .begin_transaction()
+        .expect("begin root transaction");
     transaction.add_media_root(root).expect("stage media root");
     transaction.commit().expect("commit media root");
     drop(transaction);
 
     let mut confirmations = Vec::new();
     let mut ambiguous_count = 0;
-    for asset in project.assets().expect("load assets") {
-        for representation in project
+    for asset in production.assets().expect("load assets") {
+        for representation in production
             .representations(asset.id())
             .expect("load representations")
         {
-            let resource = project
+            let resource = production
                 .resources(representation.id())
                 .expect("load resources")
                 .remove(0);
-            let locators = project.locators(resource.id()).expect("load locators");
+            let locators = production.locators(resource.id()).expect("load locators");
             let resolution = resolver
-                .resolve_resource(&resource, &locators, project.project().media_roots())
+                .resolve_resource(&resource, &locators, production.production().media_roots())
                 .expect("resolve relocated media");
             match resolution.state() {
                 ResourceResolutionState::ResolvedExact => {
@@ -124,7 +127,7 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
     }
     assert_eq!(ambiguous_count, 1);
 
-    let mut transaction = project
+    let mut transaction = production
         .begin_transaction()
         .expect("begin confirmation transaction");
     for locator in &confirmations {
@@ -134,15 +137,15 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
     }
     transaction.commit().expect("commit confirmed locations");
     drop(transaction);
-    drop(project);
+    drop(production);
 
-    let project = SqliteProject::open(&project_path).expect("reopen confirmed project");
+    let production = SqliteProduction::open(&production_path).expect("reopen confirmed production");
     for (_, representation_id) in identities {
-        let resource = project
+        let resource = production
             .resources(representation_id)
             .expect("load persisted resources")
             .remove(0);
-        let locators = project
+        let locators = production
             .locators(resource.id())
             .expect("load persisted locators");
         assert_eq!(locators.len(), 2);

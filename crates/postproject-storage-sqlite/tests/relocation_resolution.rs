@@ -6,13 +6,13 @@ use postproject_core::ResourceResolutionState;
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
 };
-use postproject_storage_sqlite::SqliteProject;
+use postproject_storage_sqlite::SqliteProduction;
 use tempfile::tempdir;
 
 #[test]
 fn moved_media_resolves_and_confirmed_location_persists() {
     let directory = tempdir().expect("create temporary directory");
-    let project_path = directory.path().join("production.pproj");
+    let production_path = directory.path().join("production.pproj");
     let original_directory = directory.path().join("original");
     let relocated_directory = directory.path().join("relocated");
     fs::create_dir(&original_directory).expect("create original directory");
@@ -22,28 +22,29 @@ fn moved_media_resolves_and_confirmed_location_persists() {
         .expect("prepare import");
     let asset_id = prepared.asset().id();
 
-    let mut project = SqliteProject::create(&project_path, None).expect("create project");
-    let mut transaction = project.begin_transaction().expect("begin import");
+    let mut production =
+        SqliteProduction::create(&production_path, None).expect("create production");
+    let mut transaction = production.begin_transaction().expect("begin import");
     transaction
         .import_original(&prepared)
         .expect("stage import");
     transaction.commit().expect("commit import");
     drop(transaction);
-    drop(project);
+    drop(production);
 
     fs::rename(&original_directory, &relocated_directory).expect("move media directory");
     let relocated_path = relocated_directory.join("A001.mov");
     let resolver = MediaResolver::default();
-    let mut project = SqliteProject::open(&project_path).expect("reopen moved project");
-    let representation = project
+    let mut production = SqliteProduction::open(&production_path).expect("reopen moved production");
+    let representation = production
         .representations(asset_id)
         .expect("load representation")
         .remove(0);
-    let resource = project
+    let resource = production
         .resources(representation.id())
         .expect("load resource")
         .remove(0);
-    let known_locators = project
+    let known_locators = production
         .locators(resource.id())
         .expect("load known locators");
     let missing = resolver
@@ -52,7 +53,9 @@ fn moved_media_resolves_and_confirmed_location_persists() {
     assert_eq!(missing.state(), ResourceResolutionState::Offline);
 
     let root = prepare_media_root(&relocated_directory, None, 0).expect("prepare new root");
-    let mut transaction = project.begin_transaction().expect("begin root transaction");
+    let mut transaction = production
+        .begin_transaction()
+        .expect("begin root transaction");
     transaction
         .add_media_root(root)
         .expect("stage new media root");
@@ -60,14 +63,22 @@ fn moved_media_resolves_and_confirmed_location_persists() {
     drop(transaction);
 
     let unique = resolver
-        .resolve_resource(&resource, &known_locators, project.project().media_roots())
+        .resolve_resource(
+            &resource,
+            &known_locators,
+            production.production().media_roots(),
+        )
         .expect("resolve unique media");
     assert_eq!(unique.state(), ResourceResolutionState::ResolvedExact);
 
     let duplicate_path = relocated_directory.join("duplicate.mov");
     fs::copy(&relocated_path, &duplicate_path).expect("create duplicate");
     let ambiguous = resolver
-        .resolve_resource(&resource, &known_locators, project.project().media_roots())
+        .resolve_resource(
+            &resource,
+            &known_locators,
+            production.production().media_roots(),
+        )
         .expect("resolve duplicate media");
     assert_eq!(ambiguous.state(), ResourceResolutionState::Ambiguous);
     assert_eq!(ambiguous.candidates().len(), 2);
@@ -81,7 +92,7 @@ fn moved_media_resolves_and_confirmed_location_persists() {
         .to_owned();
     let confirmed =
         prepare_confirmed_locator(resource.id(), chosen_uri).expect("prepare confirmed locator");
-    let mut transaction = project
+    let mut transaction = production
         .begin_transaction()
         .expect("begin confirmation transaction");
     transaction
@@ -89,15 +100,15 @@ fn moved_media_resolves_and_confirmed_location_persists() {
         .expect("stage confirmed locator");
     transaction.commit().expect("commit confirmation");
     drop(transaction);
-    drop(project);
+    drop(production);
 
-    let reopened = SqliteProject::open(&project_path).expect("reopen confirmed project");
+    let reopened = SqliteProduction::open(&production_path).expect("reopen confirmed production");
     let locators = reopened
         .locators(resource.id())
         .expect("load confirmed locators");
     assert_eq!(locators.len(), 2);
     let online = resolver
-        .resolve_resource(&resource, &locators, reopened.project().media_roots())
+        .resolve_resource(&resource, &locators, reopened.production().media_roots())
         .expect("resolve confirmed locator");
     assert_eq!(
         online.state(),

@@ -6,13 +6,13 @@ use postproject_core::{
     RepresentationId, RepresentationKind, Resource, ResourceId, ResourceMember, ResourceRole,
     Timestamp,
 };
-use postproject_storage_sqlite::SqliteProject;
+use postproject_storage_sqlite::SqliteProduction;
 use rusqlite::Connection;
 
 #[test]
 fn sparse_image_sequence_reopens_without_per_frame_resources() {
     let directory = tempfile::tempdir().expect("create temporary directory");
-    let project_path = directory.path().join("sequence.pproj");
+    let production_path = directory.path().join("sequence.pproj");
     let now = Timestamp::from_unix_micros(1_000);
     let asset = Asset::new(AssetId::new(), now, Some("VFX plate".to_owned()), None);
     let resource_id = ResourceId::new();
@@ -46,14 +46,15 @@ fn sparse_image_sequence_reopens_without_per_frame_resources() {
     )
     .expect("valid compound import");
 
-    let mut project = SqliteProject::create(&project_path, None).expect("create project");
-    let mut transaction = project.begin_transaction().expect("begin transaction");
+    let mut production =
+        SqliteProduction::create(&production_path, None).expect("create production");
+    let mut transaction = production.begin_transaction().expect("begin transaction");
     transaction.import_original(&import).expect("stage import");
     transaction.commit().expect("commit import");
     drop(transaction);
-    drop(project);
+    drop(production);
 
-    let reopened = SqliteProject::open(&project_path).expect("reopen project");
+    let reopened = SqliteProduction::open(&production_path).expect("reopen production");
     let stored = reopened
         .representations(import.asset().id())
         .expect("load representations");
@@ -75,7 +76,7 @@ fn sparse_image_sequence_reopens_without_per_frame_resources() {
     );
     drop(reopened);
 
-    let connection = Connection::open(&project_path).expect("inspect database");
+    let connection = Connection::open(&production_path).expect("inspect database");
     let resource_rows: u32 = connection
         .query_row("SELECT count(*) FROM resources", [], |row| row.get(0))
         .expect("count resources");
@@ -93,7 +94,7 @@ fn sparse_image_sequence_reopens_without_per_frame_resources() {
 #[test]
 fn ordered_parts_and_package_membership_round_trip() {
     let directory = tempfile::tempdir().expect("create temporary directory");
-    let project_path = directory.path().join("compound.pproj");
+    let production_path = directory.path().join("compound.pproj");
     let ordered_ids = [
         ResourceId::from_bytes([1; 16]),
         ResourceId::from_bytes([2; 16]),
@@ -134,8 +135,9 @@ fn ordered_parts_and_package_membership_round_trip() {
     .expect("valid package");
     let package_import = compound_import("Camera package", package, &package_ids);
 
-    let mut project = SqliteProject::create(&project_path, None).expect("create project");
-    let mut transaction = project.begin_transaction().expect("begin transaction");
+    let mut production =
+        SqliteProduction::create(&production_path, None).expect("create production");
+    let mut transaction = production.begin_transaction().expect("begin transaction");
     transaction
         .import_original(&ordered_import)
         .expect("stage ordered import");
@@ -144,9 +146,9 @@ fn ordered_parts_and_package_membership_round_trip() {
         .expect("stage package import");
     transaction.commit().expect("commit imports");
     drop(transaction);
-    drop(project);
+    drop(production);
 
-    let reopened = SqliteProject::open(&project_path).expect("reopen project");
+    let reopened = SqliteProduction::open(&production_path).expect("reopen production");
     for (import, expected_ids) in [
         (&ordered_import, ordered_ids.as_slice()),
         (&package_import, package_ids.as_slice()),
