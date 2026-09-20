@@ -3,7 +3,7 @@ CREATE TABLE schema_migrations (
     applied_at_micros INTEGER NOT NULL
 );
 
-CREATE TABLE projects (
+CREATE TABLE productions (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     id BLOB NOT NULL UNIQUE CHECK (length(id) = 16),
     schema_version INTEGER NOT NULL CHECK (schema_version > 0),
@@ -148,7 +148,7 @@ CREATE INDEX external_identifiers_by_target
 CREATE INDEX external_identifiers_by_scheme_value
     ON external_identifiers(scheme, value, target_kind, target_id);
 
--- target_kind: 0 project, 1 asset, 2 representation, 3 resource, 4 activity.
+-- target_kind: 0 production, 1 asset, 2 representation, 3 resource, 4 activity.
 CREATE TABLE metadata_assertions (
     id INTEGER PRIMARY KEY,
     target_kind INTEGER NOT NULL CHECK (target_kind BETWEEN 0 AND 4),

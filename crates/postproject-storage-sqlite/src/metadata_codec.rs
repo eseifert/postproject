@@ -4,7 +4,7 @@ use postproject_core::{
     ActivityId, AssetId, DecimalValue, Error, ErrorKind, MAX_METADATA_BINARY_BYTES,
     MAX_METADATA_COLLECTION_ITEMS, MAX_METADATA_NESTING_DEPTH, MAX_METADATA_TEXT_BYTES,
     MAX_METADATA_URI_BYTES, MAX_PROPERTY_ID_BYTES, MetadataField, MetadataValue, MetadataValueKind,
-    ObjectRef, ProjectId, PropertyId, RationalValue, RepresentationId, Result, Timestamp,
+    ObjectRef, ProductionId, PropertyId, RationalValue, RepresentationId, Result, Timestamp,
 };
 
 const MAGIC: &[u8; 4] = b"PPMV";
@@ -134,7 +134,7 @@ fn encode_value(writer: &mut Writer, value: &MetadataValue) -> Result<()> {
 
 fn encode_reference(writer: &mut Writer, reference: ObjectRef) -> Result<()> {
     let (kind, id) = match reference {
-        ObjectRef::Project(id) => (0, id.into_bytes()),
+        ObjectRef::Production(id) => (0, id.into_bytes()),
         ObjectRef::Asset(id) => (1, id.into_bytes()),
         ObjectRef::Representation(id) => (2, id.into_bytes()),
         ObjectRef::Resource(id) => (3, id.into_bytes()),
@@ -215,7 +215,7 @@ fn decode_reference(reader: &mut Reader<'_>) -> Result<ObjectRef> {
         .try_into()
         .map_err(|_| malformed("metadata reference UUID is invalid"))?;
     match kind {
-        0 => Ok(ObjectRef::Project(ProjectId::from_bytes(bytes))),
+        0 => Ok(ObjectRef::Production(ProductionId::from_bytes(bytes))),
         1 => Ok(ObjectRef::Asset(AssetId::from_bytes(bytes))),
         2 => Ok(ObjectRef::Representation(RepresentationId::from_bytes(
             bytes,
@@ -447,7 +447,7 @@ mod tests {
             MetadataValue::uri("urn:example:media:1").unwrap(),
             MetadataValue::bytes(vec![0, 1, 2, 255]).unwrap(),
             MetadataValue::rational(RationalValue::new(-24_000, 1_001).unwrap()),
-            MetadataValue::reference(ObjectRef::Project(ProjectId::from_bytes([1; 16]))),
+            MetadataValue::reference(ObjectRef::Production(ProductionId::from_bytes([1; 16]))),
             MetadataValue::reference(ObjectRef::Asset(AssetId::from_bytes([2; 16]))),
             MetadataValue::reference(ObjectRef::Representation(RepresentationId::from_bytes(
                 [3; 16],

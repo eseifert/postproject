@@ -3,7 +3,7 @@
 use postproject_core::{
     Activity, ContentStructure, ContentStructureKind, Error, ErrorKind, ExternalIdentifier,
     Locator, LocatorAvailability, MediaRoot, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, Project, ProjectStoreTransaction, Resource, Result, RevisionContext,
+    OriginalMediaImport, Production, ProductionStoreTransaction, Resource, Result, RevisionContext,
     RevisionEventKind, RevisionId, Timestamp, TransactionId, TransactionLifecycle,
     TransactionState,
 };
@@ -11,24 +11,24 @@ use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 
 use crate::{encode_identifier_target, encode_metadata_target, metadata_codec, sqlite_error};
 
-/// An explicit project mutation transaction.
+/// An explicit production mutation transaction.
 ///
 /// Dropping an open value rolls its SQLite transaction back. Call [`Self::commit`]
 /// to make all staged mutations durable or [`Self::rollback`] to discard them
 /// explicitly.
-pub struct SqliteTransaction<'project> {
-    transaction: Option<Transaction<'project>>,
+pub struct SqliteTransaction<'production> {
+    transaction: Option<Transaction<'production>>,
     lifecycle: TransactionLifecycle,
-    project: &'project mut Project,
+    production: &'production mut Production,
     pending_roots: Vec<MediaRoot>,
     revision_context: RevisionContext,
     pending_events: Vec<RevisionEventKind>,
 }
 
-impl<'project> SqliteTransaction<'project> {
+impl<'production> SqliteTransaction<'production> {
     pub(crate) fn begin(
-        connection: &'project mut Connection,
-        project: &'project mut Project,
+        connection: &'production mut Connection,
+        production: &'production mut Production,
     ) -> Result<Self> {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Deferred)
@@ -36,7 +36,7 @@ impl<'project> SqliteTransaction<'project> {
         Ok(Self {
             transaction: Some(transaction),
             lifecycle: TransactionLifecycle::new(),
-            project,
+            production,
             pending_roots: Vec::new(),
             revision_context: RevisionContext::default(),
             pending_events: Vec::new(),
@@ -564,9 +564,9 @@ impl<'project> SqliteTransaction<'project> {
             return Err(sqlite_error("commit domain transaction")(error));
         }
         self.lifecycle.mark_committed()?;
-        let mut roots = self.project.media_roots().to_vec();
+        let mut roots = self.production.media_roots().to_vec();
         roots.append(&mut self.pending_roots);
-        self.project.set_media_roots(roots);
+        self.production.set_media_roots(roots);
         self.pending_events.clear();
         Ok(())
     }
@@ -589,7 +589,7 @@ impl<'project> SqliteTransaction<'project> {
         Ok(())
     }
 
-    fn open_transaction(&mut self) -> Result<&Transaction<'project>> {
+    fn open_transaction(&mut self) -> Result<&Transaction<'production>> {
         self.lifecycle.ensure_open()?;
         self.transaction.as_ref().ok_or_else(|| {
             Error::new(
@@ -599,7 +599,7 @@ impl<'project> SqliteTransaction<'project> {
         })
     }
 
-    fn take_transaction(&mut self) -> Result<Transaction<'project>> {
+    fn take_transaction(&mut self) -> Result<Transaction<'production>> {
         self.transaction.take().ok_or_else(|| {
             Error::new(
                 ErrorKind::Internal,
@@ -823,7 +823,7 @@ fn stored_event(event: &RevisionEventKind) -> Result<StoredEvent<'_>> {
     Ok(stored)
 }
 
-impl ProjectStoreTransaction for SqliteTransaction<'_> {
+impl ProductionStoreTransaction for SqliteTransaction<'_> {
     fn id(&self) -> TransactionId {
         SqliteTransaction::id(self)
     }
@@ -1087,7 +1087,7 @@ fn ensure_metadata_target_exists(
     target_id: &[u8; 16],
 ) -> Result<()> {
     let table = match target_kind {
-        0 => "projects",
+        0 => "productions",
         1 => "assets",
         2 => "representations",
         3 => "resources",

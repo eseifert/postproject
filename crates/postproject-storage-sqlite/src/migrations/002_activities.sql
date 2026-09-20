@@ -100,4 +100,4 @@ BEGIN
     DELETE FROM metadata_assertions WHERE target_kind = 4 AND target_id = OLD.id;
 END;
 
-UPDATE projects SET schema_version = 2;
+UPDATE productions SET schema_version = 2;

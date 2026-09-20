@@ -1,4 +1,4 @@
-//! SQLite project-file persistence for `PostProject`.
+//! SQLite production-file persistence for `PostProject`.
 //!
 //! This crate translates between domain values and a private, migrated SQLite
 //! schema. SQLite types and errors are never part of the core API contract.
@@ -21,11 +21,11 @@ use postproject_core::{
     Asset, AssetId, ContentStructure, Error, ErrorKind, ExternalIdentifier, FileFacts, FrameRange,
     IdentifierScheme, ImageSequenceDescriptor, ImageSequencePattern, Locator, LocatorAvailability,
     LocatorId, MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
-    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, Project, ProjectId, ProjectRead,
-    ProjectStore, PropertyId, RationalRate, Representation, RepresentationFingerprint,
-    RepresentationId, RepresentationKind, Resource, ResourceFingerprint, ResourceId,
-    ResourceMember, ResourceRole, Result, Revision, RevisionEvent, RevisionEventKind, RevisionId,
-    Timestamp, ToolIdentity, TransactionId, VocabularyId,
+    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, Production, ProductionId,
+    ProductionRead, ProductionStore, PropertyId, RationalRate, Representation,
+    RepresentationFingerprint, RepresentationId, RepresentationKind, Resource, ResourceFingerprint,
+    ResourceId, ResourceMember, ResourceRole, Result, Revision, RevisionEvent, RevisionEventKind,
+    RevisionId, Timestamp, ToolIdentity, TransactionId, VocabularyId,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
 
@@ -34,12 +34,12 @@ pub use transaction::SqliteTransaction;
 
 const MAX_SQLITE_VALUE_BYTES: i32 = 16 * 1024 * 1024;
 
-/// A project backed by one SQLite project file.
+/// A production backed by one SQLite production file.
 #[derive(Debug)]
-pub struct SqliteProject {
+pub struct SqliteProduction {
     path: PathBuf,
     connection: Connection,
-    project: Project,
+    production: Production,
 }
 
 struct StoredActivity {
@@ -86,8 +86,8 @@ struct StoredRevisionEvent {
 type StoredActivityEdge = (RepresentationId, Option<ActivityRole>);
 type ActivityEdgesById<Edge> = BTreeMap<ActivityId, Vec<Edge>>;
 
-impl SqliteProject {
-    /// Creates a new project file and persists its identity atomically.
+impl SqliteProduction {
+    /// Creates a new production file and persists its identity atomically.
     ///
     /// # Errors
     ///
@@ -100,22 +100,22 @@ impl SqliteProject {
         let mut connection = open_connection(path)?;
         migrations::migrate(&mut connection)?;
 
-        let project = Project::new(
-            ProjectId::new(),
+        let production = Production::new(
+            ProductionId::new(),
             CURRENT_SCHEMA_VERSION,
             Timestamp::now()?,
             display_name,
         );
-        persist_new_project(&mut connection, &project)?;
+        persist_new_production(&mut connection, &production)?;
 
         Ok(Self {
             path: path.to_path_buf(),
             connection,
-            project,
+            production,
         })
     }
 
-    /// Opens an existing project file, applying supported migrations first.
+    /// Opens an existing production file, applying supported migrations first.
     ///
     /// # Errors
     ///
@@ -126,41 +126,41 @@ impl SqliteProject {
         if !path.is_file() {
             return Err(Error::new(
                 ErrorKind::NotFound,
-                format!("project file does not exist: {}", path.display()),
+                format!("production file does not exist: {}", path.display()),
             ));
         }
 
         let mut connection = open_connection(path)?;
         migrations::migrate(&mut connection)?;
-        let project = load_project(&connection)?;
+        let production = load_production(&connection)?;
 
         Ok(Self {
             path: path.to_path_buf(),
             connection,
-            project,
+            production,
         })
     }
 
-    /// Returns the project-file path used by this backend.
+    /// Returns the production-file path used by this backend.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// Returns the loaded project value.
+    /// Returns the loaded production value.
     #[must_use]
-    pub const fn project(&self) -> &Project {
-        &self.project
+    pub const fn production(&self) -> &Production {
+        &self.production
     }
 
-    /// Begins an explicit domain transaction for project mutations.
+    /// Begins an explicit domain transaction for production mutations.
     ///
     /// # Errors
     ///
     /// Returns [`ErrorKind::Storage`] if SQLite cannot start the transaction.
     pub fn begin_transaction(&mut self) -> Result<SqliteTransaction<'_>> {
-        let (connection, project) = (&mut self.connection, &mut self.project);
-        SqliteTransaction::begin(connection, project)
+        let (connection, production) = (&mut self.connection, &mut self.production);
+        SqliteTransaction::begin(connection, production)
     }
 
     /// Loads all assets in deterministic creation/identity order.
@@ -1047,29 +1047,29 @@ impl SqliteProject {
     }
 }
 
-impl ProjectRead for SqliteProject {
-    fn project(&self) -> &Project {
-        SqliteProject::project(self)
+impl ProductionRead for SqliteProduction {
+    fn production(&self) -> &Production {
+        SqliteProduction::production(self)
     }
 
     fn assets(&self) -> Result<Vec<Asset>> {
-        SqliteProject::assets(self)
+        SqliteProduction::assets(self)
     }
 
     fn representations(&self, asset_id: AssetId) -> Result<Vec<Representation>> {
-        SqliteProject::representations(self, asset_id)
+        SqliteProduction::representations(self, asset_id)
     }
 
     fn resources(&self, representation_id: RepresentationId) -> Result<Vec<Resource>> {
-        SqliteProject::resources(self, representation_id)
+        SqliteProduction::resources(self, representation_id)
     }
 
     fn locators(&self, resource_id: ResourceId) -> Result<Vec<Locator>> {
-        SqliteProject::locators(self, resource_id)
+        SqliteProduction::locators(self, resource_id)
     }
 
     fn external_identifiers(&self, target: ObjectRef) -> Result<Vec<ExternalIdentifier>> {
-        SqliteProject::external_identifiers(self, target)
+        SqliteProduction::external_identifiers(self, target)
     }
 
     fn find_by_external_identifier(
@@ -1077,11 +1077,11 @@ impl ProjectRead for SqliteProject {
         scheme: &IdentifierScheme,
         value: &str,
     ) -> Result<Vec<ObjectRef>> {
-        SqliteProject::find_by_external_identifier(self, scheme, value)
+        SqliteProduction::find_by_external_identifier(self, scheme, value)
     }
 
     fn metadata(&self, target: ObjectRef) -> Result<Vec<MetadataAssertion>> {
-        SqliteProject::metadata(self, target)
+        SqliteProduction::metadata(self, target)
     }
 
     fn metadata_values(
@@ -1089,54 +1089,54 @@ impl ProjectRead for SqliteProject {
         target: ObjectRef,
         property: &MetadataProperty,
     ) -> Result<Vec<MetadataValue>> {
-        SqliteProject::metadata_values(self, target, property)
+        SqliteProduction::metadata_values(self, target, property)
     }
 
     fn query_by_metadata_property(
         &self,
         property: &MetadataProperty,
     ) -> Result<Vec<MetadataMatch>> {
-        SqliteProject::query_by_metadata_property(self, property)
+        SqliteProduction::query_by_metadata_property(self, property)
     }
 
     fn activities(&self) -> Result<Vec<Activity>> {
-        SqliteProject::activities(self)
+        SqliteProduction::activities(self)
     }
 
     fn activities_producing(&self, representation_id: RepresentationId) -> Result<Vec<Activity>> {
-        SqliteProject::activities_producing(self, representation_id)
+        SqliteProduction::activities_producing(self, representation_id)
     }
 
     fn activities_consuming(&self, representation_id: RepresentationId) -> Result<Vec<Activity>> {
-        SqliteProject::activities_consuming(self, representation_id)
+        SqliteProduction::activities_consuming(self, representation_id)
     }
 
     fn ancestors(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>> {
-        SqliteProject::ancestors(self, representation_id)
+        SqliteProduction::ancestors(self, representation_id)
     }
 
     fn descendants(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>> {
-        SqliteProject::descendants(self, representation_id)
+        SqliteProduction::descendants(self, representation_id)
     }
 
     fn latest_revision(&self) -> Result<Option<Revision>> {
-        SqliteProject::latest_revision(self)
+        SqliteProduction::latest_revision(self)
     }
 
     fn changes_since(&self, sequence: u64, limit: u32) -> Result<Vec<Revision>> {
-        SqliteProject::changes_since(self, sequence, limit)
+        SqliteProduction::changes_since(self, sequence, limit)
     }
 
     fn events_for_revision(&self, revision_id: RevisionId) -> Result<Vec<RevisionEvent>> {
-        SqliteProject::events_for_revision(self, revision_id)
+        SqliteProduction::events_for_revision(self, revision_id)
     }
 }
 
-impl ProjectStore for SqliteProject {
-    type Transaction<'project> = SqliteTransaction<'project>;
+impl ProductionStore for SqliteProduction {
+    type Transaction<'production> = SqliteTransaction<'production>;
 
     fn begin_transaction(&mut self) -> Result<Self::Transaction<'_>> {
-        SqliteProject::begin_transaction(self)
+        SqliteProduction::begin_transaction(self)
     }
 }
 
@@ -1154,7 +1154,7 @@ fn reserve_new_file(path: &Path) -> Result<()> {
             };
             Error::new(
                 kind,
-                format!("cannot create project file {}: {error}", path.display()),
+                format!("cannot create production file {}: {error}", path.display()),
             )
         })
 }
@@ -1164,7 +1164,7 @@ fn open_connection(path: &Path) -> Result<Connection> {
         path,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .map_err(sqlite_error("open project database"))?;
+    .map_err(sqlite_error("open production database"))?;
     configure_length_limit(&connection, MAX_SQLITE_VALUE_BYTES)?;
     connection
         .busy_timeout(Duration::from_secs(5))
@@ -1182,33 +1182,33 @@ fn configure_length_limit(connection: &Connection, maximum: i32) -> Result<()> {
         .map_err(sqlite_error("configure SQLite value length limit"))
 }
 
-fn persist_new_project(connection: &mut Connection, project: &Project) -> Result<()> {
+fn persist_new_production(connection: &mut Connection, production: &Production) -> Result<()> {
     let transaction = connection
         .transaction()
-        .map_err(sqlite_error("begin project creation"))?;
+        .map_err(sqlite_error("begin production creation"))?;
     transaction
         .execute(
-            "INSERT INTO projects (
+            "INSERT INTO productions (
                 singleton, id, schema_version, created_at_micros, display_name
              ) VALUES (1, ?1, ?2, ?3, ?4)",
             params![
-                project.id().as_bytes().as_slice(),
-                project.schema_version(),
-                project.created_at().as_unix_micros(),
-                project.display_name(),
+                production.id().as_bytes().as_slice(),
+                production.schema_version(),
+                production.created_at().as_unix_micros(),
+                production.display_name(),
             ],
         )
-        .map_err(sqlite_error("persist new project"))?;
+        .map_err(sqlite_error("persist new production"))?;
     transaction
         .commit()
-        .map_err(sqlite_error("commit project creation"))
+        .map_err(sqlite_error("commit production creation"))
 }
 
-fn load_project(connection: &Connection) -> Result<Project> {
+fn load_production(connection: &Connection) -> Result<Production> {
     let stored = connection
         .query_row(
             "SELECT id, schema_version, created_at_micros, display_name
-             FROM projects WHERE singleton = 1",
+             FROM productions WHERE singleton = 1",
             [],
             |row| {
                 Ok((
@@ -1220,28 +1220,28 @@ fn load_project(connection: &Connection) -> Result<Project> {
             },
         )
         .optional()
-        .map_err(sqlite_error("load project record"))?
-        .ok_or_else(|| Error::new(ErrorKind::Storage, "database has no project record"))?;
+        .map_err(sqlite_error("load production record"))?
+        .ok_or_else(|| Error::new(ErrorKind::Storage, "database has no production record"))?;
 
-    let id = ProjectId::from_bytes(id_bytes(stored.0, "project")?);
+    let id = ProductionId::from_bytes(id_bytes(stored.0, "production")?);
     if stored.1 != CURRENT_SCHEMA_VERSION {
         return Err(Error::new(
             ErrorKind::Migration,
             format!(
-                "project record schema version {} does not match database version {}",
+                "production record schema version {} does not match database version {}",
                 stored.1, CURRENT_SCHEMA_VERSION
             ),
         ));
     }
 
-    let mut project = Project::new(
+    let mut production = Production::new(
         id,
         stored.1,
         Timestamp::from_unix_micros(stored.2),
         stored.3,
     );
-    project.set_media_roots(load_media_roots(connection)?);
-    Ok(project)
+    production.set_media_roots(load_media_roots(connection)?);
+    Ok(production)
 }
 
 fn load_media_roots(connection: &Connection) -> Result<Vec<MediaRoot>> {
@@ -1620,7 +1620,7 @@ pub(crate) fn encode_identifier_target(target: &ObjectRef) -> Result<(i64, &[u8;
         ObjectRef::Asset(id) => Ok((1, id.as_bytes())),
         ObjectRef::Representation(id) => Ok((2, id.as_bytes())),
         ObjectRef::Resource(id) => Ok((3, id.as_bytes())),
-        ObjectRef::Project(_) | ObjectRef::Activity(_) => Err(Error::new(
+        ObjectRef::Production(_) | ObjectRef::Activity(_) => Err(Error::new(
             ErrorKind::Unsupported,
             "external identifiers support assets, representations, and resources",
         )),
@@ -1646,7 +1646,7 @@ fn decode_identifier_target(kind: i64, id: Vec<u8>) -> Result<ObjectRef> {
 
 pub(crate) fn encode_metadata_target(target: &ObjectRef) -> Result<(i64, &[u8; 16])> {
     match target {
-        ObjectRef::Project(id) => Ok((0, id.as_bytes())),
+        ObjectRef::Production(id) => Ok((0, id.as_bytes())),
         ObjectRef::Asset(id) => Ok((1, id.as_bytes())),
         ObjectRef::Representation(id) => Ok((2, id.as_bytes())),
         ObjectRef::Resource(id) => Ok((3, id.as_bytes())),
@@ -1661,7 +1661,7 @@ pub(crate) fn encode_metadata_target(target: &ObjectRef) -> Result<(i64, &[u8; 1
 fn decode_metadata_target(kind: i64, id: Vec<u8>) -> Result<ObjectRef> {
     let id = id_bytes(id, "metadata target")?;
     match kind {
-        0 => Ok(ObjectRef::Project(ProjectId::from_bytes(id))),
+        0 => Ok(ObjectRef::Production(ProductionId::from_bytes(id))),
         1 => Ok(ObjectRef::Asset(AssetId::from_bytes(id))),
         2 => Ok(ObjectRef::Representation(RepresentationId::from_bytes(id))),
         3 => Ok(ObjectRef::Resource(ResourceId::from_bytes(id))),

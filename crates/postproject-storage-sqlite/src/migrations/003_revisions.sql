@@ -78,4 +78,4 @@ CREATE TABLE revision_events (
     PRIMARY KEY (revision_id, position)
 );
 
-UPDATE projects SET schema_version = 3;
+UPDATE productions SET schema_version = 3;

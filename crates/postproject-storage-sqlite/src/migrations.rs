@@ -32,7 +32,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<()> {
         return Err(Error::new(
             ErrorKind::Unsupported,
             format!(
-                "project schema version {current} is newer than supported version \
+                "production schema version {current} is newer than supported version \
                  {CURRENT_SCHEMA_VERSION}"
             ),
         ));
@@ -52,7 +52,7 @@ fn schema_version(connection: &Connection) -> Result<u32> {
         .map_err(|error| {
             Error::new(
                 ErrorKind::Migration,
-                format!("read project schema version: {error}"),
+                format!("read production schema version: {error}"),
             )
         })
 }
@@ -123,7 +123,7 @@ mod tests {
             .expect("read migration history");
         assert_eq!(applied, [1, 2, 3]);
         for table in [
-            "projects",
+            "productions",
             "assets",
             "representations",
             "resources",
@@ -154,24 +154,26 @@ mod tests {
     }
 
     #[test]
-    fn later_migrations_update_existing_project_version() {
+    fn later_migrations_update_existing_production_version() {
         let mut connection = Connection::open_in_memory().expect("open in-memory database");
         apply_migration(&mut connection, &MIGRATIONS[0]).expect("apply first migration");
         connection
             .execute(
-                "INSERT INTO projects (
+                "INSERT INTO productions (
                     singleton, id, schema_version, created_at_micros, display_name
                  ) VALUES (1, zeroblob(16), 1, 0, NULL)",
                 [],
             )
-            .expect("insert version-one project");
+            .expect("insert version-one production");
 
-        migrate(&mut connection).expect("migrate existing project");
+        migrate(&mut connection).expect("migrate existing production");
 
-        let project_version: u32 = connection
-            .query_row("SELECT schema_version FROM projects", [], |row| row.get(0))
-            .expect("read project version");
-        assert_eq!(project_version, CURRENT_SCHEMA_VERSION);
+        let production_version: u32 = connection
+            .query_row("SELECT schema_version FROM productions", [], |row| {
+                row.get(0)
+            })
+            .expect("read production version");
+        assert_eq!(production_version, CURRENT_SCHEMA_VERSION);
     }
 
     #[test]
