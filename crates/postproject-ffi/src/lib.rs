@@ -43,14 +43,14 @@ const PP_ERROR_FINGERPRINT: u32 = 9;
 const PP_ERROR_UNSUPPORTED: u32 = 10;
 const PP_ERROR_INTERNAL: u32 = 255;
 
-const PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATION: u32 = 1;
+const PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATOR: u32 = 1;
 const PP_RESOLUTION_RESOLVED_EXACT: u32 = 2;
 const PP_RESOLUTION_RESOLVED_PROBABLE: u32 = 3;
 const PP_RESOLUTION_MISSING: u32 = 4;
 const PP_RESOLUTION_AMBIGUOUS: u32 = 5;
 const PP_RESOLUTION_ERROR: u32 = 6;
 
-const PP_EVIDENCE_KNOWN_LOCATION_EXISTS: u32 = 1;
+const PP_EVIDENCE_KNOWN_LOCATOR_AVAILABLE: u32 = 1;
 const PP_EVIDENCE_EXACT_FINGERPRINT_MATCH: u32 = 2;
 const PP_EVIDENCE_FULL_HASH_MATCH: u32 = 3;
 const PP_EVIDENCE_PARTIAL_FINGERPRINT_MATCH: u32 = 4;
@@ -2094,7 +2094,7 @@ impl TryFrom<ExternalIdentifier> for AbiExternalIdentifier {
 
 const fn resolution_state(state: ResourceResolutionState) -> u32 {
     match state {
-        ResourceResolutionState::OnlineAtKnownLocator => PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATION,
+        ResourceResolutionState::OnlineAtKnownLocator => PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATOR,
         ResourceResolutionState::ResolvedExact => PP_RESOLUTION_RESOLVED_EXACT,
         ResourceResolutionState::ResolvedProbable => PP_RESOLUTION_RESOLVED_PROBABLE,
         ResourceResolutionState::Offline => PP_RESOLUTION_MISSING,
@@ -2106,7 +2106,7 @@ const fn resolution_state(state: ResourceResolutionState) -> u32 {
 
 const fn evidence_kind(kind: EvidenceKind) -> u32 {
     match kind {
-        EvidenceKind::KnownLocationExists => PP_EVIDENCE_KNOWN_LOCATION_EXISTS,
+        EvidenceKind::KnownLocatorAvailable => PP_EVIDENCE_KNOWN_LOCATOR_AVAILABLE,
         EvidenceKind::ExactFingerprintMatch => PP_EVIDENCE_EXACT_FINGERPRINT_MATCH,
         EvidenceKind::FullHashMatch => PP_EVIDENCE_FULL_HASH_MATCH,
         EvidenceKind::PartialFingerprintMatch => PP_EVIDENCE_PARTIAL_FINGERPRINT_MATCH,

@@ -216,7 +216,7 @@ fn online_known_candidate(known_locators: &[Locator]) -> Result<Option<Resolutio
                 locator.uri(),
                 Confidence::CERTAIN,
                 vec![ResolutionEvidence::new(
-                    EvidenceKind::KnownLocationExists,
+                    EvidenceKind::KnownLocatorAvailable,
                     None,
                 )],
             )?);
@@ -334,7 +334,7 @@ mod tests {
     use crate::{prepare_media_root, prepare_original_media};
 
     #[test]
-    fn known_online_location_wins_without_root_scan() {
+    fn known_online_locator_wins_without_root_scan() {
         let directory = tempfile::tempdir().expect("create directory");
         let path = directory.path().join("clip.mov");
         fs::write(&path, b"media").expect("write media");
@@ -342,7 +342,7 @@ mod tests {
 
         let resolution = MediaResolver::default()
             .resolve_resource(&prepared.resources()[0], prepared.locators(), &[])
-            .expect("resolve known location");
+            .expect("resolve known locator");
 
         assert_eq!(
             resolution.state(),
@@ -388,7 +388,7 @@ mod tests {
         let old_path = directory.path().join("old.mov");
         fs::write(&old_path, b"identical media").expect("write original");
         let prepared = prepare_original_media(&old_path, None, None).expect("prepare import");
-        fs::remove_file(&old_path).expect("remove old location");
+        fs::remove_file(&old_path).expect("remove old locator target");
         fs::write(directory.path().join("b.mov"), b"identical media").expect("write b");
         fs::write(directory.path().join("a.mov"), b"identical media").expect("write a");
         let root = prepare_media_root(directory.path(), None, 0).expect("prepare root");
@@ -408,7 +408,7 @@ mod tests {
         let old_path = directory.path().join("old.mov");
         fs::write(&old_path, b"media").expect("write original");
         let prepared = prepare_original_media(&old_path, None, None).expect("prepare import");
-        fs::remove_file(&old_path).expect("remove old location");
+        fs::remove_file(&old_path).expect("remove old locator target");
         fs::write(directory.path().join("candidate.mov"), b"media").expect("write candidate");
         let root = prepare_media_root(directory.path(), None, 0).expect("prepare root");
         let resolver = MediaResolver::new(ResolverOptions {

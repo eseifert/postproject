@@ -153,7 +153,7 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
         .expect("write first candidate");
     fs::write(candidates.join("b.mov"), b"identifiable fixture media")
         .expect("write second candidate");
-    fs::remove_file(&original).expect("make original location unavailable");
+    fs::remove_file(&original).expect("make original locator unavailable");
 
     run_json(&[
         "root",

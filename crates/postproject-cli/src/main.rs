@@ -1270,7 +1270,7 @@ const fn availability_issue_kind(kind: AvailabilityIssueKind) -> &'static str {
 
 const fn evidence_kind(kind: EvidenceKind) -> &'static str {
     match kind {
-        EvidenceKind::KnownLocationExists => "known_location_exists",
+        EvidenceKind::KnownLocatorAvailable => "known_locator_available",
         EvidenceKind::ExactFingerprintMatch => "exact_fingerprint_match",
         EvidenceKind::FullHashMatch => "full_hash_match",
         EvidenceKind::PartialFingerprintMatch => "partial_fingerprint_match",

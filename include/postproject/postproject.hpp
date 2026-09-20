@@ -93,7 +93,7 @@ struct ExternalIdentifier final {
 };
 
 enum class ResolutionState : std::uint32_t {
-  online_at_known_location = PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATION,
+  online_at_known_locator = PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATOR,
   resolved_exact = PP_RESOLUTION_RESOLVED_EXACT,
   resolved_probable = PP_RESOLUTION_RESOLVED_PROBABLE,
   missing = PP_RESOLUTION_MISSING,
@@ -102,7 +102,7 @@ enum class ResolutionState : std::uint32_t {
 };
 
 enum class EvidenceKind : std::uint32_t {
-  known_location_exists = PP_EVIDENCE_KNOWN_LOCATION_EXISTS,
+  known_locator_available = PP_EVIDENCE_KNOWN_LOCATOR_AVAILABLE,
   exact_fingerprint_match = PP_EVIDENCE_EXACT_FINGERPRINT_MATCH,
   full_hash_match = PP_EVIDENCE_FULL_HASH_MATCH,
   partial_fingerprint_match = PP_EVIDENCE_PARTIAL_FINGERPRINT_MATCH,

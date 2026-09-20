@@ -40,8 +40,8 @@ impl Confidence {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum EvidenceKind {
-    /// A persisted location currently exists.
-    KnownLocationExists,
+    /// A persisted locator is currently available.
+    KnownLocatorAvailable,
     /// The complete stored fingerprint matches.
     ExactFingerprintMatch,
     /// A cryptographic full-file digest matches.
@@ -89,7 +89,7 @@ impl ResolutionEvidence {
     }
 }
 
-/// A possible physical location considered by the resolver.
+/// A possible resource locator considered by the resolver.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolutionCandidate {
     uri: String,

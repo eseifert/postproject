@@ -22,14 +22,14 @@ mod tests {
     #[test]
     fn canonicalizes_uri_syntax() {
         assert_eq!(
-            normalize_uri("FILE:///media/a%20b.mov", "location").expect("valid URI"),
+            normalize_uri("FILE:///media/a%20b.mov", "locator").expect("valid URI"),
             "file:///media/a%20b.mov"
         );
     }
 
     #[test]
     fn rejects_native_paths_and_relative_references() {
-        assert!(normalize_uri("relative/file.mov", "location").is_err());
-        assert!(normalize_uri("/native/path.mov", "location").is_err());
+        assert!(normalize_uri("relative/file.mov", "locator").is_err());
+        assert!(normalize_uri("/native/path.mov", "locator").is_err());
     }
 }

@@ -305,7 +305,7 @@ int main(int argc, char **argv) {
       pp_resolution_set_get(resolutions, 0, &representation_id, &resource_id,
                             &state, &candidate_count, &result_evidence_count,
                             &error) != PP_OK ||
-      state != PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATION) {
+      state != PP_RESOLUTION_ONLINE_AT_KNOWN_LOCATOR) {
     pp_resolution_set_release(resolutions);
     pp_project_release(project);
     pp_error_release(error);

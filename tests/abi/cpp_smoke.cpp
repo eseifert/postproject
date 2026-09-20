@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
     const auto persisted = reopened.resolveAsset(asset_id);
     if (persisted.size() != 1 ||
         persisted[0].state !=
-            postproject::ResolutionState::online_at_known_location) {
+            postproject::ResolutionState::online_at_known_locator) {
       return 12;
     }
 

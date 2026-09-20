@@ -1,4 +1,4 @@
-//! Core media identity and location value types.
+//! Core media identity and locator value types.
 
 use std::{
     collections::BTreeSet,
@@ -130,7 +130,7 @@ pub struct Asset {
 }
 
 impl Asset {
-    /// Creates an asset value. Paths belong to locations, not assets.
+    /// Creates an asset value. Paths belong to locators, not assets.
     #[must_use]
     pub fn new(
         id: AssetId,

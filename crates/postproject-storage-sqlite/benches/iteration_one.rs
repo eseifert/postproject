@@ -88,7 +88,7 @@ fn benchmark_resolver_scan(criterion: &mut Criterion) {
     let matching_bytes = vec![42_u8; 4_096];
     fs::write(&original, &matching_bytes).expect("write original media");
     let import = prepare_original_media(&original, None, None).expect("prepare original media");
-    fs::remove_file(&original).expect("remove known location");
+    fs::remove_file(&original).expect("remove known locator target");
 
     let root_path = directory.path().join("search-root");
     fs::create_dir(&root_path).expect("create resolver root");
