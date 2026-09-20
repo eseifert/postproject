@@ -21,7 +21,7 @@ Timestamps, tool identity, agent identity, and edge roles are optional and
 bounded. Metadata assertions carry activity parameters.
 
 SQLite schema version 2 stores activities and their edges. Creation and cycle
-validation occur inside the surrounding project transaction. Read APIs return
+validation occur inside the surrounding production transaction. Read APIs return
 deterministically ordered activities and support producing/consuming lookup plus
 transitive ancestor/descendant traversal.
 

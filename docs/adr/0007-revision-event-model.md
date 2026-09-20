@@ -14,7 +14,7 @@ Consumers pull deterministic pages of revisions and events. Events identify
 what changed so consumers can re-query current state; they are not serialized
 Rust values or SQL row diffs.
 
-Each revision stores a stable ID, a positive project-local sequence, the
+Each revision stores a stable ID, a positive production-local sequence, the
 transaction ID, commit time, an optional integrating-tool origin, and an
 optional bounded message. The origin names the application or process that
 performed the mutation; it is not an authenticated person or authorization
@@ -42,4 +42,4 @@ SQLite persists revisions and their semantic events in the same database
 transaction as the domain mutations. Empty transactions, rollbacks, and failed
 mutations do not advance the feed. Consumers should treat event payloads as an
 invalidation/re-query guide rather than as a replayable replacement for current
-project state.
+production state.
