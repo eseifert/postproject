@@ -10,7 +10,7 @@ static int uuid_is_zero(const pp_uuid_t *id) {
 }
 
 int main(int argc, char **argv) {
-  pp_project_t *project = NULL;
+  pp_production_t *production = NULL;
   pp_transaction_t *transaction = NULL;
   pp_error_t *error = NULL;
   pp_uuid_t id = {{0}};
@@ -33,15 +33,15 @@ int main(int argc, char **argv) {
     return 1;
   }
   pp_error_code_t status =
-      pp_project_create(argv[1], "C smoke test", &project, &error);
+      pp_production_create(argv[1], "C smoke test", &production, &error);
   if (status != PP_OK) {
     fprintf(stderr, "create failed (%u): %s\n", status,
             error != NULL ? pp_error_message(error) : "no details");
     pp_error_release(error);
     return 2;
   }
-  if (pp_project_id(project, &id, &error) != PP_OK || uuid_is_zero(&id)) {
-    pp_project_release(project);
+  if (pp_production_id(production, &id, &error) != PP_OK || uuid_is_zero(&id)) {
+    pp_production_release(production);
     pp_error_release(error);
     return 3;
   }
@@ -49,23 +49,23 @@ int main(int argc, char **argv) {
       snprintf(media_path, sizeof(media_path), "%s.media", argv[1]);
   if (media_path_length < 0 ||
       (size_t)media_path_length >= sizeof(media_path)) {
-    pp_project_release(project);
+    pp_production_release(production);
     return 6;
   }
   FILE *media = fopen(media_path, "wb");
   if (media == NULL) {
-    pp_project_release(project);
+    pp_production_release(production);
     return 7;
   }
   size_t written = fwrite("C ABI media", 1, 11, media);
   int close_status = fclose(media);
   if (written != 11 || close_status != 0) {
-    pp_project_release(project);
+    pp_production_release(production);
     return 7;
   }
-  status = pp_project_begin_transaction(project, &transaction, &error);
+  status = pp_production_begin_transaction(production, &transaction, &error);
   if (status != PP_OK || transaction == NULL) {
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 8;
   }
@@ -74,24 +74,24 @@ int main(int argc, char **argv) {
   if (status != PP_OK || uuid_is_zero(&rolled_back_asset_id) ||
       pp_transaction_rollback(transaction, &error) != PP_OK) {
     pp_transaction_release(transaction);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 9;
   }
   pp_transaction_release(transaction);
   transaction = NULL;
   uint8_t asset_exists = 1;
-  status = pp_project_asset_exists(project, &rolled_back_asset_id,
+  status = pp_production_asset_exists(production, &rolled_back_asset_id,
                                    &asset_exists, &error);
   if (status != PP_OK || asset_exists != UINT8_C(0)) {
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 10;
   }
 
-  status = pp_project_begin_transaction(project, &transaction, &error);
+  status = pp_production_begin_transaction(production, &transaction, &error);
   if (status != PP_OK || transaction == NULL) {
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 11;
   }
@@ -99,7 +99,7 @@ int main(int argc, char **argv) {
       transaction, "C smoke", "1.0", NULL, "Import fixture", &error);
   if (status != PP_OK) {
     pp_transaction_release(transaction);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 42;
   }
@@ -107,7 +107,7 @@ int main(int argc, char **argv) {
                                        &asset_id, &error);
   if (status != PP_OK || uuid_is_zero(&asset_id)) {
     pp_transaction_release(transaction);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 12;
   }
@@ -117,7 +117,7 @@ int main(int argc, char **argv) {
       &error);
   if (status != PP_OK) {
     pp_transaction_release(transaction);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 23;
   }
@@ -126,7 +126,7 @@ int main(int argc, char **argv) {
       "en-US", &error);
   if (status != PP_OK) {
     pp_transaction_release(transaction);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 26;
   }
@@ -134,22 +134,22 @@ int main(int argc, char **argv) {
                                          0, &root_id, &error);
   if (status != PP_OK || uuid_is_zero(&root_id)) {
     pp_transaction_release(transaction);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 13;
   }
   status = pp_transaction_commit(transaction, &error);
   if (status != PP_OK) {
     pp_transaction_release(transaction);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 14;
   }
   pp_transaction_release(transaction);
-  pp_project_release(project);
-  project = NULL;
+  pp_production_release(production);
+  production = NULL;
 
-  status = pp_project_open(argv[1], &project, &error);
+  status = pp_production_open(argv[1], &production, &error);
   if (status != PP_OK) {
     fprintf(stderr, "open failed (%u): %s\n", status,
             error != NULL ? pp_error_message(error) : "no details");
@@ -163,7 +163,7 @@ int main(int argc, char **argv) {
   const char *revision_origin_version = NULL;
   const char *revision_origin_uri = NULL;
   const char *revision_message = NULL;
-  status = pp_project_latest_revision(project, &revisions, &error);
+  status = pp_production_latest_revision(production, &revisions, &error);
   if (status != PP_OK || revisions == NULL ||
       pp_revision_set_count(revisions) != UINT64_C(1) ||
       pp_revision_set_get(
@@ -180,23 +180,23 @@ int main(int argc, char **argv) {
       revision_origin_uri != NULL ||
       strcmp(revision_message, "Import fixture") != 0) {
     pp_revision_set_release(revisions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 36;
   }
   pp_revision_set_release(revisions);
   revisions = NULL;
-  status = pp_project_changes_since(project, 0, 1, &revisions, &error);
+  status = pp_production_changes_since(production, 0, 1, &revisions, &error);
   if (status != PP_OK || revisions == NULL ||
       pp_revision_set_count(revisions) != UINT64_C(1)) {
     pp_revision_set_release(revisions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 37;
   }
   pp_revision_set_release(revisions);
   pp_revision_event_set_t *revision_events = NULL;
-  status = pp_project_revision_events(project, &revision_id, &revision_events,
+  status = pp_production_revision_events(production, &revision_id, &revision_events,
                                       &error);
   if (status != PP_OK || revision_events == NULL ||
       pp_revision_event_set_count(revision_events) != UINT64_C(8) ||
@@ -207,7 +207,7 @@ int main(int argc, char **argv) {
       memcmp(revision_event.asset_id.bytes, asset_id.bytes,
              sizeof(asset_id.bytes)) != 0) {
     pp_revision_event_set_release(revision_events);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 38;
   }
@@ -222,7 +222,7 @@ int main(int argc, char **argv) {
       strcmp(revision_event.identifier_value, "asset-42") != 0 ||
       strcmp(revision_event.identifier_qualifier, "primary") != 0) {
     pp_revision_event_set_release(revision_events);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 39;
   }
@@ -234,7 +234,7 @@ int main(int argc, char **argv) {
       strcmp(revision_event.vocabulary, "com.example.metadata") != 0 ||
       strcmp(revision_event.property, "title") != 0) {
     pp_revision_event_set_release(revision_events);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 40;
   }
@@ -245,20 +245,20 @@ int main(int argc, char **argv) {
       memcmp(revision_event.media_root_id.bytes, root_id.bytes,
              sizeof(root_id.bytes)) != 0) {
     pp_revision_event_set_release(revision_events);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 41;
   }
   pp_revision_event_set_release(revision_events);
   asset_exists = 0;
-  status = pp_project_asset_exists(project, &asset_id, &asset_exists, &error);
+  status = pp_production_asset_exists(production, &asset_id, &asset_exists, &error);
   if (status != PP_OK || asset_exists != UINT8_C(1)) {
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 15;
   }
   pp_external_identifier_set_t *identifiers = NULL;
-  status = pp_project_external_identifiers(project, &asset_ref, &identifiers,
+  status = pp_production_external_identifiers(production, &asset_ref, &identifiers,
                                            &error);
   const char *scheme = NULL;
   const char *external_value = NULL;
@@ -271,15 +271,15 @@ int main(int argc, char **argv) {
       strcmp(external_value, "asset-42") != 0 ||
       strcmp(qualifier, "primary") != 0) {
     pp_external_identifier_set_release(identifiers);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 24;
   }
   pp_external_identifier_set_release(identifiers);
   pp_object_ref_set_t *objects = NULL;
   pp_object_ref_t found_object = {0, {{0}}};
-  status = pp_project_find_by_external_identifier(
-      project, "com.example.asset", "asset-42", &objects, &error);
+  status = pp_production_find_by_external_identifier(
+      production, "com.example.asset", "asset-42", &objects, &error);
   if (status != PP_OK || objects == NULL ||
       pp_object_ref_set_count(objects) != UINT64_C(1) ||
       pp_object_ref_set_get(objects, 0, &found_object, &error) != PP_OK ||
@@ -287,14 +287,14 @@ int main(int argc, char **argv) {
       memcmp(found_object.id.bytes, asset_id.bytes, sizeof(asset_id.bytes)) !=
           0) {
     pp_object_ref_set_release(objects);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 25;
   }
   pp_object_ref_set_release(objects);
 
   pp_metadata_set_t *metadata = NULL;
-  status = pp_project_metadata(project, &asset_ref, &metadata, &error);
+  status = pp_production_metadata(production, &asset_ref, &metadata, &error);
   pp_object_ref_t metadata_target = {0, {{0}}};
   const char *vocabulary = NULL;
   const char *property = NULL;
@@ -314,18 +314,18 @@ int main(int argc, char **argv) {
       strcmp(metadata_text, "C title") != 0 ||
       strcmp(metadata_language, "en-US") != 0) {
     pp_metadata_set_release(metadata);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 27;
   }
   pp_metadata_set_release(metadata);
   metadata = NULL;
-  status = pp_project_find_metadata(project, "com.example.metadata", "title",
+  status = pp_production_find_metadata(production, "com.example.metadata", "title",
                                     &metadata, &error);
   if (status != PP_OK || metadata == NULL ||
       pp_metadata_set_count(metadata) != UINT64_C(1)) {
     pp_metadata_set_release(metadata);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 28;
   }
@@ -336,16 +336,16 @@ int main(int argc, char **argv) {
   if (moved_path_length < 0 ||
       (size_t)moved_path_length >= sizeof(moved_media_path) ||
       rename(media_path, moved_media_path) != 0) {
-    pp_project_release(project);
+    pp_production_release(production);
     return 16;
   }
 
   pp_resolution_set_t *resolutions = NULL;
-  status = pp_project_resolve_asset(project, &asset_id, &resolutions, &error);
+  status = pp_production_resolve_asset(production, &asset_id, &resolutions, &error);
   if (status != PP_OK || resolutions == NULL ||
       pp_resolution_set_representation_count(resolutions) != UINT64_C(1)) {
     pp_resolution_set_release(resolutions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 17;
   }
@@ -359,7 +359,7 @@ int main(int argc, char **argv) {
       resource_count != UINT64_C(1) || issue_count != 0 ||
       uuid_is_zero(&representation_id)) {
     pp_resolution_set_release(resolutions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 18;
   }
@@ -372,7 +372,7 @@ int main(int argc, char **argv) {
   if (status != PP_OK || state != PP_RESOURCE_RESOLVED_EXACT ||
       candidate_count != UINT64_C(1) || uuid_is_zero(&resource_id)) {
     pp_resolution_set_release(resolutions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 18;
   }
@@ -385,7 +385,7 @@ int main(int argc, char **argv) {
   if (status != PP_OK || candidate_uri == NULL ||
       confidence != UINT16_C(10000) || candidate_evidence_count == 0) {
     pp_resolution_set_release(resolutions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 19;
   }
@@ -395,29 +395,29 @@ int main(int argc, char **argv) {
       resolutions, 0, 0, 0, 0, &evidence_kind, &evidence_detail, &error);
   if (status != PP_OK || evidence_kind == 0) {
     pp_resolution_set_release(resolutions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 20;
   }
 
-  status = pp_project_begin_transaction(project, &transaction, &error);
+  status = pp_production_begin_transaction(production, &transaction, &error);
   if (status != PP_OK ||
       pp_transaction_confirm_locator(transaction, &resource_id, candidate_uri,
                                      &error) != PP_OK ||
       pp_transaction_commit(transaction, &error) != PP_OK) {
     pp_transaction_release(transaction);
     pp_resolution_set_release(resolutions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 21;
   }
   pp_transaction_release(transaction);
   transaction = NULL;
 
-  status = pp_project_begin_transaction(project, &transaction, &error);
+  status = pp_production_begin_transaction(production, &transaction, &error);
   if (status != PP_OK || transaction == NULL) {
     pp_resolution_set_release(resolutions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 29;
   }
@@ -439,7 +439,7 @@ int main(int argc, char **argv) {
       pp_transaction_commit(transaction, &error) != PP_OK) {
     pp_transaction_release(transaction);
     pp_resolution_set_release(resolutions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 30;
   }
@@ -447,7 +447,7 @@ int main(int argc, char **argv) {
   transaction = NULL;
 
   pp_activity_set_t *activities = NULL;
-  status = pp_project_activities(project, &activities, &error);
+  status = pp_production_activities(production, &activities, &error);
   pp_uuid_t read_activity_id = {{0}};
   const char *activity_kind = NULL;
   uint8_t has_started_at = 0;
@@ -470,7 +470,7 @@ int main(int argc, char **argv) {
       input_count != 0 || output_count != UINT64_C(1)) {
     pp_activity_set_release(activities);
     pp_resolution_set_release(resolutions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 31;
   }
@@ -504,30 +504,30 @@ int main(int argc, char **argv) {
       output_role == NULL || strcmp(output_role, "postproject:output.master") != 0) {
     pp_activity_set_release(activities);
     pp_resolution_set_release(resolutions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 32;
   }
   pp_activity_set_release(activities);
   activities = NULL;
-  status = pp_project_activities_producing(
-      project, &representation_id, &activities, &error);
+  status = pp_production_activities_producing(
+      production, &representation_id, &activities, &error);
   if (status != PP_OK || activities == NULL ||
       pp_activity_set_count(activities) != UINT64_C(1)) {
     pp_activity_set_release(activities);
     pp_resolution_set_release(resolutions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 33;
   }
   pp_activity_set_release(activities);
   pp_resolution_set_release(resolutions);
-  pp_project_release(project);
-  project = NULL;
+  pp_production_release(production);
+  production = NULL;
 
-  status = pp_project_open(argv[1], &project, &error);
+  status = pp_production_open(argv[1], &production, &error);
   if (status != PP_OK ||
-      pp_project_resolve_asset(project, &asset_id, &resolutions, &error) !=
+      pp_production_resolve_asset(production, &asset_id, &resolutions, &error) !=
           PP_OK ||
       pp_resolution_set_get_representation(
           resolutions, 0, &representation_id, &availability, &resource_count,
@@ -538,15 +538,15 @@ int main(int argc, char **argv) {
       availability != PP_AVAILABILITY_ONLINE ||
       state != PP_RESOURCE_ONLINE_AT_KNOWN_LOCATOR) {
     pp_resolution_set_release(resolutions);
-    pp_project_release(project);
+    pp_production_release(production);
     pp_error_release(error);
     return 22;
   }
   pp_resolution_set_release(resolutions);
-  pp_project_release(project);
-  project = NULL;
+  pp_production_release(production);
+  production = NULL;
 
-  status = pp_project_open(NULL, &project, &error);
+  status = pp_production_open(NULL, &production, &error);
   if (status != PP_ERROR_INVALID_ARGUMENT || error == NULL ||
       pp_error_code(error) != status || pp_error_message(error) == NULL) {
     pp_error_release(error);
@@ -554,7 +554,7 @@ int main(int argc, char **argv) {
   }
   pp_error_release(error);
   remove(moved_media_path);
-  pp_project_release(NULL);
+  pp_production_release(NULL);
   pp_transaction_release(NULL);
   return 0;
 }

@@ -15,13 +15,13 @@ int main(int argc, char **argv) {
     return 2;
   }
 
-  pp_project_t *project = NULL;
+  pp_production_t *production = NULL;
   pp_transaction_t *transaction = NULL;
   pp_error_t *error = NULL;
   pp_uuid_t asset_id = {{0}};
-  pp_error_code_t status = pp_project_open(argv[1], &project, &error);
+  pp_error_code_t status = pp_production_open(argv[1], &production, &error);
   if (status == PP_OK) {
-    status = pp_project_begin_transaction(project, &transaction, &error);
+    status = pp_production_begin_transaction(production, &transaction, &error);
   }
   if (status == PP_OK) {
     status = pp_transaction_import_media(transaction, argv[2], NULL, &asset_id,
@@ -39,6 +39,6 @@ int main(int argc, char **argv) {
   }
   pp_error_release(error);
   pp_transaction_release(transaction);
-  pp_project_release(project);
+  pp_production_release(production);
   return status == PP_OK ? 0 : 1;
 }
