@@ -92,6 +92,109 @@ class MetadataProperty:
 
 
 @dataclass(frozen=True, slots=True)
+class AssetImportedEvent:
+    asset_id: AssetId
+
+
+@dataclass(frozen=True, slots=True)
+class RepresentationAddedEvent:
+    asset_id: AssetId
+    representation_id: RepresentationId
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceAddedEvent:
+    resource_id: ResourceId
+
+
+@dataclass(frozen=True, slots=True)
+class RepresentationResourceAddedEvent:
+    representation_id: RepresentationId
+    resource_id: ResourceId
+    structural_position: int
+
+
+@dataclass(frozen=True, slots=True)
+class LocatorAddedEvent:
+    resource_id: ResourceId
+    locator_id: LocatorId
+
+
+@dataclass(frozen=True, slots=True)
+class MediaRootAddedEvent:
+    media_root_id: MediaRootId
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalIdentifierAddedEvent:
+    target: ObjectReference
+    identifier: ExternalIdentifier
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalIdentifierRemovedEvent:
+    target: ObjectReference
+    identifier: ExternalIdentifier
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataAddedOrReplacedEvent:
+    target: ObjectReference
+    property: MetadataProperty
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataRemovedEvent:
+    target: ObjectReference
+    property: MetadataProperty
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityCreatedEvent:
+    activity_id: ActivityId
+    kind: str
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityInputAddedEvent:
+    activity_id: ActivityId
+    representation_id: RepresentationId
+    role: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityOutputAddedEvent:
+    activity_id: ActivityId
+    representation_id: RepresentationId
+    role: str | None = None
+
+
+RevisionEventPayload: TypeAlias = (
+    AssetImportedEvent
+    | RepresentationAddedEvent
+    | ResourceAddedEvent
+    | RepresentationResourceAddedEvent
+    | LocatorAddedEvent
+    | MediaRootAddedEvent
+    | ExternalIdentifierAddedEvent
+    | ExternalIdentifierRemovedEvent
+    | MetadataAddedOrReplacedEvent
+    | MetadataRemovedEvent
+    | ActivityCreatedEvent
+    | ActivityInputAddedEvent
+    | ActivityOutputAddedEvent
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RevisionEvent:
+    """One ordered semantic event within a revision."""
+
+    position: int
+    payload: RevisionEventPayload
+
+
+@dataclass(frozen=True, slots=True)
 class OriginIdentity:
     """Integrating application or process identity, not an authenticated user."""
 
