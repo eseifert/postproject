@@ -4,7 +4,7 @@ use postproject_core::{
     Activity, ContentStructure, ContentStructureKind, Error, ErrorKind, ExternalIdentifier,
     Locator, LocatorAvailability, MediaRoot, MetadataProperty, MetadataValue, ObjectRef,
     OriginalMediaImport, Project, ProjectStoreTransaction, Resource, Result, RevisionContext,
-    TransactionId, TransactionLifecycle, TransactionState,
+    RevisionEventKind, TransactionId, TransactionLifecycle, TransactionState,
 };
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 
@@ -21,6 +21,7 @@ pub struct SqliteTransaction<'project> {
     project: &'project mut Project,
     pending_roots: Vec<MediaRoot>,
     revision_context: RevisionContext,
+    pending_events: Vec<RevisionEventKind>,
 }
 
 impl<'project> SqliteTransaction<'project> {
@@ -37,6 +38,7 @@ impl<'project> SqliteTransaction<'project> {
             project,
             pending_roots: Vec::new(),
             revision_context: RevisionContext::default(),
+            pending_events: Vec::new(),
         })
     }
 
@@ -125,6 +127,52 @@ impl<'project> SqliteTransaction<'project> {
         for locator in import.locators() {
             persist_locator(transaction, locator)?;
         }
+        self.pending_events.push(RevisionEventKind::AssetImported {
+            asset_id: asset.id(),
+        });
+        self.pending_events
+            .push(RevisionEventKind::RepresentationAdded {
+                asset_id: asset.id(),
+                representation_id: representation.id(),
+            });
+        self.pending_events
+            .extend(
+                import
+                    .resources()
+                    .iter()
+                    .map(|resource| RevisionEventKind::ResourceAdded {
+                        resource_id: resource.id(),
+                    }),
+            );
+        for (position, resource_id) in representation
+            .content_structure()
+            .resource_ids()
+            .into_iter()
+            .enumerate()
+        {
+            let position = u32::try_from(position).map_err(|error| {
+                Error::new(
+                    ErrorKind::Unsupported,
+                    format!("content member position cannot be journaled: {error}"),
+                )
+            })?;
+            self.pending_events
+                .push(RevisionEventKind::RepresentationResourceAdded {
+                    representation_id: representation.id(),
+                    resource_id,
+                    position,
+                });
+        }
+        self.pending_events
+            .extend(
+                import
+                    .locators()
+                    .iter()
+                    .map(|locator| RevisionEventKind::LocatorAdded {
+                        resource_id: locator.resource_id(),
+                        locator_id: locator.id(),
+                    }),
+            );
         Ok(())
     }
 
@@ -136,7 +184,12 @@ impl<'project> SqliteTransaction<'project> {
     /// [`ErrorKind::AlreadyExists`] for a duplicate locator or missing owning
     /// resource, or [`ErrorKind::Storage`] for other persistence failures.
     pub fn add_locator(&mut self, locator: &Locator) -> Result<()> {
-        persist_locator(self.open_transaction()?, locator)
+        persist_locator(self.open_transaction()?, locator)?;
+        self.pending_events.push(RevisionEventKind::LocatorAdded {
+            resource_id: locator.resource_id(),
+            locator_id: locator.id(),
+        });
+        Ok(())
     }
 
     /// Stages a configured media root.
@@ -147,6 +200,7 @@ impl<'project> SqliteTransaction<'project> {
     /// [`ErrorKind::AlreadyExists`] for a duplicate identity or URI, or
     /// [`ErrorKind::Storage`] for other persistence failures.
     pub fn add_media_root(&mut self, root: MediaRoot) -> Result<()> {
+        let media_root_id = root.id();
         let transaction = self.open_transaction()?;
         transaction
             .execute(
@@ -162,6 +216,8 @@ impl<'project> SqliteTransaction<'project> {
             )
             .map_err(mutation_error("persist media root"))?;
         self.pending_roots.push(root);
+        self.pending_events
+            .push(RevisionEventKind::MediaRootAdded { media_root_id });
         Ok(())
     }
 
@@ -199,8 +255,13 @@ impl<'project> SqliteTransaction<'project> {
                     identifier.qualifier(),
                 ],
             )
-            .map(|_| ())
-            .map_err(mutation_error("persist external identifier"))
+            .map_err(mutation_error("persist external identifier"))?;
+        self.pending_events
+            .push(RevisionEventKind::ExternalIdentifierAdded {
+                target,
+                identifier: identifier.clone(),
+            });
+        Ok(())
     }
 
     /// Stages removal of an exact external identifier attachment.
@@ -237,6 +298,11 @@ impl<'project> SqliteTransaction<'project> {
                 "external identifier attachment does not exist",
             ));
         }
+        self.pending_events
+            .push(RevisionEventKind::ExternalIdentifierRemoved {
+                target,
+                identifier: identifier.clone(),
+            });
         Ok(())
     }
 
@@ -264,7 +330,13 @@ impl<'project> SqliteTransaction<'project> {
             property,
             position,
             &encoded,
-        )
+        )?;
+        self.pending_events
+            .push(RevisionEventKind::MetadataAddedOrReplaced {
+                target,
+                property: property.clone(),
+            });
+        Ok(())
     }
 
     /// Replaces all ordered values of a metadata property atomically.
@@ -288,7 +360,7 @@ impl<'project> SqliteTransaction<'project> {
         let (target_kind, target_id) = encode_metadata_target(&target)?;
         let transaction = self.open_transaction()?;
         ensure_metadata_target_exists(transaction, target_kind, target_id)?;
-        delete_metadata_property(transaction, target_kind, target_id, property)?;
+        let removed = delete_metadata_property(transaction, target_kind, target_id, property)?;
         for (position, value) in encoded.iter().enumerate() {
             let position = i64::try_from(position).map_err(|error| {
                 Error::new(
@@ -304,6 +376,21 @@ impl<'project> SqliteTransaction<'project> {
                 position,
                 value,
             )?;
+        }
+        if values.is_empty() {
+            if removed > 0 {
+                self.pending_events
+                    .push(RevisionEventKind::MetadataRemoved {
+                        target,
+                        property: property.clone(),
+                    });
+            }
+        } else {
+            self.pending_events
+                .push(RevisionEventKind::MetadataAddedOrReplaced {
+                    target,
+                    property: property.clone(),
+                });
         }
         Ok(())
     }
@@ -329,6 +416,11 @@ impl<'project> SqliteTransaction<'project> {
                 "metadata property does not exist on target",
             ));
         }
+        self.pending_events
+            .push(RevisionEventKind::MetadataRemoved {
+                target,
+                property: property.clone(),
+            });
         Ok(())
     }
 
@@ -415,6 +507,30 @@ impl<'project> SqliteTransaction<'project> {
                 "activity would create a provenance cycle",
             ));
         }
+        self.pending_events
+            .push(RevisionEventKind::ActivityCreated {
+                activity_id: activity.id(),
+                kind: activity.kind().clone(),
+            });
+        self.pending_events
+            .extend(
+                activity
+                    .inputs()
+                    .iter()
+                    .map(|input| RevisionEventKind::ActivityInputAdded {
+                        activity_id: activity.id(),
+                        representation_id: input.representation_id(),
+                        role: input.role().cloned(),
+                    }),
+            );
+        self.pending_events
+            .extend(activity.outputs().iter().map(|output| {
+                RevisionEventKind::ActivityOutputAdded {
+                    activity_id: activity.id(),
+                    representation_id: output.representation_id(),
+                    role: output.role().cloned(),
+                }
+            }));
         Ok(())
     }
 
@@ -452,6 +568,7 @@ impl<'project> SqliteTransaction<'project> {
             .map_err(sqlite_error("roll back domain transaction"))?;
         self.lifecycle.mark_rolled_back()?;
         self.pending_roots.clear();
+        self.pending_events.clear();
         Ok(())
     }
 
