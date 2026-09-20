@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-typedef struct pp_project pp_project_t;
+typedef struct pp_production pp_production_t;
 typedef struct pp_transaction pp_transaction_t;
 typedef struct pp_resolution_set pp_resolution_set_t;
 typedef struct pp_external_identifier_set pp_external_identifier_set_t;
@@ -37,7 +37,7 @@ typedef struct pp_uuid {
 
 typedef uint32_t pp_object_kind_t;
 
-#define PP_OBJECT_PROJECT UINT32_C(1)
+#define PP_OBJECT_PRODUCTION UINT32_C(1)
 #define PP_OBJECT_ASSET UINT32_C(2)
 #define PP_OBJECT_REPRESENTATION UINT32_C(3)
 #define PP_OBJECT_RESOURCE UINT32_C(4)
@@ -160,29 +160,29 @@ typedef uint32_t pp_evidence_kind_t;
 #define PP_EVIDENCE_DISCOVERY_ERROR UINT32_C(10)
 
 /* Inputs are borrowed UTF-8 without embedded NUL. A NULL display name is
- * absent. On success, *out_project is caller-owned and *out_error is NULL. On
- * failure, *out_project is NULL and a non-NULL *out_error is caller-owned.
+ * absent. On success, *out_production is caller-owned and *out_error is NULL. On
+ * failure, *out_production is NULL and a non-NULL *out_error is caller-owned.
  * out_error may itself be NULL when diagnostic text is not required. */
 PP_API uint32_t pp_abi_version(void);
-PP_API pp_error_code_t pp_project_create(const char *path,
+PP_API pp_error_code_t pp_production_create(const char *path,
                                          const char *display_name,
-                                         pp_project_t **out_project,
+                                         pp_production_t **out_production,
                                          pp_error_t **out_error);
-PP_API pp_error_code_t pp_project_open(const char *path,
-                                       pp_project_t **out_project,
+PP_API pp_error_code_t pp_production_open(const char *path,
+                                       pp_production_t **out_production,
                                        pp_error_t **out_error);
-PP_API pp_error_code_t pp_project_id(const pp_project_t *project,
+PP_API pp_error_code_t pp_production_id(const pp_production_t *production,
                                      pp_uuid_t *out_id, pp_error_t **out_error);
-PP_API pp_error_code_t pp_project_asset_exists(const pp_project_t *project,
+PP_API pp_error_code_t pp_production_asset_exists(const pp_production_t *production,
                                                const pp_uuid_t *asset_id,
                                                uint8_t *out_exists,
                                                pp_error_t **out_error);
 /* Result strings are borrowed until the owning result set is released. */
-PP_API pp_error_code_t pp_project_external_identifiers(
-    const pp_project_t *project, const pp_object_ref_t *target,
+PP_API pp_error_code_t pp_production_external_identifiers(
+    const pp_production_t *production, const pp_object_ref_t *target,
     pp_external_identifier_set_t **out_identifiers, pp_error_t **out_error);
-PP_API pp_error_code_t pp_project_find_by_external_identifier(
-    const pp_project_t *project, const char *scheme, const char *value,
+PP_API pp_error_code_t pp_production_find_by_external_identifier(
+    const pp_production_t *production, const char *scheme, const char *value,
     pp_object_ref_set_t **out_objects, pp_error_t **out_error);
 PP_API uint64_t pp_external_identifier_set_count(
     const pp_external_identifier_set_t *identifiers);
@@ -200,11 +200,11 @@ PP_API pp_error_code_t pp_object_ref_set_get(
 PP_API void pp_object_ref_set_release(pp_object_ref_set_t *objects);
 /* Metadata result sets own every returned string and recursively typed value.
  * All pointers borrowed from a set become invalid when that set is released. */
-PP_API pp_error_code_t pp_project_metadata(
-    const pp_project_t *project, const pp_object_ref_t *target,
+PP_API pp_error_code_t pp_production_metadata(
+    const pp_production_t *production, const pp_object_ref_t *target,
     pp_metadata_set_t **out_metadata, pp_error_t **out_error);
-PP_API pp_error_code_t pp_project_find_metadata(
-    const pp_project_t *project, const char *vocabulary, const char *property,
+PP_API pp_error_code_t pp_production_find_metadata(
+    const pp_production_t *production, const char *vocabulary, const char *property,
     pp_metadata_set_t **out_metadata, pp_error_t **out_error);
 PP_API uint64_t pp_metadata_set_count(const pp_metadata_set_t *metadata);
 PP_API pp_error_code_t pp_metadata_set_get(
@@ -258,20 +258,20 @@ PP_API pp_error_code_t pp_metadata_value_get_reference(
     pp_error_t **out_error);
 /* Activity strings are borrowed until pp_activity_set_release(). Optional
  * timestamps use explicit presence flags and zero values when absent. */
-PP_API pp_error_code_t pp_project_activities(
-    const pp_project_t *project, pp_activity_set_t **out_activities,
+PP_API pp_error_code_t pp_production_activities(
+    const pp_production_t *production, pp_activity_set_t **out_activities,
     pp_error_t **out_error);
-PP_API pp_error_code_t pp_project_activities_producing(
-    const pp_project_t *project, const pp_uuid_t *representation_id,
+PP_API pp_error_code_t pp_production_activities_producing(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
     pp_activity_set_t **out_activities, pp_error_t **out_error);
-PP_API pp_error_code_t pp_project_activities_consuming(
-    const pp_project_t *project, const pp_uuid_t *representation_id,
+PP_API pp_error_code_t pp_production_activities_consuming(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
     pp_activity_set_t **out_activities, pp_error_t **out_error);
-PP_API pp_error_code_t pp_project_provenance_ancestors(
-    const pp_project_t *project, const pp_uuid_t *representation_id,
+PP_API pp_error_code_t pp_production_provenance_ancestors(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
     pp_object_ref_set_t **out_representations, pp_error_t **out_error);
-PP_API pp_error_code_t pp_project_provenance_descendants(
-    const pp_project_t *project, const pp_uuid_t *representation_id,
+PP_API pp_error_code_t pp_production_provenance_descendants(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
     pp_object_ref_set_t **out_representations, pp_error_t **out_error);
 PP_API uint64_t pp_activity_set_count(const pp_activity_set_t *activities);
 PP_API pp_error_code_t pp_activity_set_get(
@@ -298,11 +298,11 @@ PP_API pp_error_code_t pp_activity_set_get_output(
 PP_API void pp_activity_set_release(pp_activity_set_t *activities);
 /* Revision strings are borrowed until pp_revision_set_release(). Latest
  * returns a set containing zero or one revision. */
-PP_API pp_error_code_t pp_project_latest_revision(
-    const pp_project_t *project, pp_revision_set_t **out_revisions,
+PP_API pp_error_code_t pp_production_latest_revision(
+    const pp_production_t *production, pp_revision_set_t **out_revisions,
     pp_error_t **out_error);
-PP_API pp_error_code_t pp_project_changes_since(
-    const pp_project_t *project, uint64_t sequence, uint32_t limit,
+PP_API pp_error_code_t pp_production_changes_since(
+    const pp_production_t *production, uint64_t sequence, uint32_t limit,
     pp_revision_set_t **out_revisions, pp_error_t **out_error);
 PP_API uint64_t pp_revision_set_count(const pp_revision_set_t *revisions);
 PP_API pp_error_code_t pp_revision_set_get(
@@ -312,8 +312,8 @@ PP_API pp_error_code_t pp_revision_set_get(
     const char **out_origin_version, const char **out_origin_uri,
     const char **out_message, pp_error_t **out_error);
 PP_API void pp_revision_set_release(pp_revision_set_t *revisions);
-PP_API pp_error_code_t pp_project_revision_events(
-    const pp_project_t *project, const pp_uuid_t *revision_id,
+PP_API pp_error_code_t pp_production_revision_events(
+    const pp_production_t *production, const pp_uuid_t *revision_id,
     pp_revision_event_set_t **out_events, pp_error_t **out_error);
 PP_API uint64_t
 pp_revision_event_set_count(const pp_revision_event_set_t *events);
@@ -323,8 +323,8 @@ PP_API pp_error_code_t pp_revision_event_set_get(
 PP_API void pp_revision_event_set_release(pp_revision_event_set_t *events);
 /* Resolution is read-only. Borrowed candidate URI and evidence-detail strings
  * remain valid until pp_resolution_set_release(). */
-PP_API pp_error_code_t pp_project_resolve_asset(
-    const pp_project_t *project, const pp_uuid_t *asset_id,
+PP_API pp_error_code_t pp_production_resolve_asset(
+    const pp_production_t *production, const pp_uuid_t *asset_id,
     pp_resolution_set_t **out_resolutions, pp_error_t **out_error);
 PP_API uint64_t pp_resolution_set_representation_count(
     const pp_resolution_set_t *resolutions);
@@ -365,12 +365,12 @@ PP_API pp_error_code_t pp_resolution_set_get_candidate_evidence(
     uint64_t evidence_index, pp_evidence_kind_t *out_kind,
     const char **out_detail, pp_error_t **out_error);
 PP_API void pp_resolution_set_release(pp_resolution_set_t *resolutions);
-/* Only one transaction may be open for a project state. The transaction keeps
- * that state alive independently of the project handle. */
-PP_API pp_error_code_t pp_project_begin_transaction(
-    pp_project_t *project, pp_transaction_t **out_transaction,
+/* Only one transaction may be open for a production state. The transaction keeps
+ * that state alive independently of the production handle. */
+PP_API pp_error_code_t pp_production_begin_transaction(
+    pp_production_t *production, pp_transaction_t **out_transaction,
     pp_error_t **out_error);
-PP_API void pp_project_release(pp_project_t *project);
+PP_API void pp_production_release(pp_production_t *production);
 
 /* Mutations remain in memory until commit. Input strings are borrowed UTF-8
  * without embedded NUL. Nullable names/labels represent absent values. */
