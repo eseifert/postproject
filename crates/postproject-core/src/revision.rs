@@ -58,6 +58,38 @@ pub struct Revision {
     message: Option<String>,
 }
 
+/// Optional origin and message applied to one transaction's revision.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RevisionContext {
+    origin: Option<OriginIdentity>,
+    message: Option<String>,
+}
+
+impl RevisionContext {
+    /// Creates validated context for a future committed revision.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] for an empty, oversized, or
+    /// NUL-containing message.
+    pub fn new(origin: Option<OriginIdentity>, message: Option<String>) -> Result<Self> {
+        validate_revision_message(message.as_deref())?;
+        Ok(Self { origin, message })
+    }
+
+    /// Returns the optional integrating application/process identity.
+    #[must_use]
+    pub const fn origin(&self) -> Option<&OriginIdentity> {
+        self.origin.as_ref()
+    }
+
+    /// Returns the optional human-facing revision message.
+    #[must_use]
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
+    }
+}
+
 /// One semantic mutation recorded in a durable revision.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -214,18 +246,7 @@ impl Revision {
                 "revision sequence must be greater than zero",
             ));
         }
-        if message.as_deref().is_some_and(|message| {
-            message.is_empty()
-                || message.len() > MAX_REVISION_MESSAGE_BYTES
-                || message.contains('\0')
-        }) {
-            return Err(Error::new(
-                ErrorKind::InvalidArgument,
-                format!(
-                    "revision message must contain 1-{MAX_REVISION_MESSAGE_BYTES} UTF-8 bytes without NUL"
-                ),
-            ));
-        }
+        validate_revision_message(message.as_deref())?;
         Ok(Self {
             id,
             sequence,
@@ -271,6 +292,20 @@ impl Revision {
     pub fn message(&self) -> Option<&str> {
         self.message.as_deref()
     }
+}
+
+fn validate_revision_message(message: Option<&str>) -> Result<()> {
+    if message.is_some_and(|message| {
+        message.is_empty() || message.len() > MAX_REVISION_MESSAGE_BYTES || message.contains('\0')
+    }) {
+        return Err(Error::new(
+            ErrorKind::InvalidArgument,
+            format!(
+                "revision message must contain 1-{MAX_REVISION_MESSAGE_BYTES} UTF-8 bytes without NUL"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

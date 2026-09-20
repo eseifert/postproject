@@ -4,7 +4,7 @@ use crate::{
     Activity, Asset, AssetId, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot,
     MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
     OriginalMediaImport, Project, Representation, RepresentationId, Resource, ResourceId, Result,
-    TransactionId, TransactionState,
+    RevisionContext, TransactionId, TransactionState,
 };
 
 /// Read operations required from a project persistence backend.
@@ -143,6 +143,13 @@ pub trait ProjectStoreTransaction {
 
     /// Returns the current lifecycle state.
     fn state(&self) -> TransactionState;
+
+    /// Sets the origin and message for the revision created on commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is already closed.
+    fn set_revision_context(&mut self, context: RevisionContext) -> Result<()>;
 
     /// Stages one prepared original-media aggregate atomically.
     ///

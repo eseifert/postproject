@@ -3,8 +3,8 @@
 use postproject_core::{
     Activity, ContentStructure, ContentStructureKind, Error, ErrorKind, ExternalIdentifier,
     Locator, LocatorAvailability, MediaRoot, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, Project, ProjectStoreTransaction, Resource, Result, TransactionId,
-    TransactionLifecycle, TransactionState,
+    OriginalMediaImport, Project, ProjectStoreTransaction, Resource, Result, RevisionContext,
+    TransactionId, TransactionLifecycle, TransactionState,
 };
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 
@@ -20,6 +20,7 @@ pub struct SqliteTransaction<'project> {
     lifecycle: TransactionLifecycle,
     project: &'project mut Project,
     pending_roots: Vec<MediaRoot>,
+    revision_context: RevisionContext,
 }
 
 impl<'project> SqliteTransaction<'project> {
@@ -35,6 +36,7 @@ impl<'project> SqliteTransaction<'project> {
             lifecycle: TransactionLifecycle::new(),
             project,
             pending_roots: Vec::new(),
+            revision_context: RevisionContext::default(),
         })
     }
 
@@ -48,6 +50,17 @@ impl<'project> SqliteTransaction<'project> {
     #[must_use]
     pub const fn state(&self) -> TransactionState {
         self.lifecycle.state()
+    }
+
+    /// Sets the origin and message for the revision created on commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Conflict`] if the transaction is closed.
+    pub fn set_revision_context(&mut self, context: RevisionContext) -> Result<()> {
+        self.lifecycle.ensure_open()?;
+        self.revision_context = context;
+        Ok(())
     }
 
     /// Stages a prepared original-media import atomically.
@@ -469,6 +482,10 @@ impl ProjectStoreTransaction for SqliteTransaction<'_> {
 
     fn state(&self) -> TransactionState {
         SqliteTransaction::state(self)
+    }
+
+    fn set_revision_context(&mut self, context: RevisionContext) -> Result<()> {
+        SqliteTransaction::set_revision_context(self, context)
     }
 
     fn import_original(&mut self, import: &OriginalMediaImport) -> Result<()> {
