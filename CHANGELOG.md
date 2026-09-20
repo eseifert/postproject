@@ -13,6 +13,8 @@ All notable changes to PostProject will be documented here. The project uses
 - Advanced the development version to `0.2.0-alpha.1` for the standards-aware
   domain-model work. Pre-1.0 API, ABI, schema, CLI, and binding compatibility is
   not promised.
+- Replaced the flat native media-resolution result with ABI version 5's nested
+  representation availability, resource results, and availability issues.
 
 ### Added
 

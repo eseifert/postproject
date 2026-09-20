@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 2 is pre-release and may change during the 0.x series, with every
+ABI version 5 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
@@ -60,17 +60,20 @@ embedded NUL bytes are rejected before calling C.
 ## Resolution results
 
 `pp_project_resolve_asset` returns an immutable opaque set containing one result
-per representation. Fixed-width state and evidence values are read through
-index-checked accessors. Candidate URI and optional evidence-detail strings are
-borrowed from the result set and remain valid until
-`pp_resolution_set_release`. The C++ wrapper copies these into `Resolution`,
+per representation. Each representation reports aggregate availability,
+ordered resource results, and availability issues such as offline required
+resources or missing sequence frames. Fixed-width states, issue kinds, frames,
+candidates, and evidence are read through index-checked accessors. Candidate URI
+and optional evidence-detail strings are borrowed from the result set and remain
+valid until `pp_resolution_set_release`. The C++ wrapper copies these into
+`RepresentationResolution`, `ResourceResolution`, `AvailabilityIssue`,
 `ResolutionCandidate`, and `Evidence` values, so their lifetime is independent
 of the C handle.
 
 Resolution never mutates a project. A caller explicitly stages a selected
 candidate using `pp_transaction_confirm_locator`, and only transaction commit
 makes that location durable. The caller is responsible for passing a URI from
-the result it reviewed; the API validates the URI and representation identity at
+the result it reviewed; the API validates the URI and resource identity at
 persistence time but does not silently choose a candidate.
 
 ## External identifiers

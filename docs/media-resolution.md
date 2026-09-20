@@ -47,5 +47,7 @@ filesystem index can replace discovery without changing result semantics.
 
 Rust callers receive `ResourceResolution` values and aggregate them into a
 `RepresentationResolution`. The CLI emits one representation result containing
-ordered resource results and availability issues. Native confirmation remains a
-separate explicit transaction operation.
+ordered resource results and availability issues. The C ABI exposes the same
+nested shape through index-checked accessors, and the C++ wrapper copies it into
+owned `RepresentationResolution` values. Native confirmation remains a separate
+explicit transaction operation.

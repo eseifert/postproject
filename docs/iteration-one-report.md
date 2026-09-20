@@ -67,7 +67,7 @@ performance gates; full intervals and methodology are in `docs/benchmarks.md`.
   are not collision-proof or a substitute for an on-demand full verification.
 - SQLite is the only backend. The new domain-shaped storage contracts permit
   another backend without making SQL part of the core API.
-- Native handles require externally serialized access. ABI version 1 remains a
+- Native handles require externally serialized access. The ABI remains a
   pre-release 0.x contract and may evolve with explicit changelog and symbol
   review.
 - CI artifacts are unsigned build outputs. A tagged release still requires the
