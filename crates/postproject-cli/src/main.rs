@@ -13,7 +13,8 @@ use postproject_core::{
     MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, ProjectId, PropertyId,
     Representation, RepresentationAvailability, RepresentationId, RepresentationKind,
     RepresentationResolution, ResolutionEvidence, Resource, ResourceId, ResourceResolution,
-    ResourceResolutionState, Revision, Timestamp, ToolIdentity, VocabularyId,
+    ResourceResolutionState, Revision, RevisionEvent, RevisionEventKind, RevisionId, Timestamp,
+    ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
@@ -318,6 +319,8 @@ enum RevisionsCommand {
     Latest(ProjectArgs),
     /// List revisions after a project-local sequence cursor.
     Since(RevisionsSinceArgs),
+    /// List the ordered semantic events belonging to one revision.
+    Events(RevisionEventsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -329,6 +332,12 @@ struct RevisionsSinceArgs {
     /// Maximum number of revisions to return.
     #[arg(long, default_value_t = 100)]
     limit: u32,
+}
+
+#[derive(Debug, Args)]
+struct RevisionEventsArgs {
+    project: PathBuf,
+    revision_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -585,6 +594,80 @@ struct RevisionOriginView {
 }
 
 #[derive(Debug, Serialize)]
+struct RevisionEventView {
+    revision_id: String,
+    position: u32,
+    #[serde(flatten)]
+    event: RevisionEventKindView,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum RevisionEventKindView {
+    AssetImported {
+        asset_id: String,
+    },
+    RepresentationAdded {
+        asset_id: String,
+        representation_id: String,
+    },
+    ResourceAdded {
+        resource_id: String,
+    },
+    RepresentationResourceAdded {
+        representation_id: String,
+        resource_id: String,
+        structural_position: u32,
+    },
+    LocatorAdded {
+        resource_id: String,
+        locator_id: String,
+    },
+    MediaRootAdded {
+        media_root_id: String,
+    },
+    ExternalIdentifierAdded {
+        target: ObjectRefView,
+        identifier: RevisionIdentifierView,
+    },
+    ExternalIdentifierRemoved {
+        target: ObjectRefView,
+        identifier: RevisionIdentifierView,
+    },
+    MetadataAddedOrReplaced {
+        target: ObjectRefView,
+        vocabulary: String,
+        property: String,
+    },
+    MetadataRemoved {
+        target: ObjectRefView,
+        vocabulary: String,
+        property: String,
+    },
+    ActivityCreated {
+        activity_id: String,
+        activity_kind: String,
+    },
+    ActivityInputAdded {
+        activity_id: String,
+        representation_id: String,
+        role: Option<String>,
+    },
+    ActivityOutputAdded {
+        activity_id: String,
+        representation_id: String,
+        role: Option<String>,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct RevisionIdentifierView {
+    scheme: String,
+    value: String,
+    qualifier: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct RepresentationRefView {
     representation_id: String,
 }
@@ -654,6 +737,7 @@ fn execute(cli: Cli) -> Result<()> {
         Command::Revisions(args) => match args.command {
             RevisionsCommand::Latest(args) => revisions_latest(&args, cli.json),
             RevisionsCommand::Since(args) => revisions_since(&args, cli.json),
+            RevisionsCommand::Events(args) => revisions_events(&args, cli.json),
         },
     }
 }
@@ -1178,6 +1262,27 @@ fn revisions_since(args: &RevisionsSinceArgs, json: bool) -> Result<()> {
     }
 }
 
+fn revisions_events(args: &RevisionEventsArgs, json: bool) -> Result<()> {
+    let revision_id = RevisionId::from_str(&args.revision_id).context("parse revision ID")?;
+    let project = SqliteProject::open(&args.project).context("open project")?;
+    let events = project
+        .events_for_revision(revision_id)
+        .context("load revision events")?;
+    let views = events
+        .iter()
+        .map(revision_event_view)
+        .collect::<Result<Vec<_>>>()?;
+    if json {
+        print_json(&views)
+    } else {
+        for event in &views {
+            let payload = serde_json::to_string(&event.event).context("format revision event")?;
+            println!("{}\t{payload}", event.position);
+        }
+        Ok(())
+    }
+}
+
 fn revision_view(revision: &Revision) -> RevisionView {
     RevisionView {
         id: revision.id().to_string(),
@@ -1200,6 +1305,113 @@ fn print_revision(revision: &RevisionView) {
         revision.id,
         revision.message.as_deref().unwrap_or("")
     );
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the complete semantic event catalog is clearest as one exhaustive mapping"
+)]
+fn revision_event_view(event: &RevisionEvent) -> Result<RevisionEventView> {
+    let kind = match event.kind() {
+        RevisionEventKind::AssetImported { asset_id } => RevisionEventKindView::AssetImported {
+            asset_id: asset_id.to_string(),
+        },
+        RevisionEventKind::RepresentationAdded {
+            asset_id,
+            representation_id,
+        } => RevisionEventKindView::RepresentationAdded {
+            asset_id: asset_id.to_string(),
+            representation_id: representation_id.to_string(),
+        },
+        RevisionEventKind::ResourceAdded { resource_id } => RevisionEventKindView::ResourceAdded {
+            resource_id: resource_id.to_string(),
+        },
+        RevisionEventKind::RepresentationResourceAdded {
+            representation_id,
+            resource_id,
+            position,
+        } => RevisionEventKindView::RepresentationResourceAdded {
+            representation_id: representation_id.to_string(),
+            resource_id: resource_id.to_string(),
+            structural_position: *position,
+        },
+        RevisionEventKind::LocatorAdded {
+            resource_id,
+            locator_id,
+        } => RevisionEventKindView::LocatorAdded {
+            resource_id: resource_id.to_string(),
+            locator_id: locator_id.to_string(),
+        },
+        RevisionEventKind::MediaRootAdded { media_root_id } => {
+            RevisionEventKindView::MediaRootAdded {
+                media_root_id: media_root_id.to_string(),
+            }
+        }
+        RevisionEventKind::ExternalIdentifierAdded { target, identifier } => {
+            RevisionEventKindView::ExternalIdentifierAdded {
+                target: object_ref_view(*target)?,
+                identifier: revision_identifier_view(identifier),
+            }
+        }
+        RevisionEventKind::ExternalIdentifierRemoved { target, identifier } => {
+            RevisionEventKindView::ExternalIdentifierRemoved {
+                target: object_ref_view(*target)?,
+                identifier: revision_identifier_view(identifier),
+            }
+        }
+        RevisionEventKind::MetadataAddedOrReplaced { target, property } => {
+            RevisionEventKindView::MetadataAddedOrReplaced {
+                target: object_ref_view(*target)?,
+                vocabulary: property.vocabulary().as_str().to_owned(),
+                property: property.property().as_str().to_owned(),
+            }
+        }
+        RevisionEventKind::MetadataRemoved { target, property } => {
+            RevisionEventKindView::MetadataRemoved {
+                target: object_ref_view(*target)?,
+                vocabulary: property.vocabulary().as_str().to_owned(),
+                property: property.property().as_str().to_owned(),
+            }
+        }
+        RevisionEventKind::ActivityCreated { activity_id, kind } => {
+            RevisionEventKindView::ActivityCreated {
+                activity_id: activity_id.to_string(),
+                activity_kind: kind.as_str().to_owned(),
+            }
+        }
+        RevisionEventKind::ActivityInputAdded {
+            activity_id,
+            representation_id,
+            role,
+        } => RevisionEventKindView::ActivityInputAdded {
+            activity_id: activity_id.to_string(),
+            representation_id: representation_id.to_string(),
+            role: role.as_ref().map(|role| role.as_str().to_owned()),
+        },
+        RevisionEventKind::ActivityOutputAdded {
+            activity_id,
+            representation_id,
+            role,
+        } => RevisionEventKindView::ActivityOutputAdded {
+            activity_id: activity_id.to_string(),
+            representation_id: representation_id.to_string(),
+            role: role.as_ref().map(|role| role.as_str().to_owned()),
+        },
+        _ => bail!("revision event kind is not supported by this CLI"),
+    };
+    Ok(RevisionEventView {
+        revision_id: event.revision_id().to_string(),
+        position: event.position(),
+        event: kind,
+    })
+}
+
+fn revision_identifier_view(identifier: &ExternalIdentifier) -> RevisionIdentifierView {
+    RevisionIdentifierView {
+        scheme: identifier.scheme().as_str().to_owned(),
+        value: identifier.value().to_owned(),
+        qualifier: identifier.qualifier().map(str::to_owned),
+    }
 }
 
 fn print_metadata_assertions(views: &[MetadataAssertionView], json: bool) -> Result<()> {
