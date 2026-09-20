@@ -44,7 +44,8 @@ pub use model::{
     Asset, MediaRoot, OriginalMediaImport, Project, Representation, RepresentationKind, Timestamp,
 };
 pub use provenance::{
-    ActivityKind, ActivityRole, AgentIdentity, MAX_ACTIVITY_KIND_BYTES, MAX_ACTIVITY_ROLE_BYTES,
+    Activity, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
+    MAX_ACTIVITY_EDGES, MAX_ACTIVITY_KIND_BYTES, MAX_ACTIVITY_ROLE_BYTES,
     MAX_PROVENANCE_NAME_BYTES, MAX_TOOL_VERSION_BYTES, ToolIdentity,
 };
 pub use resolution::{
