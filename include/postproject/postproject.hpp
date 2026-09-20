@@ -785,6 +785,30 @@ public:
     return result;
   }
 
+  [[nodiscard]] std::vector<Activity>
+  activitiesProducing(const Uuid &representation_id) const {
+    return activities_for_representation(
+        representation_id, pp_project_activities_producing);
+  }
+
+  [[nodiscard]] std::vector<Activity>
+  activitiesConsuming(const Uuid &representation_id) const {
+    return activities_for_representation(
+        representation_id, pp_project_activities_consuming);
+  }
+
+  [[nodiscard]] std::vector<Uuid>
+  ancestors(const Uuid &representation_id) const {
+    return provenance_relatives(representation_id,
+                                pp_project_provenance_ancestors);
+  }
+
+  [[nodiscard]] std::vector<Uuid>
+  descendants(const Uuid &representation_id) const {
+    return provenance_relatives(representation_id,
+                                pp_project_provenance_descendants);
+  }
+
   [[nodiscard]] Transaction beginTransaction() {
     pp_transaction_t *transaction = nullptr;
     pp_error_t *error = nullptr;
@@ -799,7 +823,63 @@ public:
   }
 
 private:
+  using ActivityQuery = pp_error_code_t (*)(
+      const pp_project_t *, const pp_uuid_t *, pp_activity_set_t **,
+      pp_error_t **);
+  using ProvenanceQuery = pp_error_code_t (*)(
+      const pp_project_t *, const pp_uuid_t *, pp_object_ref_set_t **,
+      pp_error_t **);
+
   explicit Project(pp_project_t *project) noexcept : project_(project) {}
+
+  [[nodiscard]] std::vector<Activity>
+  activities_for_representation(const Uuid &representation_id,
+                                ActivityQuery query) const {
+    const pp_uuid_t native_id = detail::native_uuid(representation_id);
+    pp_activity_set_t *raw_activities = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        query(project_, &native_id, &raw_activities, &error);
+    detail::throw_if_error(status, error);
+    detail::ActivitySetHandle activities(raw_activities);
+
+    std::vector<Activity> result;
+    const std::uint64_t count = pp_activity_set_count(activities.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      result.push_back(detail::activity(activities.get(), index));
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::vector<Uuid>
+  provenance_relatives(const Uuid &representation_id,
+                       ProvenanceQuery query) const {
+    const pp_uuid_t native_id = detail::native_uuid(representation_id);
+    pp_object_ref_set_t *raw_objects = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        query(project_, &native_id, &raw_objects, &error);
+    detail::throw_if_error(status, error);
+    detail::ObjectRefSetHandle objects(raw_objects);
+
+    std::vector<Uuid> result;
+    const std::uint64_t count = pp_object_ref_set_count(objects.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      pp_object_ref_t object{};
+      pp_error_t *item_error = nullptr;
+      const pp_error_code_t item_status =
+          pp_object_ref_set_get(objects.get(), index, &object, &item_error);
+      detail::throw_if_error(item_status, item_error);
+      if (object.kind != PP_OBJECT_REPRESENTATION) {
+        throw Error(ErrorCode::internal,
+                    "provenance query returned a non-representation object");
+      }
+      result.push_back(detail::uuid(object.id));
+    }
+    return result;
+  }
 
   static Project create_impl(std::string_view path, const char *display_name) {
     const std::string native_path = detail::checked_string(path, "path");
