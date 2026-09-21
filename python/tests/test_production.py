@@ -9,6 +9,13 @@ from pathlib import Path
 from uuid import UUID
 
 from postproject import (
+    Activity,
+    ActivityCreatedEvent,
+    ActivityEdge,
+    ActivityInputAddedEvent,
+    ActivityOutputAddedEvent,
+    ActivitySpec,
+    AgentIdentity,
     AssetImportedEvent,
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
@@ -29,6 +36,7 @@ from postproject import (
     ResourceAddedEvent,
     RevisionContext,
     RevisionId,
+    ToolIdentity,
 )
 
 LIBRARY_PATH = os.environ.get("POSTPROJECT_LIBRARY")
@@ -46,6 +54,8 @@ class ProductionTests(unittest.TestCase):
         self.production_path = self.root / "production.pproj"
         self.media_path = self.root / "A001.mov"
         self.media_path.write_bytes(b"Python binding media fixture")
+        self.second_media_path = self.root / "A002.mov"
+        self.second_media_path.write_bytes(b"Second Python binding media fixture")
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
@@ -288,6 +298,89 @@ class ProductionTests(unittest.TestCase):
             assert isinstance(payload, MetadataRemovedEvent)
             self.assertEqual(payload.target, asset_id)
             self.assertEqual(payload.property, title)
+
+    def test_provenance_activity_roundtrips_and_supports_graph_queries(self) -> None:
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                transaction.import_media(self.media_path)
+            revision = production.latest_revision
+            assert revision is not None
+            source_event = next(
+                event.payload
+                for event in production.revision_events[revision.id]
+                if isinstance(event.payload, RepresentationAddedEvent)
+            )
+
+            with production.transaction() as transaction:
+                transaction.import_media(self.second_media_path)
+            revision = production.latest_revision
+            assert revision is not None
+            output_event = next(
+                event.payload
+                for event in production.revision_events[revision.id]
+                if isinstance(event.payload, RepresentationAddedEvent)
+            )
+
+            input_edge = ActivityEdge(
+                source_event.representation_id, "postproject:primary"
+            )
+            output_edge = ActivityEdge(
+                output_event.representation_id, "postproject:proxy"
+            )
+            spec = ActivitySpec(
+                "postproject:transcode",
+                outputs=(output_edge,),
+                inputs=(input_edge,),
+                started_at_unix_micros=100,
+                finished_at_unix_micros=200,
+                tool=ToolIdentity("FFmpeg", "8.0", "https://ffmpeg.org/"),
+                agent=AgentIdentity(
+                    "automation",
+                    ExternalIdentifier("com.example.worker", "worker-1"),
+                ),
+            )
+            with production.transaction() as transaction:
+                activity_id = transaction.create_activity(spec)
+
+            expected = Activity(
+                activity_id,
+                spec.kind,
+                spec.started_at_unix_micros,
+                spec.finished_at_unix_micros,
+                spec.tool,
+                spec.agent,
+                spec.inputs,
+                spec.outputs,
+            )
+            self.assertEqual(production.activities, (expected,))
+            self.assertEqual(
+                production.activities_consuming[source_event.representation_id],
+                (expected,),
+            )
+            self.assertEqual(
+                production.activities_producing[output_event.representation_id],
+                (expected,),
+            )
+            self.assertEqual(
+                production.provenance_ancestors[output_event.representation_id],
+                (source_event.representation_id,),
+            )
+            self.assertEqual(
+                production.provenance_descendants[source_event.representation_id],
+                (output_event.representation_id,),
+            )
+
+            revision = production.latest_revision
+            assert revision is not None
+            payloads = tuple(
+                event.payload for event in production.revision_events[revision.id]
+            )
+            self.assertEqual(len(payloads), 3)
+            self.assertIsInstance(payloads[0], ActivityCreatedEvent)
+            self.assertIsInstance(payloads[1], ActivityInputAddedEvent)
+            self.assertIsInstance(payloads[2], ActivityOutputAddedEvent)
 
 
 if __name__ == "__main__":
