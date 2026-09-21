@@ -22,7 +22,7 @@ All notable changes to PostProject will be documented here. The project uses
 - Added ABI version 6 activity creation, inspection, direct provenance queries,
   and ancestry/descendant traversal with C++17 value wrappers.
 - Added ABI version 9 representation structure, ordered membership, compact
-  image-sequence, concrete resource, and locator inspection.
+  image-sequence, concrete resource, locator, and typed fingerprint inspection.
 
 ### Added
 

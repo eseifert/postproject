@@ -38,6 +38,7 @@ struct AbiRepresentation {
     members: Vec<AbiMember>,
     sequence: Option<AbiSequence>,
     resources: Vec<AbiResource>,
+    fingerprints: Vec<AbiFingerprint>,
 }
 
 struct AbiMember {
@@ -63,6 +64,13 @@ struct AbiResource {
     file_size: Option<u64>,
     modified_at: Option<i64>,
     locators: Vec<AbiLocator>,
+    fingerprints: Vec<AbiFingerprint>,
+}
+
+struct AbiFingerprint {
+    algorithm: CString,
+    version: u16,
+    value: Vec<u8>,
 }
 
 struct AbiLocator {
@@ -154,6 +162,7 @@ pub unsafe extern "C" fn pp_representation_set_get(
     out_kind: *mut u32,
     out_structure_kind: *mut u32,
     out_member_count: *mut u64,
+    out_fingerprint_count: *mut u64,
     out_error: *mut *mut PpError,
 ) -> u32 {
     // SAFETY: Outputs are initialized and checked before writes.
@@ -163,12 +172,14 @@ pub unsafe extern "C" fn pp_representation_set_get(
         initialize_value(out_kind, 0);
         initialize_value(out_structure_kind, 0);
         initialize_value(out_member_count, 0);
+        initialize_value(out_fingerprint_count, 0);
         ffi_call(out_error, || {
             require_output(out_id, "out_id")?;
             require_output(out_asset_id, "out_asset_id")?;
             require_output(out_kind, "out_kind")?;
             require_output(out_structure_kind, "out_structure_kind")?;
             require_output(out_member_count, "out_member_count")?;
+            require_output(out_fingerprint_count, "out_fingerprint_count")?;
             let set = representations
                 .as_ref()
                 .ok_or_else(|| invalid_argument("representations must not be null"))?;
@@ -182,6 +193,59 @@ pub unsafe extern "C" fn pp_representation_set_get(
             out_kind.write(representation.kind);
             out_structure_kind.write(representation.structure_kind);
             out_member_count.write(u64::try_from(representation.members.len()).unwrap_or(u64::MAX));
+            out_fingerprint_count
+                .write(u64::try_from(representation.fingerprints.len()).unwrap_or(u64::MAX));
+            Ok(())
+        })
+    }
+}
+
+/// Reads one structure-aware representation fingerprint.
+///
+/// Returned algorithm and value pointers borrow the result set.
+///
+/// # Safety
+///
+/// The set must be live and every output pointer must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_representation_set_get_fingerprint(
+    representations: *const PpRepresentationSet,
+    representation_index: u64,
+    fingerprint_index: u64,
+    out_algorithm: *mut *const c_char,
+    out_version: *mut u16,
+    out_value: *mut *const u8,
+    out_value_length: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_const_output(out_algorithm);
+        initialize_value(out_version, 0);
+        initialize_const_output(out_value);
+        initialize_value(out_value_length, 0);
+        ffi_call(out_error, || {
+            require_output(out_algorithm, "out_algorithm")?;
+            require_output(out_version, "out_version")?;
+            require_output(out_value, "out_value")?;
+            require_output(out_value_length, "out_value_length")?;
+            let set = representations
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representations must not be null"))?;
+            let representation =
+                item_at(&set.representations, representation_index, "representation")?;
+            let fingerprint = item_at(
+                &representation.fingerprints,
+                fingerprint_index,
+                "representation fingerprint",
+            )?;
+            write_fingerprint(
+                fingerprint,
+                out_algorithm,
+                out_version,
+                out_value,
+                out_value_length,
+            );
             Ok(())
         })
     }
@@ -350,6 +414,7 @@ pub unsafe extern "C" fn pp_representation_set_get_resource(
     out_has_modified_at: *mut u8,
     out_modified_at_unix_micros: *mut i64,
     out_locator_count: *mut u64,
+    out_fingerprint_count: *mut u64,
     out_error: *mut *mut PpError,
 ) -> u32 {
     // SAFETY: Outputs are initialized and checked before writes.
@@ -360,6 +425,7 @@ pub unsafe extern "C" fn pp_representation_set_get_resource(
         initialize_value(out_has_modified_at, 0);
         initialize_value(out_modified_at_unix_micros, 0);
         initialize_value(out_locator_count, 0);
+        initialize_value(out_fingerprint_count, 0);
         ffi_call(out_error, || {
             require_output(out_id, "out_id")?;
             require_output(out_has_file_facts, "out_has_file_facts")?;
@@ -367,6 +433,7 @@ pub unsafe extern "C" fn pp_representation_set_get_resource(
             require_output(out_has_modified_at, "out_has_modified_at")?;
             require_output(out_modified_at_unix_micros, "out_modified_at_unix_micros")?;
             require_output(out_locator_count, "out_locator_count")?;
+            require_output(out_fingerprint_count, "out_fingerprint_count")?;
             let resource = resource_at(representations, representation_index, resource_index)?;
             out_id.write(PpUuid {
                 bytes: resource.id.into_bytes(),
@@ -380,6 +447,56 @@ pub unsafe extern "C" fn pp_representation_set_get_resource(
                 out_modified_at_unix_micros.write(modified_at);
             }
             out_locator_count.write(u64::try_from(resource.locators.len()).unwrap_or(u64::MAX));
+            out_fingerprint_count
+                .write(u64::try_from(resource.fingerprints.len()).unwrap_or(u64::MAX));
+            Ok(())
+        })
+    }
+}
+
+/// Reads one storage-resource fingerprint.
+///
+/// Returned algorithm and value pointers borrow the result set.
+///
+/// # Safety
+///
+/// The set must be live and every output pointer must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_representation_set_get_resource_fingerprint(
+    representations: *const PpRepresentationSet,
+    representation_index: u64,
+    resource_index: u64,
+    fingerprint_index: u64,
+    out_algorithm: *mut *const c_char,
+    out_version: *mut u16,
+    out_value: *mut *const u8,
+    out_value_length: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_const_output(out_algorithm);
+        initialize_value(out_version, 0);
+        initialize_const_output(out_value);
+        initialize_value(out_value_length, 0);
+        ffi_call(out_error, || {
+            require_output(out_algorithm, "out_algorithm")?;
+            require_output(out_version, "out_version")?;
+            require_output(out_value, "out_value")?;
+            require_output(out_value_length, "out_value_length")?;
+            let resource = resource_at(representations, representation_index, resource_index)?;
+            let fingerprint = item_at(
+                &resource.fingerprints,
+                fingerprint_index,
+                "resource fingerprint",
+            )?;
+            write_fingerprint(
+                fingerprint,
+                out_algorithm,
+                out_version,
+                out_value,
+                out_value_length,
+            );
             Ok(())
         })
     }
@@ -458,6 +575,17 @@ impl AbiRepresentation {
             members: members(structure)?,
             sequence: sequence(structure)?,
             resources,
+            fingerprints: representation
+                .fingerprints()
+                .iter()
+                .map(|fingerprint| {
+                    AbiFingerprint::new(
+                        fingerprint.algorithm(),
+                        fingerprint.version(),
+                        fingerprint.value(),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?,
         })
     }
 }
@@ -475,6 +603,27 @@ impl AbiResource {
                 .into_iter()
                 .map(AbiLocator::try_from)
                 .collect::<Result<Vec<_>, _>>()?,
+            fingerprints: resource
+                .fingerprints()
+                .iter()
+                .map(|fingerprint| {
+                    AbiFingerprint::new(
+                        fingerprint.algorithm(),
+                        fingerprint.version(),
+                        fingerprint.value(),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+}
+
+impl AbiFingerprint {
+    fn new(algorithm: &str, version: u16, value: &[u8]) -> Result<Self, Error> {
+        Ok(Self {
+            algorithm: exact_cstring(algorithm, "fingerprint algorithm")?,
+            version,
+            value: value.to_vec(),
         })
     }
 }
@@ -504,6 +653,22 @@ unsafe fn resource_at<'a>(
         .ok_or_else(|| invalid_argument("representations must not be null"))?;
     let representation = item_at(&set.representations, representation_index, "representation")?;
     item_at(&representation.resources, resource_index, "resource")
+}
+
+unsafe fn write_fingerprint(
+    fingerprint: &AbiFingerprint,
+    out_algorithm: *mut *const c_char,
+    out_version: *mut u16,
+    out_value: *mut *const u8,
+    out_value_length: *mut u64,
+) {
+    // SAFETY: The caller validated every output pointer as writable.
+    unsafe {
+        out_algorithm.write(fingerprint.algorithm.as_ptr());
+        out_version.write(fingerprint.version);
+        out_value.write(fingerprint.value.as_ptr());
+        out_value_length.write(u64::try_from(fingerprint.value.len()).unwrap_or(u64::MAX));
+    }
 }
 
 fn members(structure: &ContentStructure) -> Result<Vec<AbiMember>, Error> {

@@ -210,7 +210,14 @@ PP_API pp_error_code_t pp_representation_set_get(
     pp_uuid_t *out_id, pp_uuid_t *out_asset_id,
     pp_representation_kind_t *out_kind,
     pp_content_structure_kind_t *out_structure_kind,
-    uint64_t *out_member_count, pp_error_t **out_error);
+    uint64_t *out_member_count, uint64_t *out_fingerprint_count,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_representation_set_get_fingerprint(
+    const pp_representation_set_t *representations,
+    uint64_t representation_index, uint64_t fingerprint_index,
+    const char **out_algorithm, uint16_t *out_version,
+    const uint8_t **out_value, uint64_t *out_value_length,
+    pp_error_t **out_error);
 PP_API pp_error_code_t pp_representation_set_get_member(
     const pp_representation_set_t *representations,
     uint64_t representation_index, uint64_t member_index,
@@ -232,7 +239,14 @@ PP_API pp_error_code_t pp_representation_set_get_resource(
     uint64_t representation_index, uint64_t resource_index, pp_uuid_t *out_id,
     uint8_t *out_has_file_facts, uint64_t *out_file_size,
     uint8_t *out_has_modified_at, int64_t *out_modified_at_unix_micros,
-    uint64_t *out_locator_count, pp_error_t **out_error);
+    uint64_t *out_locator_count, uint64_t *out_fingerprint_count,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_representation_set_get_resource_fingerprint(
+    const pp_representation_set_t *representations,
+    uint64_t representation_index, uint64_t resource_index,
+    uint64_t fingerprint_index, const char **out_algorithm,
+    uint16_t *out_version, const uint8_t **out_value,
+    uint64_t *out_value_length, pp_error_t **out_error);
 PP_API pp_error_code_t pp_representation_set_get_locator(
     const pp_representation_set_t *representations,
     uint64_t representation_index, uint64_t resource_index,

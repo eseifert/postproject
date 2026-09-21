@@ -264,9 +264,11 @@ EXPORTED_SYMBOLS = (
     "pp_production_revision_events",
     "pp_representation_set_count",
     "pp_representation_set_get",
+    "pp_representation_set_get_fingerprint",
     "pp_representation_set_get_locator",
     "pp_representation_set_get_member",
     "pp_representation_set_get_resource",
+    "pp_representation_set_get_resource_fingerprint",
     "pp_representation_set_get_sequence",
     "pp_representation_set_get_sequence_missing_frame",
     "pp_representation_set_release",
@@ -317,16 +319,20 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_production_representations.restype = ErrorCode
     lib.pp_representation_set_count.argtypes = [ctypes.POINTER(RepresentationSet)]
     lib.pp_representation_set_count.restype = ctypes.c_uint64
-    lib.pp_representation_set_get.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(Uuid), ctypes.POINTER(RepresentationKind), ctypes.POINTER(ContentStructureKind), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_representation_set_get.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(Uuid), ctypes.POINTER(RepresentationKind), ctypes.POINTER(ContentStructureKind), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_representation_set_get.restype = ErrorCode
+    lib.pp_representation_set_get_fingerprint.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_representation_set_get_fingerprint.restype = ErrorCode
     lib.pp_representation_set_get_member.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_representation_set_get_member.restype = ErrorCode
     lib.pp_representation_set_get_sequence.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_representation_set_get_sequence.restype = ErrorCode
     lib.pp_representation_set_get_sequence_missing_frame.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_representation_set_get_sequence_missing_frame.restype = ErrorCode
-    lib.pp_representation_set_get_resource.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_representation_set_get_resource.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_representation_set_get_resource.restype = ErrorCode
+    lib.pp_representation_set_get_resource_fingerprint.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_representation_set_get_resource_fingerprint.restype = ErrorCode
     lib.pp_representation_set_get_locator.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(LocatorAvailability), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_representation_set_get_locator.restype = ErrorCode
     lib.pp_representation_set_release.argtypes = [ctypes.POINTER(RepresentationSet)]
