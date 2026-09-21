@@ -8,6 +8,7 @@
 mod fingerprint;
 mod import;
 mod path;
+mod representation_fingerprint;
 mod resolver;
 
 pub use fingerprint::{
@@ -16,4 +17,8 @@ pub use fingerprint::{
 };
 pub use import::{prepare_confirmed_locator, prepare_media_root, prepare_original_media};
 pub use path::canonical_file_uri;
+pub use representation_fingerprint::{
+    REPRESENTATION_FINGERPRINT_ALGORITHM, REPRESENTATION_FINGERPRINT_VERSION,
+    fingerprint_representation,
+};
 pub use resolver::{MediaResolver, ResolverOptions};
