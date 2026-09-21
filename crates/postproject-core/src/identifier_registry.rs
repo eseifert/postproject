@@ -9,7 +9,7 @@ pub const ISAN_SCHEME: &str = "urn:isan";
 /// Entertainment Identifier Registry URNs from RFC 7972.
 pub const EIDR_SCHEME: &str = "urn:eidr";
 /// Application-defined identifiers whose value semantics belong to the host.
-pub const POSTPROJECT_APPLICATION_SCHEME: &str = "org.postproject.application";
+pub const POSTPROJECT_APPLICATION_SCHEME: &str = "https://postproject.org/id/application";
 
 /// The strength of local validation supplied for a known scheme.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -96,7 +96,7 @@ pub const IDENTIFIER_SCHEMES: &[IdentifierSchemeDefinition] = &[
     definition(
         POSTPROJECT_APPLICATION_SCHEME,
         "PostProject application identifier",
-        "https://docs.postproject.dev/concepts/external-identifiers.html",
+        POSTPROJECT_APPLICATION_SCHEME,
         None,
     ),
 ];
@@ -233,6 +233,18 @@ mod tests {
         assert_eq!(
             validate_known_identifier(&identifier("com.example.camera", " exact value ")),
             Ok(false)
+        );
+    }
+
+    #[test]
+    fn application_identifiers_are_known_and_remain_opaque() {
+        let identifier = identifier(POSTPROJECT_APPLICATION_SCHEME, "editor:scene/42");
+        assert_eq!(validate_known_identifier(&identifier), Ok(true));
+        assert_eq!(
+            identifier_scheme_definition(identifier.scheme())
+                .expect("known application scheme")
+                .reference(),
+            POSTPROJECT_APPLICATION_SCHEME
         );
     }
 }
