@@ -1,12 +1,8 @@
 //! End-to-end tests of the public command-line workflow.
 
-use std::{fs, str::FromStr};
+use std::fs;
 
 use assert_cmd::cargo::cargo_bin_cmd;
-use postproject_core::{
-    AssetId, MetadataField, MetadataProperty, MetadataValue, ObjectRef, PropertyId, VocabularyId,
-};
-use postproject_storage_sqlite::SqliteProduction;
 use serde_json::Value;
 
 const TRANSCODE_KIND: &str = "org.postproject:transcode";
@@ -95,23 +91,51 @@ fn exercise_metadata(production_path: &str, asset_id: &str) {
 }
 
 fn inject_structured_metadata(production_path: &str, asset_id: &str) {
-    let target = ObjectRef::Asset(AssetId::from_str(asset_id).expect("parse asset ID"));
-    let property = MetadataProperty::new(
-        VocabularyId::new("com.example.editor/metadata").unwrap(),
-        PropertyId::new("contact").unwrap(),
-    );
-    let value = MetadataValue::structure(vec![MetadataField::new(
-        PropertyId::new("name").unwrap(),
-        MetadataValue::string("Camera department").unwrap(),
-    )])
-    .unwrap();
-    let mut production =
-        SqliteProduction::open(production_path).expect("open production for test metadata");
-    let mut transaction = production.begin_transaction().unwrap();
-    transaction
-        .add_metadata_value(target, &property, &value)
-        .unwrap();
-    transaction.commit().unwrap();
+    let value_file = format!("{production_path}.metadata.json");
+    fs::write(
+        &value_file,
+        serde_json::to_vec(&serde_json::json!({
+            "type": "struct",
+            "fields": [
+                {
+                    "name": "name",
+                    "value": {"type": "string", "value": "Camera department"}
+                },
+                {
+                    "name": "ratio",
+                    "value": {"type": "rational", "numerator": 24_000, "denominator": 1_001}
+                },
+                {
+                    "name": "confidence",
+                    "value": {"type": "decimal", "coefficient": "995", "scale": 3}
+                },
+                {
+                    "name": "payload",
+                    "value": {"type": "bytes", "hex": "00ff"}
+                },
+                {
+                    "name": "subject",
+                    "value": {
+                        "type": "reference",
+                        "target": {"target_kind": "asset", "target_id": asset_id}
+                    }
+                }
+            ]
+        }))
+        .expect("serialize typed metadata input"),
+    )
+    .expect("write typed metadata input");
+    let added = run_json(&[
+        "metadata",
+        "add",
+        production_path,
+        "asset",
+        asset_id,
+        "com.example.editor/metadata",
+        "contact",
+        &value_file,
+    ]);
+    assert_eq!(added["value"]["type"], "struct");
 }
 
 fn exercise_provenance(
