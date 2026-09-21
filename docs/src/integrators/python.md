@@ -34,7 +34,8 @@ finalizer is a fallback for handles that were not closed explicitly.
 
 The current high-level surface covers production lifecycle, transactions,
 original-media import, revision context, asset existence, and the paginated
-revision feed with typed semantic events. Identifier, metadata, provenance,
-compound-media, and resolution wrappers remain under development. The
-generated low-level declaration table already covers every function and struct
-in the current ABI.
+revision feed with typed semantic events. External identifiers can be added,
+removed, enumerated, and found by exact scheme and value. Metadata, provenance,
+compound-media, and resolution wrappers remain under development. The generated
+low-level declaration table already covers every function and struct in the
+current ABI.

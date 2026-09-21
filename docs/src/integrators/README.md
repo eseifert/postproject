@@ -36,6 +36,23 @@ tx.commit();
 auto identifiers = production.externalIdentifiers(target);
 ```
 
+Python uses the typed ID itself as the object reference:
+
+```python
+from postproject import ExternalIdentifier
+
+identifier = ExternalIdentifier(
+    "com.example.camera.serial", "A-0007"
+)
+with production.transaction() as transaction:
+    transaction.add_external_identifier(asset_id, identifier)
+
+identifiers = production.external_identifiers(asset_id)
+matches = production.find_by_external_identifier(
+    identifier.scheme, identifier.value
+)
+```
+
 The [metadata guide](metadata-vocabularies.md), [provenance
 guide](provenance.md), and [revision feed guide](revision-feed.md) document the
 implemented cross-language surfaces. The root README contains the shortest
