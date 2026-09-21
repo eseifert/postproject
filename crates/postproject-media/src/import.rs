@@ -423,6 +423,75 @@ mod tests {
     }
 
     #[test]
+    fn prepares_ordered_parts_in_source_order() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let paths = [
+            directory.path().join("part-1.mxf"),
+            directory.path().join("part-2.mxf"),
+        ];
+        for (index, path) in paths.iter().enumerate() {
+            fs::write(path, format!("part {index}")).expect("write part");
+        }
+        let role = ResourceRole::new("example.camera:essence-part").expect("valid role");
+        let sources = paths
+            .iter()
+            .map(|path| FileResourceSource::new(path, role.clone(), true))
+            .collect::<Vec<_>>();
+
+        let prepared = prepare_ordered_parts_representation(
+            AssetId::new(),
+            RepresentationKind::Original,
+            &sources,
+        )
+        .expect("prepare ordered parts");
+
+        assert_eq!(
+            prepared.representation().content_structure().resource_ids(),
+            prepared
+                .resources()
+                .iter()
+                .map(Resource::id)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(prepared.representation().fingerprints().len(), 1);
+        assert_eq!(prepared.locators().len(), 2);
+    }
+
+    #[test]
+    fn prepares_package_with_optional_members() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let essence = directory.path().join("essence.mxf");
+        let sidecar = directory.path().join("metadata.xml");
+        fs::write(&essence, b"essence").expect("write essence");
+        fs::write(&sidecar, b"metadata").expect("write sidecar");
+        let sources = vec![
+            FileResourceSource::new(
+                essence,
+                ResourceRole::new("org.postproject:essence").expect("valid role"),
+                true,
+            ),
+            FileResourceSource::new(
+                sidecar,
+                ResourceRole::new("org.postproject:sidecar").expect("valid role"),
+                false,
+            ),
+        ];
+
+        let prepared =
+            prepare_package_representation(AssetId::new(), RepresentationKind::Optimized, &sources)
+                .expect("prepare package");
+
+        let members = prepared
+            .representation()
+            .content_structure()
+            .members()
+            .expect("package members");
+        assert!(members[0].is_required());
+        assert!(!members[1].is_required());
+        assert_eq!(prepared.representation().fingerprints().len(), 1);
+    }
+
+    #[test]
     fn root_must_be_a_directory() {
         let file = NamedTempFile::new().expect("create file");
         assert!(prepare_media_root(file.path(), None, 0).is_err());
