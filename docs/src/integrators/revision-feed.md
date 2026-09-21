@@ -108,3 +108,19 @@ for (const auto &revision : production.changesSince(cursor, 100)) {
 
 `Transaction::setRevisionContext` accepts an optional `OriginIdentity` and
 message. Result handles and borrowed strings remain internal to the wrapper.
+
+## Python
+
+The Python wrapper likewise copies revision summaries, event payloads, and
+borrowed strings before releasing native result handles:
+
+```python
+for revision in production.changes_since(cursor, 100):
+    for event in production.revision_events(revision.id):
+        handle_event(event.payload)
+    cursor = revision.sequence
+```
+
+Each payload is a frozen typed value such as `AssetImportedEvent`,
+`RepresentationResourceAddedEvent`, or `MetadataRemovedEvent`. Integrations can
+dispatch with `isinstance` without depending on the C event-kind integers.

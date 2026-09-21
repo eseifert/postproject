@@ -33,7 +33,8 @@ back. `close()` is idempotent for production and transaction handles, and a
 finalizer is a fallback for handles that were not closed explicitly.
 
 The current high-level surface covers production lifecycle, transactions,
-original-media import, revision context, and asset existence. Identifier,
-metadata, provenance, revision-feed, compound-media, and resolution wrappers
-remain under development. The generated low-level declaration table already
-covers every function and struct in the current ABI.
+original-media import, revision context, asset existence, and the paginated
+revision feed with typed semantic events. Identifier, metadata, provenance,
+compound-media, and resolution wrappers remain under development. The
+generated low-level declaration table already covers every function and struct
+in the current ABI.
