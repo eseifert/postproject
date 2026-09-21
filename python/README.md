@@ -2,7 +2,8 @@
 
 This package wraps the installed PostProject C ABI with standard-library
 `ctypes`. Set `POSTPROJECT_LIBRARY` to the absolute shared-library path, or pass
-an explicit library path when opening a production.
+an explicit library path when opening a production. Python 3.11 or newer is
+required.
 
 The package is pre-1.0 and tracks the current PostProject ABI without backward
 compatibility guarantees.
@@ -18,11 +19,11 @@ with Production.create("production.pproj", "Documentary") as production:
             "rushes/A001.mov", display_name="Camera A"
         )
 
-    assert production.contains_asset(asset_id)
+    assert asset_id in production.assets
 
-    revision = production.latest_revision()
+    revision = production.latest_revision
     assert revision is not None
-    for event in production.revision_events(revision.id):
+    for event in production.revision_events[revision.id]:
         print(event.position, event.payload)
 ```
 

@@ -47,10 +47,10 @@ identifier = ExternalIdentifier(
 with production.transaction() as transaction:
     transaction.add_external_identifier(asset_id, identifier)
 
-identifiers = production.external_identifiers(asset_id)
-matches = production.find_by_external_identifier(
+identifiers = production.external_identifiers[asset_id]
+matches = production.objects_by_external_identifier[
     identifier.scheme, identifier.value
-)
+]
 ```
 
 The [metadata guide](metadata-vocabularies.md), [provenance

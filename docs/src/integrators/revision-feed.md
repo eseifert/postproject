@@ -116,7 +116,7 @@ borrowed strings before releasing native result handles:
 
 ```python
 for revision in production.changes_since(cursor, 100):
-    for event in production.revision_events(revision.id):
+    for event in production.revision_events[revision.id]:
         handle_event(event.payload)
     cursor = revision.sequence
 ```

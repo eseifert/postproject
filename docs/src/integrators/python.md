@@ -1,7 +1,8 @@
 # Python quickstart
 
 The Python package uses the installed public C ABI through the standard
-library's `ctypes` module. It does not build or import Rust code.
+library's `ctypes` module. It requires Python 3.11 or newer and does not build
+or import Rust code.
 
 Point the binding at an exact native library:
 
@@ -25,7 +26,7 @@ with Production.create("production.pproj", "Documentary") as production:
             "rushes/A001.mov", display_name="Camera A"
         )
 
-    assert production.contains_asset(asset_id)
+    assert asset_id in production.assets
 ```
 
 A transaction context commits only after a clean exit. An exception rolls it
