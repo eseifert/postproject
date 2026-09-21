@@ -6,8 +6,21 @@ import tempfile
 import unittest
 import weakref
 from pathlib import Path
+from uuid import UUID
 
-from postproject import InvalidArgumentError, OriginIdentity, Production, RevisionContext
+from postproject import (
+    AssetImportedEvent,
+    InvalidArgumentError,
+    LocatorAddedEvent,
+    NotFoundError,
+    OriginIdentity,
+    Production,
+    RepresentationAddedEvent,
+    RepresentationResourceAddedEvent,
+    ResourceAddedEvent,
+    RevisionContext,
+    RevisionId,
+)
 
 
 LIBRARY_PATH = os.environ.get("POSTPROJECT_LIBRARY")
@@ -129,6 +142,37 @@ class ProductionTests(unittest.TestCase):
 
             with self.assertRaises(InvalidArgumentError):
                 production.changes_since(0, 0)
+
+    def test_revision_events_are_typed_ordered_and_copied(self) -> None:
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+
+            revision = production.latest_revision()
+            assert revision is not None
+            events = production.revision_events(revision.id)
+
+            self.assertEqual([event.position for event in events], list(range(5)))
+            imported, representation, resource, membership, locator = (
+                event.payload for event in events
+            )
+            assert isinstance(imported, AssetImportedEvent)
+            assert isinstance(representation, RepresentationAddedEvent)
+            assert isinstance(resource, ResourceAddedEvent)
+            assert isinstance(membership, RepresentationResourceAddedEvent)
+            assert isinstance(locator, LocatorAddedEvent)
+            self.assertEqual(imported.asset_id, asset_id)
+            self.assertEqual(representation.asset_id, asset_id)
+            self.assertEqual(membership.representation_id, representation.representation_id)
+            self.assertEqual(membership.resource_id, resource.resource_id)
+            self.assertEqual(membership.structural_position, 0)
+            self.assertEqual(locator.resource_id, resource.resource_id)
+
+            missing = RevisionId(UUID("00000000-0000-0000-0000-000000000001"))
+            with self.assertRaises(NotFoundError):
+                production.revision_events(missing)
 
 
 if __name__ == "__main__":
