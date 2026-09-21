@@ -388,6 +388,15 @@ struct ResolutionSetDeleter final {
 using ResolutionSetHandle =
     std::unique_ptr<pp_resolution_set_t, ResolutionSetDeleter>;
 
+struct RepresentationSetDeleter final {
+  void operator()(pp_representation_set_t *representations) const noexcept {
+    pp_representation_set_release(representations);
+  }
+};
+
+using RepresentationSetHandle =
+    std::unique_ptr<pp_representation_set_t, RepresentationSetDeleter>;
+
 struct ExternalIdentifierSetDeleter final {
   void operator()(pp_external_identifier_set_t *identifiers) const noexcept {
     pp_external_identifier_set_release(identifiers);
@@ -490,6 +499,193 @@ checked_optional_string(const std::optional<std::string> &value,
   return value.has_value()
              ? std::optional<std::string>(checked_string(*value, label))
              : std::nullopt;
+}
+
+inline Fingerprint representation_fingerprint(
+    const pp_representation_set_t *representations,
+    std::uint64_t representation_index, std::uint64_t fingerprint_index) {
+  const char *algorithm = nullptr;
+  std::uint16_t version = 0;
+  const std::uint8_t *value = nullptr;
+  std::uint64_t value_length = 0;
+  pp_error_t *error = nullptr;
+  const pp_error_code_t status = pp_representation_set_get_fingerprint(
+      representations, representation_index, fingerprint_index, &algorithm,
+      &version, &value, &value_length, &error);
+  throw_if_error(status, error);
+  std::vector<std::uint8_t> copied_value;
+  if (value != nullptr) {
+    copied_value.assign(value, value + value_length);
+  }
+  return {algorithm != nullptr ? std::string(algorithm) : std::string(), version,
+          std::move(copied_value)};
+}
+
+inline Fingerprint resource_fingerprint(
+    const pp_representation_set_t *representations,
+    std::uint64_t representation_index, std::uint64_t resource_index,
+    std::uint64_t fingerprint_index) {
+  const char *algorithm = nullptr;
+  std::uint16_t version = 0;
+  const std::uint8_t *value = nullptr;
+  std::uint64_t value_length = 0;
+  pp_error_t *error = nullptr;
+  const pp_error_code_t status =
+      pp_representation_set_get_resource_fingerprint(
+          representations, representation_index, resource_index,
+          fingerprint_index, &algorithm, &version, &value, &value_length,
+          &error);
+  throw_if_error(status, error);
+  std::vector<std::uint8_t> copied_value;
+  if (value != nullptr) {
+    copied_value.assign(value, value + value_length);
+  }
+  return {algorithm != nullptr ? std::string(algorithm) : std::string(), version,
+          std::move(copied_value)};
+}
+
+inline Representation representation(
+    const pp_representation_set_t *representations, std::uint64_t index) {
+  pp_uuid_t id{};
+  pp_uuid_t asset_id{};
+  pp_representation_kind_t kind = 0;
+  pp_content_structure_kind_t structure_kind = 0;
+  std::uint64_t member_count = 0;
+  std::uint64_t resource_count = 0;
+  std::uint64_t fingerprint_count = 0;
+  pp_error_t *error = nullptr;
+  pp_error_code_t status = pp_representation_set_get(
+      representations, index, &id, &asset_id, &kind, &structure_kind,
+      &member_count, &resource_count, &fingerprint_count, &error);
+  throw_if_error(status, error);
+
+  std::vector<RepresentationMember> members;
+  members.reserve(static_cast<std::size_t>(member_count));
+  for (std::uint64_t member_index = 0; member_index < member_count;
+       ++member_index) {
+    pp_uuid_t resource_id{};
+    const char *role = nullptr;
+    std::uint8_t required = 0;
+    error = nullptr;
+    status = pp_representation_set_get_member(
+        representations, index, member_index, &resource_id, &role, &required,
+        &error);
+    throw_if_error(status, error);
+    members.push_back({uuid(resource_id), optional_string(role), required != 0});
+  }
+
+  std::optional<ImageSequenceDescriptor> image_sequence;
+  if (structure_kind == PP_CONTENT_IMAGE_SEQUENCE) {
+    const char *prefix = nullptr;
+    const char *suffix = nullptr;
+    std::uint8_t padding = 0;
+    std::int64_t start = 0;
+    std::int64_t end = 0;
+    std::uint32_t step = 0;
+    std::uint32_t rate_numerator = 0;
+    std::uint32_t rate_denominator = 0;
+    std::uint64_t missing_count = 0;
+    error = nullptr;
+    status = pp_representation_set_get_sequence(
+        representations, index, &prefix, &suffix, &padding, &start, &end, &step,
+        &rate_numerator, &rate_denominator, &missing_count, &error);
+    throw_if_error(status, error);
+    std::vector<std::int64_t> missing_frames;
+    missing_frames.reserve(static_cast<std::size_t>(missing_count));
+    for (std::uint64_t frame_index = 0; frame_index < missing_count;
+         ++frame_index) {
+      std::int64_t frame = 0;
+      error = nullptr;
+      status = pp_representation_set_get_sequence_missing_frame(
+          representations, index, frame_index, &frame, &error);
+      throw_if_error(status, error);
+      missing_frames.push_back(frame);
+    }
+    image_sequence = ImageSequenceDescriptor{
+        prefix != nullptr ? std::string(prefix) : std::string(),
+        suffix != nullptr ? std::string(suffix) : std::string(),
+        padding,
+        start,
+        end,
+        step,
+        rate_numerator,
+        rate_denominator,
+        std::move(missing_frames)};
+  }
+
+  std::vector<Fingerprint> fingerprints;
+  fingerprints.reserve(static_cast<std::size_t>(fingerprint_count));
+  for (std::uint64_t fingerprint_index = 0;
+       fingerprint_index < fingerprint_count; ++fingerprint_index) {
+    fingerprints.push_back(representation_fingerprint(
+        representations, index, fingerprint_index));
+  }
+
+  std::vector<Resource> resources;
+  resources.reserve(static_cast<std::size_t>(resource_count));
+  for (std::uint64_t resource_index = 0; resource_index < resource_count;
+       ++resource_index) {
+    pp_uuid_t resource_id{};
+    std::uint8_t has_file_facts = 0;
+    std::uint64_t file_size = 0;
+    std::uint8_t has_modified_at = 0;
+    std::int64_t modified_at = 0;
+    std::uint64_t locator_count = 0;
+    std::uint64_t resource_fingerprint_count = 0;
+    error = nullptr;
+    status = pp_representation_set_get_resource(
+        representations, index, resource_index, &resource_id, &has_file_facts,
+        &file_size, &has_modified_at, &modified_at, &locator_count,
+        &resource_fingerprint_count, &error);
+    throw_if_error(status, error);
+
+    std::vector<Fingerprint> resource_fingerprints;
+    resource_fingerprints.reserve(
+        static_cast<std::size_t>(resource_fingerprint_count));
+    for (std::uint64_t fingerprint_index = 0;
+         fingerprint_index < resource_fingerprint_count; ++fingerprint_index) {
+      resource_fingerprints.push_back(resource_fingerprint(
+          representations, index, resource_index, fingerprint_index));
+    }
+
+    std::vector<Locator> locators;
+    locators.reserve(static_cast<std::size_t>(locator_count));
+    for (std::uint64_t locator_index = 0; locator_index < locator_count;
+         ++locator_index) {
+      pp_uuid_t locator_id{};
+      const char *uri = nullptr;
+      pp_locator_availability_t availability = 0;
+      std::uint8_t has_last_seen = 0;
+      std::int64_t last_seen = 0;
+      error = nullptr;
+      status = pp_representation_set_get_locator(
+          representations, index, resource_index, locator_index, &locator_id,
+          &uri, &availability, &has_last_seen, &last_seen, &error);
+      throw_if_error(status, error);
+      locators.push_back(
+          {uuid(locator_id), uri != nullptr ? std::string(uri) : std::string(),
+           static_cast<LocatorAvailability>(availability),
+           has_last_seen != 0
+               ? std::optional<std::int64_t>(last_seen)
+               : std::nullopt});
+    }
+    resources.push_back(
+        {uuid(resource_id),
+         has_file_facts != 0 ? std::optional<std::uint64_t>(file_size)
+                             : std::nullopt,
+         has_modified_at != 0 ? std::optional<std::int64_t>(modified_at)
+                              : std::nullopt,
+         std::move(resource_fingerprints), std::move(locators)});
+  }
+
+  return {uuid(id),
+          uuid(asset_id),
+          static_cast<RepresentationKind>(kind),
+          static_cast<ContentStructureKind>(structure_kind),
+          std::move(members),
+          std::move(image_sequence),
+          std::move(fingerprints),
+          std::move(resources)};
 }
 
 inline Activity activity(const pp_activity_set_t *activities,
@@ -1028,6 +1224,26 @@ public:
         pp_production_asset_exists(production_, &value, &exists, &error);
     detail::throw_if_error(status, error);
     return exists != 0;
+  }
+
+  [[nodiscard]] std::vector<Representation>
+  representations(const Uuid &asset_id) const {
+    const pp_uuid_t native_asset_id = detail::native_uuid(asset_id);
+    pp_representation_set_t *raw_representations = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_representations(
+        production_, &native_asset_id, &raw_representations, &error);
+    detail::throw_if_error(status, error);
+    detail::RepresentationSetHandle representations(raw_representations);
+
+    std::vector<Representation> result;
+    const std::uint64_t count =
+        pp_representation_set_count(representations.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      result.push_back(detail::representation(representations.get(), index));
+    }
+    return result;
   }
 
   [[nodiscard]] std::vector<ExternalIdentifier>
