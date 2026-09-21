@@ -15,6 +15,7 @@ with Production.create("production.pproj", "Documentary") as production:
     with production.transaction(
         origin="example.importer", message="Import camera original"
     ) as transaction:
+        transaction.add_media_root("rushes", "Camera originals")
         asset_id = transaction.import_media(
             "rushes/A001.mov", display_name="Camera A"
         )

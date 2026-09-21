@@ -41,6 +41,7 @@ all typed value kinds; plain and language-tagged text can be written through a
 transaction. Provenance activities can be created and queried through immutable
 value objects and keyed graph views. `production.resolutions[asset_id]` returns
 typed representation availability, resource candidates, evidence, diagnostics,
-and missing-frame details. Compound-media mutation wrappers remain under
-development. The generated low-level declaration table already covers every
-function and struct in the current ABI.
+and missing-frame details. Media roots and explicit candidate confirmation are
+transactional through `add_media_root()` and `confirm_locator()`. Compound-media
+mutation wrappers remain under development. The generated low-level declaration
+table already covers every function and struct in the current ABI.
