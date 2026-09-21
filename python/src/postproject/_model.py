@@ -84,6 +84,48 @@ class ExternalIdentifier:
 
 
 @dataclass(frozen=True, slots=True)
+class ActivityEdge:
+    representation_id: RepresentationId
+    role: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ToolIdentity:
+    name: str
+    version: str | None = None
+    uri: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentIdentity:
+    name: str | None = None
+    identifier: ExternalIdentifier | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Activity:
+    id: ActivityId
+    kind: str
+    started_at_unix_micros: int | None
+    finished_at_unix_micros: int | None
+    tool: ToolIdentity | None
+    agent: AgentIdentity | None
+    inputs: tuple[ActivityEdge, ...]
+    outputs: tuple[ActivityEdge, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ActivitySpec:
+    kind: str
+    outputs: tuple[ActivityEdge, ...]
+    inputs: tuple[ActivityEdge, ...] = ()
+    started_at_unix_micros: int | None = None
+    finished_at_unix_micros: int | None = None
+    tool: ToolIdentity | None = None
+    agent: AgentIdentity | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class MetadataProperty:
     """Vocabulary-qualified metadata property identity."""
 

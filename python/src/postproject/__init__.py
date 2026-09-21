@@ -10,10 +10,14 @@ from ._errors import (
     UnsupportedError,
 )
 from ._model import (
+    Activity,
     ActivityCreatedEvent,
+    ActivityEdge,
     ActivityId,
     ActivityInputAddedEvent,
     ActivityOutputAddedEvent,
+    ActivitySpec,
+    AgentIdentity,
     AssetId,
     AssetImportedEvent,
     ExternalIdentifier,
@@ -55,6 +59,7 @@ from ._model import (
     RevisionEvent,
     RevisionEventPayload,
     RevisionId,
+    ToolIdentity,
     TransactionId,
 )
 from ._native import ABI_VERSION, NativeLibrary
@@ -62,10 +67,14 @@ from ._production import Production, Transaction
 
 __all__ = [
     "ABI_VERSION",
+    "Activity",
     "ActivityCreatedEvent",
+    "ActivityEdge",
     "ActivityId",
     "ActivityInputAddedEvent",
     "ActivityOutputAddedEvent",
+    "ActivitySpec",
+    "AgentIdentity",
     "AlreadyExistsError",
     "AssetId",
     "AssetImportedEvent",
@@ -115,6 +124,7 @@ __all__ = [
     "RevisionEventPayload",
     "RevisionId",
     "StorageError",
+    "ToolIdentity",
     "Transaction",
     "TransactionId",
     "UnsupportedError",
