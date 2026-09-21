@@ -47,13 +47,35 @@ The CLI currently creates plain and language-tagged text values. Complex value
 input will use a documented typed file format rather than requiring unreadable
 shell quoting.
 
+Python uses typed immutable values and keyed reads:
+
+```python
+from postproject import MetadataLanguageString, MetadataProperty
+
+title = MetadataProperty(
+    "http://iptc.org/std/videometadatahub/1.0", "title"
+)
+with production.transaction() as transaction:
+    transaction.add_metadata(
+        asset_id, title, MetadataLanguageString("Interview", "en-US")
+    )
+
+assertions = production.metadata[asset_id]
+matching = production.metadata_by_property[title]
+```
+
+The decoder preserves all current ABI value kinds, including exact decimals
+and rationals, bytes, ordered lists and structures, and typed object references.
+The current mutation ABI accepts plain and language-tagged strings; broader
+typed writes remain outstanding.
+
 ## Availability
 
-The typed domain model, SQLite persistence, Rust production API, and CLI read
-surface are implemented. Activity metadata is writable after the activity is
-created in the same or an earlier transaction. Metadata traversal through C,
-C++, and Python is not available yet; those interfaces must expose the same
-types and repetition semantics without leaking the private storage encoding.
+The typed domain model, SQLite persistence, Rust production API, C traversal,
+CLI read surface, and Python traversal are implemented. Activity metadata is
+writable after the activity is created in the same or an earlier transaction.
+The C++ typed wrapper and general typed writes through the C ABI, CLI, and
+Python remain outstanding.
 
 See [standards boundaries](../concepts/standards-boundaries.md) and the
 [mapping matrix](../reference/standards-mapping-matrix.md) for the intended
