@@ -15,6 +15,8 @@ from uuid import UUID
 from . import _abi
 from ._abi import (
     Error,
+    ExternalIdentifierSet,
+    ObjectRefSet,
     Production as NativeProduction,
     RevisionEvent as NativeRevisionEvent,
     RevisionEventSet,
@@ -144,6 +146,60 @@ class Production:
         )
         self._native.check(status, error)
         return bool(exists.value)
+
+    def external_identifiers(
+        self, target: ObjectReference
+    ) -> tuple[ExternalIdentifier, ...]:
+        """Return every external identifier attached to ``target``."""
+
+        self._require_open()
+        native_target = _native_object_reference(target)
+        handle = ctypes.POINTER(ExternalIdentifierSet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_external_identifiers(
+            self._handle,
+            ctypes.byref(native_target),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native identifier query returned no result set")
+        try:
+            count = self._native.lib.pp_external_identifier_set_count(handle)
+            return tuple(
+                _external_identifier_at(self._native, handle, index)
+                for index in range(int(count))
+            )
+        finally:
+            self._native.lib.pp_external_identifier_set_release(handle)
+
+    def find_by_external_identifier(
+        self, scheme: str, value: str
+    ) -> tuple[ObjectReference, ...]:
+        """Find objects carrying an exact external scheme and value."""
+
+        self._require_open()
+        handle = ctypes.POINTER(ObjectRefSet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_find_by_external_identifier(
+            self._handle,
+            _utf8(scheme, "identifier scheme"),
+            _utf8(value, "identifier value"),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native identifier lookup returned no result set")
+        try:
+            count = self._native.lib.pp_object_ref_set_count(handle)
+            return tuple(
+                _object_reference_at(self._native, handle, index)
+                for index in range(int(count))
+            )
+        finally:
+            self._native.lib.pp_object_ref_set_release(handle)
 
     def latest_revision(self) -> Revision | None:
         """Return the newest committed revision, if one exists."""
@@ -304,6 +360,20 @@ class Transaction:
         self._native.check(status, error)
         return AssetId(_uuid(asset_id))
 
+    def add_external_identifier(
+        self, target: ObjectReference, identifier: ExternalIdentifier
+    ) -> None:
+        """Stage an external identifier attachment."""
+
+        self._mutate_external_identifier(False, target, identifier)
+
+    def remove_external_identifier(
+        self, target: ObjectReference, identifier: ExternalIdentifier
+    ) -> None:
+        """Stage removal of one exact external identifier attachment."""
+
+        self._mutate_external_identifier(True, target, identifier)
+
     def commit(self) -> None:
         """Atomically persist every staged mutation."""
 
@@ -346,6 +416,32 @@ class Transaction:
         self._native.check(status, error)
         self._finished = True
 
+    def _mutate_external_identifier(
+        self,
+        remove: bool,
+        target: ObjectReference,
+        identifier: ExternalIdentifier,
+    ) -> None:
+        self._require_open()
+        native_target = _native_object_reference(target)
+        error = ctypes.POINTER(Error)()
+        function = (
+            self._native.lib.pp_transaction_remove_external_identifier
+            if remove
+            else self._native.lib.pp_transaction_add_external_identifier
+        )
+        status = function(
+            self._handle,
+            ctypes.byref(native_target),
+            _utf8(identifier.scheme, "identifier scheme"),
+            _utf8(identifier.value, "identifier value"),
+            None
+            if identifier.qualifier is None
+            else _utf8(identifier.qualifier, "identifier qualifier"),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
     def _require_open(self) -> None:
         if not self._finalizer.alive:
             raise RuntimeError("transaction is closed")
@@ -376,6 +472,63 @@ def _native_uuid(value: UUID) -> Uuid:
     native = Uuid()
     native.bytes[:] = value.bytes
     return native
+
+
+def _native_object_reference(value: ObjectReference) -> _abi.ObjectRef:
+    native = _abi.ObjectRef()
+    if isinstance(value, ProductionId):
+        native.kind = _abi.PP_OBJECT_PRODUCTION
+    elif isinstance(value, AssetId):
+        native.kind = _abi.PP_OBJECT_ASSET
+    elif isinstance(value, RepresentationId):
+        native.kind = _abi.PP_OBJECT_REPRESENTATION
+    elif isinstance(value, ResourceId):
+        native.kind = _abi.PP_OBJECT_RESOURCE
+    elif isinstance(value, ActivityId):
+        native.kind = _abi.PP_OBJECT_ACTIVITY
+    else:
+        raise TypeError("unsupported object reference")
+    native.id = _native_uuid(value.value)
+    return native
+
+
+def _external_identifier_at(
+    native: NativeLibrary,
+    identifiers: _Pointer[ExternalIdentifierSet],
+    index: int,
+) -> ExternalIdentifier:
+    scheme = ctypes.c_char_p()
+    value = ctypes.c_char_p()
+    qualifier = ctypes.c_char_p()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_external_identifier_set_get(
+        identifiers,
+        index,
+        ctypes.byref(scheme),
+        ctypes.byref(value),
+        ctypes.byref(qualifier),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return ExternalIdentifier(
+        _decode_required(scheme.value, "identifier scheme"),
+        _decode_required(value.value, "identifier value"),
+        _decode_optional(qualifier.value),
+    )
+
+
+def _object_reference_at(
+    native: NativeLibrary,
+    objects: _Pointer[ObjectRefSet],
+    index: int,
+) -> ObjectReference:
+    value = _abi.ObjectRef()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_object_ref_set_get(
+        objects, index, ctypes.byref(value), ctypes.byref(error)
+    )
+    native.check(status, error)
+    return _object_reference(value)
 
 
 def _revision_at(
