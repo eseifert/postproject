@@ -37,4 +37,5 @@
 # Reference
 
 - [Terminology](reference/terminology.md)
+- [Metadata vocabulary registry](reference/metadata-vocabularies.md)
 - [Standards mapping matrix](reference/standards-mapping-matrix.md)
