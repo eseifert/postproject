@@ -21,6 +21,9 @@ with Production.create("production.pproj", "Documentary") as production:
 
     assert asset_id in production.assets
 
+    for representation in production.resolutions[asset_id]:
+        print(representation.availability, representation.resources)
+
     revision = production.latest_revision
     assert revision is not None
     for event in production.revision_events[revision.id]:
@@ -31,4 +34,6 @@ Production and transaction handles support deterministic `close()` and context
 manager cleanup. A clean transaction context commits; an exception rolls back.
 Releasing an unfinished transaction also discards its staged mutations.
 Revision summaries and semantic event payloads are copied Python values; they
-remain valid after the temporary native result handles are released.
+remain valid after the temporary native result handles are released. Resolution
+results likewise copy the complete nested candidate, evidence, issue, and
+missing-frame details before releasing their native result handle.
