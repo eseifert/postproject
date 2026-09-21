@@ -59,6 +59,7 @@ from ._model import (
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
     Fingerprint,
+    HostObjectBinding,
     ImageSequenceDescriptor,
     Locator,
     LocatorAddedEvent,
@@ -200,6 +201,43 @@ class _Representations:
 
     def __getitem__(self, asset_id: AssetId) -> tuple[Representation, ...]:
         return self._production._representations(asset_id)
+
+
+class _HostBindings:
+    def __init__(self, production: Production) -> None:
+        self._production = production
+
+    def __getitem__(self, target: ObjectReference) -> str:
+        production_id = _native_uuid(self._production.id.value)
+        native_target = _native_object_reference(target)
+        binding = ctypes.c_char_p()
+        error = ctypes.POINTER(Error)()
+        status = self._production._native.lib.pp_host_binding_format(
+            ctypes.byref(production_id),
+            ctypes.byref(native_target),
+            ctypes.byref(binding),
+            ctypes.byref(error),
+        )
+        self._production._native.check(status, error)
+        try:
+            return _decode_required(binding.value, "host binding")
+        finally:
+            self._production._native.lib.pp_host_binding_release(binding)
+
+    def parse(self, value: str) -> HostObjectBinding:
+        production_id = Uuid()
+        target = _abi.ObjectRef()
+        error = ctypes.POINTER(Error)()
+        status = self._production._native.lib.pp_host_binding_parse(
+            _utf8(value, "host binding"),
+            ctypes.byref(production_id),
+            ctypes.byref(target),
+            ctypes.byref(error),
+        )
+        self._production._native.check(status, error)
+        return HostObjectBinding(
+            ProductionId(_uuid(production_id)), _object_reference(target)
+        )
 
 
 class Production:
@@ -365,6 +403,13 @@ class Production:
 
         self._require_open()
         return _Representations(self)
+
+    @property
+    def host_bindings(self) -> _HostBindings:
+        """Return the portable host-binding formatter and parser."""
+
+        self._require_open()
+        return _HostBindings(self)
 
     def _contains_asset(self, asset_id: AssetId) -> bool:
         """Return whether an asset identity belongs to this production."""

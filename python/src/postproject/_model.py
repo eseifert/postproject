@@ -76,6 +76,14 @@ ObjectReference: TypeAlias = (
 
 
 @dataclass(frozen=True, slots=True)
+class HostObjectBinding:
+    """Portable production-scoped reference stored by a host application."""
+
+    production_id: ProductionId
+    object: ObjectReference
+
+
+@dataclass(frozen=True, slots=True)
 class ExternalIdentifier:
     """Opaque external identity preserved exactly as supplied."""
 

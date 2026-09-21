@@ -23,6 +23,7 @@ from postproject import (
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
+    HostObjectBinding,
     InvalidArgumentError,
     LocatorAddedEvent,
     LocatorAvailability,
@@ -121,6 +122,22 @@ class ProductionTests(unittest.TestCase):
         self.assertEqual(len(resource.locators), 1)
         self.assertEqual(resource.locators[0].availability, LocatorAvailability.ONLINE)
         self.assertIsNotNone(resource.locators[0].last_seen_unix_micros)
+
+    def test_host_bindings_are_keyed_and_round_trip_through_native_abi(self) -> None:
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+
+            encoded = production.host_bindings[asset_id]
+            self.assertTrue(encoded.startswith("https://postproject.org/ref/v1/"))
+            self.assertEqual(
+                production.host_bindings.parse(encoded),
+                HostObjectBinding(production.id, asset_id),
+            )
+            with self.assertRaises(InvalidArgumentError):
+                production.host_bindings.parse("postproject:v1:obsolete")
 
     def test_context_exception_and_explicit_rollback_discard_imports(self) -> None:
         with Production.create(
