@@ -17,6 +17,7 @@ from postproject import (
     ActivitySpec,
     AgentIdentity,
     AssetImportedEvent,
+    EvidenceKind,
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
@@ -32,8 +33,10 @@ from postproject import (
     OriginIdentity,
     Production,
     RepresentationAddedEvent,
+    RepresentationAvailability,
     RepresentationResourceAddedEvent,
     ResourceAddedEvent,
+    ResourceResolutionState,
     RevisionContext,
     RevisionId,
     ToolIdentity,
@@ -242,6 +245,36 @@ class ProductionTests(unittest.TestCase):
             assert isinstance(payload, ExternalIdentifierRemovedEvent)
             self.assertEqual(payload.target, asset_id)
             self.assertEqual(payload.identifier, camera_id)
+
+    def test_resolution_results_are_typed_and_keyed_by_asset(self) -> None:
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+
+            resolutions = production.resolutions[asset_id]
+            self.assertEqual(len(resolutions), 1)
+            representation = resolutions[0]
+            self.assertEqual(
+                representation.availability, RepresentationAvailability.ONLINE
+            )
+            self.assertEqual(representation.issues, ())
+            self.assertEqual(len(representation.resources), 1)
+            resource = representation.resources[0]
+            self.assertEqual(
+                resource.state,
+                ResourceResolutionState.ONLINE_AT_KNOWN_LOCATOR,
+            )
+            self.assertEqual(resource.evidence, ())
+            self.assertEqual(len(resource.candidates), 1)
+            candidate = resource.candidates[0]
+            self.assertEqual(candidate.uri, self.media_path.resolve().as_uri())
+            self.assertEqual(candidate.confidence_basis_points, 10_000)
+            self.assertEqual(
+                tuple(item.kind for item in candidate.evidence),
+                (EvidenceKind.KNOWN_LOCATOR_AVAILABLE,),
+            )
 
     def test_external_identifier_nul_is_rejected_before_native_call(self) -> None:
         with (
