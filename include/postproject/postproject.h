@@ -210,8 +210,8 @@ PP_API pp_error_code_t pp_representation_set_get(
     pp_uuid_t *out_id, pp_uuid_t *out_asset_id,
     pp_representation_kind_t *out_kind,
     pp_content_structure_kind_t *out_structure_kind,
-    uint64_t *out_member_count, uint64_t *out_fingerprint_count,
-    pp_error_t **out_error);
+    uint64_t *out_member_count, uint64_t *out_resource_count,
+    uint64_t *out_fingerprint_count, pp_error_t **out_error);
 PP_API pp_error_code_t pp_representation_set_get_fingerprint(
     const pp_representation_set_t *representations,
     uint64_t representation_index, uint64_t fingerprint_index,

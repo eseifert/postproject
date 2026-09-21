@@ -162,6 +162,7 @@ pub unsafe extern "C" fn pp_representation_set_get(
     out_kind: *mut u32,
     out_structure_kind: *mut u32,
     out_member_count: *mut u64,
+    out_resource_count: *mut u64,
     out_fingerprint_count: *mut u64,
     out_error: *mut *mut PpError,
 ) -> u32 {
@@ -172,6 +173,7 @@ pub unsafe extern "C" fn pp_representation_set_get(
         initialize_value(out_kind, 0);
         initialize_value(out_structure_kind, 0);
         initialize_value(out_member_count, 0);
+        initialize_value(out_resource_count, 0);
         initialize_value(out_fingerprint_count, 0);
         ffi_call(out_error, || {
             require_output(out_id, "out_id")?;
@@ -179,6 +181,7 @@ pub unsafe extern "C" fn pp_representation_set_get(
             require_output(out_kind, "out_kind")?;
             require_output(out_structure_kind, "out_structure_kind")?;
             require_output(out_member_count, "out_member_count")?;
+            require_output(out_resource_count, "out_resource_count")?;
             require_output(out_fingerprint_count, "out_fingerprint_count")?;
             let set = representations
                 .as_ref()
@@ -193,6 +196,8 @@ pub unsafe extern "C" fn pp_representation_set_get(
             out_kind.write(representation.kind);
             out_structure_kind.write(representation.structure_kind);
             out_member_count.write(u64::try_from(representation.members.len()).unwrap_or(u64::MAX));
+            out_resource_count
+                .write(u64::try_from(representation.resources.len()).unwrap_or(u64::MAX));
             out_fingerprint_count
                 .write(u64::try_from(representation.fingerprints.len()).unwrap_or(u64::MAX));
             Ok(())

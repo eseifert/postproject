@@ -319,7 +319,7 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_production_representations.restype = ErrorCode
     lib.pp_representation_set_count.argtypes = [ctypes.POINTER(RepresentationSet)]
     lib.pp_representation_set_count.restype = ctypes.c_uint64
-    lib.pp_representation_set_get.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(Uuid), ctypes.POINTER(RepresentationKind), ctypes.POINTER(ContentStructureKind), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_representation_set_get.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(Uuid), ctypes.POINTER(RepresentationKind), ctypes.POINTER(ContentStructureKind), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_representation_set_get.restype = ErrorCode
     lib.pp_representation_set_get_fingerprint.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_representation_set_get_fingerprint.restype = ErrorCode

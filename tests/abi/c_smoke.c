@@ -262,6 +262,7 @@ int main(int argc, char **argv) {
   pp_representation_kind_t representation_kind = 0;
   pp_content_structure_kind_t structure_kind = 0;
   uint64_t member_count = 0;
+  uint64_t representation_resource_count = 0;
   uint64_t representation_fingerprint_count = 0;
   status = pp_production_representations(production, &asset_id,
                                          &representations, &error);
@@ -270,12 +271,14 @@ int main(int argc, char **argv) {
       pp_representation_set_get(
           representations, 0, &representation_id, &representation_asset_id,
           &representation_kind, &structure_kind, &member_count,
-          &representation_fingerprint_count, &error) != PP_OK ||
+          &representation_resource_count, &representation_fingerprint_count,
+          &error) != PP_OK ||
       memcmp(representation_asset_id.bytes, asset_id.bytes,
              sizeof(asset_id.bytes)) != 0 ||
       representation_kind != PP_REPRESENTATION_ORIGINAL ||
       structure_kind != PP_CONTENT_SINGLE_RESOURCE ||
       member_count != UINT64_C(1) ||
+      representation_resource_count != UINT64_C(1) ||
       representation_fingerprint_count != UINT64_C(0)) {
     pp_representation_set_release(representations);
     pp_production_release(production);
