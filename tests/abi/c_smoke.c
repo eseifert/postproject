@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
     return 64;
   }
   (void)remove(argv[1]);
-  if (pp_abi_version() != UINT32_C(9)) {
+  if (pp_abi_version() != UINT32_C(10)) {
     return 1;
   }
   pp_error_code_t status =
@@ -112,6 +112,26 @@ int main(int argc, char **argv) {
     return 12;
   }
   pp_object_ref_t asset_ref = {PP_OBJECT_ASSET, asset_id};
+  char *host_binding = NULL;
+  pp_uuid_t bound_production_id = {{0}};
+  pp_object_ref_t bound_object = {0};
+  status = pp_host_binding_format(&id, &asset_ref, &host_binding, &error);
+  if (status != PP_OK || host_binding == NULL ||
+      strncmp(host_binding, "https://postproject.org/ref/v1/",
+              sizeof("https://postproject.org/ref/v1/") - 1) != 0 ||
+      pp_host_binding_parse(host_binding, &bound_production_id, &bound_object,
+                            &error) != PP_OK ||
+      memcmp(bound_production_id.bytes, id.bytes, sizeof(id.bytes)) != 0 ||
+      bound_object.kind != PP_OBJECT_ASSET ||
+      memcmp(bound_object.id.bytes, asset_id.bytes, sizeof(asset_id.bytes)) !=
+          0) {
+    pp_host_binding_release(host_binding);
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 65;
+  }
+  pp_host_binding_release(host_binding);
   status = pp_transaction_add_external_identifier(
       transaction, &asset_ref, "com.example.asset", "asset-42", "primary",
       &error);

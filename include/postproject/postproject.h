@@ -185,6 +185,19 @@ typedef uint32_t pp_evidence_kind_t;
  * failure, *out_production is NULL and a non-NULL *out_error is caller-owned.
  * out_error may itself be NULL when diagnostic text is not required. */
 PP_API uint32_t pp_abi_version(void);
+/* Host bindings are pure value operations and perform no network access.
+ * Inputs are borrowed. On success, *out_binding is caller-owned and must be
+ * released exactly once with pp_host_binding_release(). */
+PP_API pp_error_code_t pp_host_binding_format(
+    const pp_uuid_t *production_id, const pp_object_ref_t *object,
+    char **out_binding, pp_error_t **out_error);
+/* binding is borrowed NUL-terminated UTF-8. Both value outputs are required
+ * caller-owned storage and are cleared on failure. */
+PP_API pp_error_code_t pp_host_binding_parse(
+    const char *binding, pp_uuid_t *out_production_id,
+    pp_object_ref_t *out_object, pp_error_t **out_error);
+/* Accepts NULL. No pointer returned by another function may be passed here. */
+PP_API void pp_host_binding_release(char *binding);
 PP_API pp_error_code_t pp_production_create(const char *path,
                                          const char *display_name,
                                          pp_production_t **out_production,

@@ -221,6 +221,9 @@ EXPORTED_SYMBOLS = (
     "pp_external_identifier_set_count",
     "pp_external_identifier_set_get",
     "pp_external_identifier_set_release",
+    "pp_host_binding_format",
+    "pp_host_binding_parse",
+    "pp_host_binding_release",
     "pp_metadata_set_count",
     "pp_metadata_set_get",
     "pp_metadata_set_release",
@@ -307,6 +310,12 @@ def configure_api(lib: ctypes.CDLL) -> None:
 
     lib.pp_abi_version.argtypes = []
     lib.pp_abi_version.restype = ctypes.c_uint32
+    lib.pp_host_binding_format.argtypes = [ctypes.POINTER(Uuid), ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_host_binding_format.restype = ErrorCode
+    lib.pp_host_binding_parse.argtypes = [ctypes.c_char_p, ctypes.POINTER(Uuid), ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_host_binding_parse.restype = ErrorCode
+    lib.pp_host_binding_release.argtypes = [ctypes.c_char_p]
+    lib.pp_host_binding_release.restype = None
     lib.pp_production_create.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Production)), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_production_create.restype = ErrorCode
     lib.pp_production_open.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Production)), ctypes.POINTER(ctypes.POINTER(Error))]

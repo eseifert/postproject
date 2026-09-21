@@ -12,6 +12,9 @@ pp_error_release
 pp_external_identifier_set_count
 pp_external_identifier_set_get
 pp_external_identifier_set_release
+pp_host_binding_format
+pp_host_binding_parse
+pp_host_binding_release
 pp_metadata_set_count
 pp_metadata_set_get
 pp_metadata_set_release

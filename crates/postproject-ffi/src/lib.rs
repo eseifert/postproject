@@ -18,16 +18,17 @@ use std::{
     path::Path,
     ptr,
     rc::Rc,
+    str::FromStr,
 };
 
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     AssetId, AvailabilityIssue, AvailabilityIssueKind, Error, ErrorKind, EvidenceKind,
-    ExternalIdentifier, IdentifierScheme, Locator, MAX_ACTIVITY_EDGES, MediaRoot, MetadataProperty,
-    MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId, PropertyId,
-    RepresentationAvailability, RepresentationId, RepresentationResolution, ResolutionEvidence,
-    ResourceId, ResourceResolutionState, RevisionContext, RevisionId, Timestamp, ToolIdentity,
-    TransactionLifecycle, VocabularyId,
+    ExternalIdentifier, HostObjectBinding, IdentifierScheme, Locator, MAX_ACTIVITY_EDGES,
+    MediaRoot, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport,
+    ProductionId, PropertyId, RepresentationAvailability, RepresentationId,
+    RepresentationResolution, ResolutionEvidence, ResourceId, ResourceResolutionState,
+    RevisionContext, RevisionId, Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
@@ -105,7 +106,7 @@ const PP_REVISION_ACTIVITY_INPUT_ADDED: u32 = 12;
 const PP_REVISION_ACTIVITY_OUTPUT_ADDED: u32 = 13;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 9;
+pub const ABI_VERSION: u32 = 10;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -260,6 +261,85 @@ pub struct PpError {
 #[unsafe(no_mangle)]
 pub extern "C" fn pp_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// Formats a caller-owned portable host-object binding.
+///
+/// # Safety
+///
+/// `production_id` and `object` must be readable. `out_binding` must be
+/// writable and receives a string that must be released exactly once with
+/// [`pp_host_binding_release`]. `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_host_binding_format(
+    production_id: *const PpUuid,
+    object: *const PpObjectRef,
+    out_binding: *mut *mut c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and inputs checked before dereference.
+    unsafe {
+        initialize_output(out_binding);
+        ffi_call(out_error, || {
+            let production_id = production_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production_id must not be null"))?;
+            let object = object
+                .as_ref()
+                .ok_or_else(|| invalid_argument("object must not be null"))?;
+            require_output(out_binding, "out_binding")?;
+            let binding = HostObjectBinding::new(
+                ProductionId::from_bytes(production_id.bytes),
+                object_ref_from_abi(*object)?,
+            )?;
+            let binding = exact_cstring(&binding.to_string(), "host binding")?;
+            out_binding.write(binding.into_raw());
+            Ok(())
+        })
+    }
+}
+
+/// Parses a portable host-object binding into caller-owned value outputs.
+///
+/// # Safety
+///
+/// `binding` must be NUL-terminated UTF-8 for this call. Both value outputs
+/// must be writable. `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_host_binding_parse(
+    binding: *const c_char,
+    out_production_id: *mut PpUuid,
+    out_object: *mut PpObjectRef,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and all pointers checked before use.
+    unsafe {
+        initialize_uuid(out_production_id);
+        initialize_object_ref(out_object);
+        ffi_call(out_error, || {
+            require_output(out_production_id, "out_production_id")?;
+            require_output(out_object, "out_object")?;
+            let binding = HostObjectBinding::from_str(required_utf8(binding, "binding")?)?;
+            out_production_id.write(uuid(binding.production_id()));
+            out_object.write(object_ref_to_abi(binding.object())?);
+            Ok(())
+        })
+    }
+}
+
+/// Releases a string returned by [`pp_host_binding_format`].
+///
+/// # Safety
+///
+/// `binding` must be null or a live pointer returned by
+/// [`pp_host_binding_format`] that has not already been released.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_host_binding_release(binding: *mut c_char) {
+    if !binding.is_null() {
+        // SAFETY: The caller contract requires the exact pointer and ownership
+        // originating from `CString::into_raw` above.
+        drop(unsafe { CString::from_raw(binding) });
+    }
 }
 
 /// Creates a new production file.
