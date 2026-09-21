@@ -9,6 +9,7 @@ Construct an activity from existing representation IDs, then optionally attach:
 - start and finish timestamps;
 - a bounded tool name, version, and absolute URI;
 - a bounded agent name and/or external identifier;
+- external identifiers for the activity itself, such as render-job IDs;
 - typed metadata parameters using `ObjectRef::Activity(activity.id())`.
 
 Stage the activity with `ProductionStoreTransaction::create_activity`. Activity,

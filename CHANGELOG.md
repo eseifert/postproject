@@ -33,6 +33,8 @@ All notable changes to PostProject will be documented here. The project uses
 - Added an opt-in metadata vocabulary registry with type, cardinality,
   description, validation, and cross-standard mapping hints; unknown terms
   remain independent of the registry.
+- Extended external-identifier attachments to activities in SQLite schema
+  version 4, including exact lookup and transactional persistence.
 
 ### Added
 

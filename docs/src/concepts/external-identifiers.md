@@ -10,6 +10,11 @@ PostProject preserves unknown schemes and values exactly.
 Applications may opt into a scheme-specific validator when they need to verify
 syntax; storing an identifier never triggers a registry or network lookup.
 
+Identifiers may target assets, representations, resources, or activities. An
+activity identifier names the operation itself, such as a render-farm job or
+workflow task; it is distinct from the optional identifier of the agent that
+performed the activity.
+
 Scheme identifiers are strings rather than a closed enum so new standards and
 application namespaces do not require an ABI redesign. The small built-in
 registry currently describes:
