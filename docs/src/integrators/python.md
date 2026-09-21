@@ -33,6 +33,12 @@ A transaction context commits only after a clean exit. An exception rolls it
 back. `close()` is idempotent for production and transaction handles, and a
 finalizer is a fallback for handles that were not closed explicitly.
 
+Production operations may run concurrently from multiple Python threads; calls
+on one native handle serialize internally. Do not call `close()` concurrently
+with an operation, and do not share a transaction between concurrent callers.
+Open the production again when reads should use a separate native handle during
+a commit.
+
 The current high-level surface covers production lifecycle, transactions,
 original-media import, revision context, asset existence, and the paginated
 revision feed with typed semantic events. External identifiers can be added,

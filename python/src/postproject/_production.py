@@ -241,7 +241,10 @@ class _HostBindings:
 
 
 class Production:
-    """An owned native production handle."""
+    """An owned native production handle supporting concurrent operations.
+
+    Calls may run from multiple threads, but ``close()`` must not overlap them.
+    """
 
     def __init__(
         self,
@@ -738,7 +741,7 @@ class Production:
 
 
 class Transaction:
-    """An owned transaction with commit-or-rollback context semantics."""
+    """A caller-serialized transaction with context-manager semantics."""
 
     def __init__(
         self,

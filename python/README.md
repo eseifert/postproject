@@ -37,6 +37,10 @@ with Production.create("production.pproj", "Documentary") as production:
 Production and transaction handles support deterministic `close()` and context
 manager cleanup. A clean transaction context commits; an exception rolls back.
 Releasing an unfinished transaction also discards its staged mutations.
+Production operations may run concurrently from multiple threads and serialize
+inside the native handle; `close()` must not overlap them. Transaction instances
+must remain on one caller-controlled execution path. Open the production again
+when reads should use a separate native handle during a commit.
 Revision summaries, representation structures, resources, locators, fingerprints,
 and semantic event payloads are copied Python values; they remain valid after the
 temporary native result handles are released. Resolution results likewise copy
