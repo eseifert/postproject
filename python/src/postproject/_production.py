@@ -22,6 +22,7 @@ from ._abi import (
     ExternalIdentifierSet,
     MetadataSet,
     ObjectRefSet,
+    ResolutionSet,
     RevisionEventSet,
     RevisionSet,
     Uuid,
@@ -49,6 +50,9 @@ from ._model import (
     AgentIdentity,
     AssetId,
     AssetImportedEvent,
+    AvailabilityIssue,
+    AvailabilityIssueKind,
+    EvidenceKind,
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
@@ -79,10 +83,16 @@ from ._model import (
     OriginIdentity,
     ProductionId,
     RepresentationAddedEvent,
+    RepresentationAvailability,
     RepresentationId,
+    RepresentationResolution,
     RepresentationResourceAddedEvent,
+    ResolutionCandidate,
+    ResolutionEvidence,
     ResourceAddedEvent,
     ResourceId,
+    ResourceResolution,
+    ResourceResolutionState,
     Revision,
     RevisionContext,
     RevisionEvent,
@@ -164,6 +174,14 @@ class _RevisionEvents:
 
     def __getitem__(self, revision_id: RevisionId) -> tuple[RevisionEvent, ...]:
         return self._production._revision_events(revision_id)
+
+
+class _Resolutions:
+    def __init__(self, production: Production) -> None:
+        self._production = production
+
+    def __getitem__(self, asset_id: AssetId) -> tuple[RepresentationResolution, ...]:
+        return self._production._resolve_asset(asset_id)
 
 
 class Production:
@@ -315,6 +333,13 @@ class Production:
 
         self._require_open()
         return _RevisionEvents(self)
+
+    @property
+    def resolutions(self) -> _Resolutions:
+        """Return representation-resolution results keyed by asset identity."""
+
+        self._require_open()
+        return _Resolutions(self)
 
     def _contains_asset(self, asset_id: AssetId) -> bool:
         """Return whether an asset identity belongs to this production."""
@@ -498,6 +523,29 @@ class Production:
             )
         finally:
             self._native.lib.pp_revision_event_set_release(handle)
+
+    def _resolve_asset(self, asset_id: AssetId) -> tuple[RepresentationResolution, ...]:
+        self._require_open()
+        native_id = _native_uuid(asset_id.value)
+        handle = ctypes.POINTER(ResolutionSet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_resolve_asset(
+            self._handle,
+            ctypes.byref(native_id),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native resolution query returned no result set")
+        try:
+            count = self._native.lib.pp_resolution_set_representation_count(handle)
+            return tuple(
+                _representation_resolution_at(self._native, handle, index)
+                for index in range(int(count))
+            )
+        finally:
+            self._native.lib.pp_resolution_set_release(handle)
 
     def transaction(
         self,
@@ -1039,6 +1087,239 @@ def _activity_edge(
     )
 
 
+def _representation_resolution_at(
+    native: NativeLibrary,
+    resolutions: _Pointer[ResolutionSet],
+    representation_index: int,
+) -> RepresentationResolution:
+    representation_id = Uuid()
+    availability = _abi.RepresentationAvailability()
+    resource_count = ctypes.c_uint64()
+    issue_count = ctypes.c_uint64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_resolution_set_get_representation(
+        resolutions,
+        representation_index,
+        ctypes.byref(representation_id),
+        ctypes.byref(availability),
+        ctypes.byref(resource_count),
+        ctypes.byref(issue_count),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return RepresentationResolution(
+        RepresentationId(_uuid(representation_id)),
+        _representation_availability(int(availability.value)),
+        tuple(
+            _resource_resolution_at(
+                native, resolutions, representation_index, resource_index
+            )
+            for resource_index in range(int(resource_count.value))
+        ),
+        tuple(
+            _availability_issue_at(
+                native, resolutions, representation_index, issue_index
+            )
+            for issue_index in range(int(issue_count.value))
+        ),
+    )
+
+
+def _resource_resolution_at(
+    native: NativeLibrary,
+    resolutions: _Pointer[ResolutionSet],
+    representation_index: int,
+    resource_index: int,
+) -> ResourceResolution:
+    resource_id = Uuid()
+    state = _abi.ResourceResolutionState()
+    candidate_count = ctypes.c_uint64()
+    evidence_count = ctypes.c_uint64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_resolution_set_get_resource(
+        resolutions,
+        representation_index,
+        resource_index,
+        ctypes.byref(resource_id),
+        ctypes.byref(state),
+        ctypes.byref(candidate_count),
+        ctypes.byref(evidence_count),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return ResourceResolution(
+        ResourceId(_uuid(resource_id)),
+        _resource_resolution_state(int(state.value)),
+        tuple(
+            _resolution_candidate_at(
+                native,
+                resolutions,
+                representation_index,
+                resource_index,
+                candidate_index,
+            )
+            for candidate_index in range(int(candidate_count.value))
+        ),
+        tuple(
+            _resource_evidence_at(
+                native,
+                resolutions,
+                representation_index,
+                resource_index,
+                evidence_index,
+            )
+            for evidence_index in range(int(evidence_count.value))
+        ),
+    )
+
+
+def _resolution_candidate_at(
+    native: NativeLibrary,
+    resolutions: _Pointer[ResolutionSet],
+    representation_index: int,
+    resource_index: int,
+    candidate_index: int,
+) -> ResolutionCandidate:
+    uri = ctypes.c_char_p()
+    confidence = ctypes.c_uint16()
+    evidence_count = ctypes.c_uint64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_resolution_set_get_candidate(
+        resolutions,
+        representation_index,
+        resource_index,
+        candidate_index,
+        ctypes.byref(uri),
+        ctypes.byref(confidence),
+        ctypes.byref(evidence_count),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return ResolutionCandidate(
+        _decode_required(uri.value, "resolution candidate URI"),
+        int(confidence.value),
+        tuple(
+            _candidate_evidence_at(
+                native,
+                resolutions,
+                representation_index,
+                resource_index,
+                candidate_index,
+                evidence_index,
+            )
+            for evidence_index in range(int(evidence_count.value))
+        ),
+    )
+
+
+def _resource_evidence_at(
+    native: NativeLibrary,
+    resolutions: _Pointer[ResolutionSet],
+    representation_index: int,
+    resource_index: int,
+    evidence_index: int,
+) -> ResolutionEvidence:
+    kind = _abi.EvidenceKind()
+    detail = ctypes.c_char_p()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_resolution_set_get_resource_evidence(
+        resolutions,
+        representation_index,
+        resource_index,
+        evidence_index,
+        ctypes.byref(kind),
+        ctypes.byref(detail),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return ResolutionEvidence(
+        _evidence_kind(int(kind.value)), _decode_optional(detail.value)
+    )
+
+
+def _candidate_evidence_at(
+    native: NativeLibrary,
+    resolutions: _Pointer[ResolutionSet],
+    representation_index: int,
+    resource_index: int,
+    candidate_index: int,
+    evidence_index: int,
+) -> ResolutionEvidence:
+    kind = _abi.EvidenceKind()
+    detail = ctypes.c_char_p()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_resolution_set_get_candidate_evidence(
+        resolutions,
+        representation_index,
+        resource_index,
+        candidate_index,
+        evidence_index,
+        ctypes.byref(kind),
+        ctypes.byref(detail),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return ResolutionEvidence(
+        _evidence_kind(int(kind.value)), _decode_optional(detail.value)
+    )
+
+
+def _availability_issue_at(
+    native: NativeLibrary,
+    resolutions: _Pointer[ResolutionSet],
+    representation_index: int,
+    issue_index: int,
+) -> AvailabilityIssue:
+    resource_id = Uuid()
+    required = ctypes.c_uint8()
+    kind = _abi.AvailabilityIssueKind()
+    frame_count = ctypes.c_uint64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_resolution_set_get_issue(
+        resolutions,
+        representation_index,
+        issue_index,
+        ctypes.byref(resource_id),
+        ctypes.byref(required),
+        ctypes.byref(kind),
+        ctypes.byref(frame_count),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return AvailabilityIssue(
+        ResourceId(_uuid(resource_id)),
+        bool(required.value),
+        _availability_issue_kind(int(kind.value)),
+        tuple(
+            _missing_frame_at(
+                native, resolutions, representation_index, issue_index, frame_index
+            )
+            for frame_index in range(int(frame_count.value))
+        ),
+    )
+
+
+def _missing_frame_at(
+    native: NativeLibrary,
+    resolutions: _Pointer[ResolutionSet],
+    representation_index: int,
+    issue_index: int,
+    frame_index: int,
+) -> int:
+    frame = ctypes.c_int64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_resolution_set_get_issue_frame(
+        resolutions,
+        representation_index,
+        issue_index,
+        frame_index,
+        ctypes.byref(frame),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return int(frame.value)
+
+
 def _metadata_at(
     native: NativeLibrary,
     metadata: _Pointer[MetadataSet],
@@ -1372,6 +1653,77 @@ def _object_reference(value: _abi.ObjectRef) -> ObjectReference:
     if kind == _abi.PP_OBJECT_ACTIVITY:
         return ActivityId(object_id)
     raise RuntimeError("revision event has an unknown object-reference kind")
+
+
+def _representation_availability(value: int) -> RepresentationAvailability:
+    result = {
+        _abi.PP_AVAILABILITY_ONLINE: RepresentationAvailability.ONLINE,
+        _abi.PP_AVAILABILITY_PARTIAL: RepresentationAvailability.PARTIAL,
+        _abi.PP_AVAILABILITY_OFFLINE: RepresentationAvailability.OFFLINE,
+        _abi.PP_AVAILABILITY_AMBIGUOUS: RepresentationAvailability.AMBIGUOUS,
+        _abi.PP_AVAILABILITY_ERROR: RepresentationAvailability.ERROR,
+    }.get(value)
+    if result is None:
+        raise RuntimeError("resolution has an unknown availability")
+    return result
+
+
+def _resource_resolution_state(value: int) -> ResourceResolutionState:
+    result = {
+        _abi.PP_RESOURCE_ONLINE_AT_KNOWN_LOCATOR: (
+            ResourceResolutionState.ONLINE_AT_KNOWN_LOCATOR
+        ),
+        _abi.PP_RESOURCE_RESOLVED_EXACT: ResourceResolutionState.RESOLVED_EXACT,
+        _abi.PP_RESOURCE_RESOLVED_PROBABLE: (ResourceResolutionState.RESOLVED_PROBABLE),
+        _abi.PP_RESOURCE_OFFLINE: ResourceResolutionState.OFFLINE,
+        _abi.PP_RESOURCE_AMBIGUOUS: ResourceResolutionState.AMBIGUOUS,
+        _abi.PP_RESOURCE_RESOLUTION_ERROR: ResourceResolutionState.ERROR,
+    }.get(value)
+    if result is None:
+        raise RuntimeError("resolution has an unknown resource state")
+    return result
+
+
+def _availability_issue_kind(value: int) -> AvailabilityIssueKind:
+    result = {
+        _abi.PP_AVAILABILITY_ISSUE_OFFLINE_RESOURCE: (
+            AvailabilityIssueKind.OFFLINE_RESOURCE
+        ),
+        _abi.PP_AVAILABILITY_ISSUE_AMBIGUOUS_RESOURCE: (
+            AvailabilityIssueKind.AMBIGUOUS_RESOURCE
+        ),
+        _abi.PP_AVAILABILITY_ISSUE_RESOURCE_ERROR: (
+            AvailabilityIssueKind.RESOURCE_ERROR
+        ),
+        _abi.PP_AVAILABILITY_ISSUE_MISSING_FRAMES: (
+            AvailabilityIssueKind.MISSING_FRAMES
+        ),
+    }.get(value)
+    if result is None:
+        raise RuntimeError("resolution has an unknown availability issue")
+    return result
+
+
+def _evidence_kind(value: int) -> EvidenceKind:
+    result = {
+        _abi.PP_EVIDENCE_KNOWN_LOCATOR_AVAILABLE: EvidenceKind.KNOWN_LOCATOR_AVAILABLE,
+        _abi.PP_EVIDENCE_EXACT_FINGERPRINT_MATCH: EvidenceKind.EXACT_FINGERPRINT_MATCH,
+        _abi.PP_EVIDENCE_FULL_HASH_MATCH: EvidenceKind.FULL_HASH_MATCH,
+        _abi.PP_EVIDENCE_PARTIAL_FINGERPRINT_MATCH: (
+            EvidenceKind.PARTIAL_FINGERPRINT_MATCH
+        ),
+        _abi.PP_EVIDENCE_FILE_SIZE_MATCH: EvidenceKind.FILE_SIZE_MATCH,
+        _abi.PP_EVIDENCE_FILE_NAME_MATCH: EvidenceKind.FILE_NAME_MATCH,
+        _abi.PP_EVIDENCE_RELATIVE_PATH_SIMILARITY: (
+            EvidenceKind.RELATIVE_PATH_SIMILARITY
+        ),
+        _abi.PP_EVIDENCE_MEDIA_ROOT_RELATION: EvidenceKind.MEDIA_ROOT_RELATION,
+        _abi.PP_EVIDENCE_CONFLICTING_CANDIDATE: EvidenceKind.CONFLICTING_CANDIDATE,
+        _abi.PP_EVIDENCE_DISCOVERY_ERROR: EvidenceKind.DISCOVERY_ERROR,
+    }.get(value)
+    if result is None:
+        raise RuntimeError("resolution has an unknown evidence kind")
+    return result
 
 
 def _decode_required(value: bytes | None, label: str) -> str:
