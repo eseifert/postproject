@@ -10,6 +10,9 @@ from uuid import UUID
 
 from postproject import (
     AssetImportedEvent,
+    ExternalIdentifier,
+    ExternalIdentifierAddedEvent,
+    ExternalIdentifierRemovedEvent,
     InvalidArgumentError,
     LocatorAddedEvent,
     NotFoundError,
@@ -173,6 +176,71 @@ class ProductionTests(unittest.TestCase):
             missing = RevisionId(UUID("00000000-0000-0000-0000-000000000001"))
             with self.assertRaises(NotFoundError):
                 production.revision_events(missing)
+
+    def test_external_identifiers_roundtrip_lookup_and_remove(self) -> None:
+        camera_id = ExternalIdentifier(
+            "com.example.camera", "A001-C023", "primary"
+        )
+        umid = ExternalIdentifier(
+            "urn:smpte:umid", "060A2B340101010501010D4313000000"
+        )
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+
+            with production.transaction() as transaction:
+                transaction.add_external_identifier(asset_id, camera_id)
+                transaction.add_external_identifier(asset_id, umid)
+
+            self.assertEqual(
+                set(production.external_identifiers(asset_id)), {camera_id, umid}
+            )
+            self.assertEqual(
+                production.find_by_external_identifier(
+                    camera_id.scheme, camera_id.value
+                ),
+                (asset_id,),
+            )
+            revision = production.latest_revision()
+            assert revision is not None
+            added = production.revision_events(revision.id)
+            self.assertTrue(
+                all(
+                    isinstance(event.payload, ExternalIdentifierAddedEvent)
+                    for event in added
+                )
+            )
+
+            with production.transaction() as transaction:
+                transaction.remove_external_identifier(asset_id, camera_id)
+
+            self.assertEqual(production.external_identifiers(asset_id), (umid,))
+            self.assertEqual(
+                production.find_by_external_identifier(
+                    camera_id.scheme, camera_id.value
+                ),
+                (),
+            )
+            revision = production.latest_revision()
+            assert revision is not None
+            removed = production.revision_events(revision.id)
+            self.assertEqual(len(removed), 1)
+            payload = removed[0].payload
+            assert isinstance(payload, ExternalIdentifierRemovedEvent)
+            self.assertEqual(payload.target, asset_id)
+            self.assertEqual(payload.identifier, camera_id)
+
+    def test_external_identifier_nul_is_rejected_before_native_call(self) -> None:
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with self.assertRaisesRegex(ValueError, "NUL"):
+                with production.transaction() as transaction:
+                    transaction.add_external_identifier(
+                        production.id, ExternalIdentifier("invalid\0scheme", "value")
+                    )
 
 
 if __name__ == "__main__":
