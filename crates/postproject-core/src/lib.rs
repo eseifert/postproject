@@ -55,8 +55,8 @@ pub use metadata_registry::{
     metadata_property_definition, metadata_vocabulary_definition,
 };
 pub use model::{
-    Asset, MediaRoot, OriginalMediaImport, Production, Representation, RepresentationKind,
-    Timestamp,
+    Asset, MediaRoot, OriginalMediaImport, Production, Representation, RepresentationImport,
+    RepresentationKind, Timestamp,
 };
 pub use provenance::{
     Activity, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,

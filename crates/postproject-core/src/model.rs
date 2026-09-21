@@ -245,13 +245,90 @@ impl Representation {
     }
 }
 
-/// A validated aggregate representing an imported original media file.
+/// A validated representation and the storage resources that realize it.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OriginalMediaImport {
-    asset: Asset,
+pub struct RepresentationImport {
     representation: Representation,
     resources: Vec<Resource>,
     locators: Vec<Locator>,
+}
+
+impl RepresentationImport {
+    /// Creates an import aggregate whose resource relationships are consistent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] if a referenced resource is absent
+    /// or duplicated, an extra resource is supplied, or any resource lacks a
+    /// locator.
+    pub fn new(
+        representation: Representation,
+        resources: Vec<Resource>,
+        locators: Vec<Locator>,
+    ) -> Result<Self> {
+        let expected: BTreeSet<_> = representation
+            .content_structure()
+            .resource_ids()
+            .into_iter()
+            .collect();
+        let supplied: BTreeSet<_> = resources.iter().map(Resource::id).collect();
+        if expected != supplied || supplied.len() != resources.len() {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "representation resources do not exactly match the content structure",
+            ));
+        }
+        if locators
+            .iter()
+            .any(|locator| !supplied.contains(&locator.resource_id()))
+            || supplied.iter().any(|resource_id| {
+                !locators
+                    .iter()
+                    .any(|item| item.resource_id() == *resource_id)
+            })
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "every representation resource must own at least one supplied locator",
+            ));
+        }
+        Ok(Self {
+            representation,
+            resources,
+            locators,
+        })
+    }
+
+    /// Returns the representation being imported.
+    #[must_use]
+    pub const fn representation(&self) -> &Representation {
+        &self.representation
+    }
+
+    /// Returns the storage resources realizing the representation.
+    #[must_use]
+    pub fn resources(&self) -> &[Resource] {
+        &self.resources
+    }
+
+    /// Returns the known access routes for the imported resources.
+    #[must_use]
+    pub fn locators(&self) -> &[Locator] {
+        &self.locators
+    }
+
+    /// Splits the aggregate into persistable domain values.
+    #[must_use]
+    pub fn into_parts(self) -> (Representation, Vec<Resource>, Vec<Locator>) {
+        (self.representation, self.resources, self.locators)
+    }
+}
+
+/// A validated aggregate representing an imported asset and original media.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OriginalMediaImport {
+    asset: Asset,
+    media: RepresentationImport,
 }
 
 impl OriginalMediaImport {
@@ -280,38 +357,8 @@ impl OriginalMediaImport {
                 "initial import representation must be original media",
             ));
         }
-        let expected: BTreeSet<_> = representation
-            .content_structure()
-            .resource_ids()
-            .into_iter()
-            .collect();
-        let supplied: BTreeSet<_> = resources.iter().map(Resource::id).collect();
-        if expected != supplied || supplied.len() != resources.len() {
-            return Err(Error::new(
-                ErrorKind::InvalidArgument,
-                "import resources do not exactly match the content structure",
-            ));
-        }
-        if locators
-            .iter()
-            .any(|locator| !supplied.contains(&locator.resource_id()))
-            || supplied.iter().any(|resource_id| {
-                !locators
-                    .iter()
-                    .any(|item| item.resource_id() == *resource_id)
-            })
-        {
-            return Err(Error::new(
-                ErrorKind::InvalidArgument,
-                "every import resource must own at least one supplied locator",
-            ));
-        }
-        Ok(Self {
-            asset,
-            representation,
-            resources,
-            locators,
-        })
+        let media = RepresentationImport::new(representation, resources, locators)?;
+        Ok(Self { asset, media })
     }
 
     /// Returns the logical asset.
@@ -323,30 +370,26 @@ impl OriginalMediaImport {
     /// Returns the original representation.
     #[must_use]
     pub const fn representation(&self) -> &Representation {
-        &self.representation
+        self.media.representation()
     }
 
     /// Returns the storage resources realizing the representation.
     #[must_use]
     pub fn resources(&self) -> &[Resource] {
-        &self.resources
+        self.media.resources()
     }
 
     /// Returns the known access routes for the imported resources.
     #[must_use]
     pub fn locators(&self) -> &[Locator] {
-        &self.locators
+        self.media.locators()
     }
 
     /// Splits the aggregate into persistable domain values.
     #[must_use]
     pub fn into_parts(self) -> (Asset, Representation, Vec<Resource>, Vec<Locator>) {
-        (
-            self.asset,
-            self.representation,
-            self.resources,
-            self.locators,
-        )
+        let (representation, resources, locators) = self.media.into_parts();
+        (self.asset, representation, resources, locators)
     }
 }
 
@@ -471,6 +514,59 @@ mod tests {
             OriginalMediaImport::new(asset, representation, vec![resource], vec![locator])
                 .expect_err("mismatched ownership must fail")
                 .kind(),
+            ErrorKind::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn representation_import_accepts_non_original_media() {
+        let asset_id = AssetId::new();
+        let resource_id = ResourceId::new();
+        let representation = Representation::new(
+            RepresentationId::new(),
+            asset_id,
+            RepresentationKind::Proxy,
+            ContentStructure::single_resource(resource_id),
+            Vec::new(),
+        );
+        let resource = Resource::new(resource_id, Vec::new(), None);
+        let locator = Locator::new(
+            LocatorId::new(),
+            resource_id,
+            "file:///proxy.mov",
+            None,
+            LocatorAvailability::Online,
+        )
+        .expect("valid locator");
+
+        let imported =
+            RepresentationImport::new(representation.clone(), vec![resource], vec![locator])
+                .expect("valid representation import");
+
+        assert_eq!(imported.representation(), &representation);
+        assert_eq!(imported.representation().asset_id(), asset_id);
+        assert_eq!(imported.representation().kind(), RepresentationKind::Proxy);
+    }
+
+    #[test]
+    fn representation_import_requires_a_locator_for_every_resource() {
+        let resource_id = ResourceId::new();
+        let representation = Representation::new(
+            RepresentationId::new(),
+            AssetId::new(),
+            RepresentationKind::Derived,
+            ContentStructure::single_resource(resource_id),
+            Vec::new(),
+        );
+
+        assert_eq!(
+            RepresentationImport::new(
+                representation,
+                vec![Resource::new(resource_id, Vec::new(), None)],
+                Vec::new(),
+            )
+            .expect_err("missing locator must fail")
+            .kind(),
             ErrorKind::InvalidArgument
         );
     }
