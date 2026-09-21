@@ -30,6 +30,18 @@ also persist a human-readable fallback such as a display name or last known loca
 fallback never participates in identity. An object UUID is production-scoped; the complete
 `(ProductionId, object kind, object UUID)` tuple is the portable reference.
 
+The canonical serialized form is an opaque, versioned ASCII value:
+
+```text
+postproject:v1:<production UUID>:<object kind>:<object UUID>
+```
+
+Object-kind tokens are `production`, `asset`, `representation`, `resource`, and `activity`.
+UUIDs use lowercase hyphenated RFC 9562 text. Parsers reject unknown versions, unknown kinds,
+extra fields, and non-canonical UUID spellings. This is a PostProject interchange value, not a
+registered URI scheme; hosts must preserve it as opaque text. Advisory fallback text is stored
+separately and is deliberately absent from the serialized identity.
+
 The host remains authoritative for its private project, session, scene, timeline, and UI
 state. The referenced PostProject production remains authoritative for portable production
 knowledge. A disagreement is reported and requires an explicit rebind; neither side silently
@@ -56,5 +68,5 @@ independent integrations agree on what a reference means. Moving the database do
 the tuple, while moving media remains a separate locator-resolution concern.
 
 Integration profiles can share one binding format and differ only in how the production is
-located, owned, and made available. A future serialized host-binding helper may standardize
-the tuple, but it must not make fallback text authoritative.
+located, owned, and made available. The core formatting and parsing helper standardizes the
+tuple without making fallback text authoritative.
