@@ -28,6 +28,9 @@ All notable changes to PostProject will be documented here. The project uses
 - Added an opt-in registry for UMID, ISAN, EIDR, and application identifier
   schemes with local syntax checks and no network behavior; PostProject-owned
   application identifiers use `https://postproject.org/id/application`.
+- Added an opt-in metadata vocabulary registry with type, cardinality,
+  description, validation, and cross-standard mapping hints; unknown terms
+  remain independent of the registry.
 
 ### Added
 

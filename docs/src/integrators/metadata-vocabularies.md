@@ -26,17 +26,20 @@ and remove all values of a property:
 
 ```sh
 postproject metadata add-text production.pproj asset "$ASSET_ID" \
-  http://iptc.org/std/videometadatahub/1.0 title "Interview" \
+  https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json \
+  title "Interview" \
   --language en-US
 
 postproject --json metadata list \
   production.pproj asset "$ASSET_ID"
 
 postproject --json metadata find production.pproj \
-  http://iptc.org/std/videometadatahub/1.0 title
+  https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json \
+  title
 
 postproject metadata remove production.pproj asset "$ASSET_ID" \
-  http://iptc.org/std/videometadatahub/1.0 title
+  https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json \
+  title
 ```
 
 JSON output is explicitly tagged with value types. Decimal coefficients are
@@ -53,7 +56,8 @@ Python uses typed immutable values and keyed reads:
 from postproject import MetadataLanguageString, MetadataProperty
 
 title = MetadataProperty(
-    "http://iptc.org/std/videometadatahub/1.0", "title"
+    "https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json",
+    "title",
 )
 with production.transaction() as transaction:
     transaction.add_metadata(
@@ -69,13 +73,25 @@ and rationals, bytes, ordered lists and structures, and typed object references.
 The current mutation ABI accepts plain and language-tagged strings; broader
 typed writes remain outstanding.
 
+## Optional Rust registry
+
+The core registry supplies a small set of advisory definitions for IPTC Video
+Metadata Hub JSON, Dublin Core, XMP Basic, EBUCore, and PostProject-owned
+metadata. A property hint can describe accepted value kinds, cardinality,
+labels, descriptions, and known mapping aliases. `validate_values` applies
+those rules only when an application explicitly calls it.
+
+Registry lookup uses exact identifiers. An absent vocabulary or property is
+not an error, and persistence never invokes the registry automatically. This
+keeps unknown and application-specific metadata fully round-trippable.
+
 ## Availability
 
-The typed domain model, SQLite persistence, Rust production API, C traversal,
-CLI read surface, and Python traversal are implemented. Activity metadata is
-writable after the activity is created in the same or an earlier transaction.
-The C++ typed wrapper and general typed writes through the C ABI, CLI, and
-Python remain outstanding.
+The typed domain model, optional vocabulary registry, SQLite persistence, Rust
+production API, C traversal, CLI read surface, and Python traversal are
+implemented. Activity metadata is writable after the activity is created in
+the same or an earlier transaction. The C++ typed wrapper and general typed
+writes through the C ABI, CLI, and Python remain outstanding.
 
 See [standards boundaries](../concepts/standards-boundaries.md) and the
 [mapping matrix](../reference/standards-mapping-matrix.md) for the intended
