@@ -92,6 +92,104 @@ class MetadataProperty:
 
 
 @dataclass(frozen=True, slots=True)
+class MetadataString:
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataLanguageString:
+    value: str
+    language: str
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataI64:
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataU64:
+    value: int
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataDecimal:
+    coefficient: int
+    scale: int
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataBool:
+    value: bool
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataTimestamp:
+    unix_micros: int
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataUri:
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataBytes:
+    value: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataRational:
+    numerator: int
+    denominator: int
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataList:
+    values: tuple[MetadataValue, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataStructField:
+    name: str
+    value: MetadataValue
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataStruct:
+    fields: tuple[MetadataStructField, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataReference:
+    target: ObjectReference
+
+
+MetadataValue: TypeAlias = (
+    MetadataString
+    | MetadataLanguageString
+    | MetadataI64
+    | MetadataU64
+    | MetadataDecimal
+    | MetadataBool
+    | MetadataTimestamp
+    | MetadataUri
+    | MetadataBytes
+    | MetadataRational
+    | MetadataList
+    | MetadataStruct
+    | MetadataReference
+)
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataAssertion:
+    target: ObjectReference
+    property: MetadataProperty
+    value: MetadataValue
+
+
+@dataclass(frozen=True, slots=True)
 class AssetImportedEvent:
     asset_id: AssetId
 
