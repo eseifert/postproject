@@ -1,14 +1,48 @@
 //! Preparation of filesystem-backed domain values before persistence.
 
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use postproject_core::{
-    Asset, AssetId, ContentStructure, Locator, LocatorAvailability, LocatorId, MediaRoot,
-    MediaRootId, OriginalMediaImport, Representation, RepresentationId, RepresentationImport,
-    RepresentationKind, Resource, ResourceId, Result, Timestamp,
+    Asset, AssetId, ContentStructure, FrameRange, ImageSequenceDescriptor, ImageSequencePattern,
+    Locator, LocatorAvailability, LocatorId, MediaRoot, MediaRootId, OriginalMediaImport,
+    RationalRate, Representation, RepresentationId, RepresentationImport, RepresentationKind,
+    Resource, ResourceId, Result, Timestamp,
 };
 
 use crate::{canonical_file_uri, fingerprint_file, fingerprint_representation};
+
+/// Explicit filesystem description of one compact image sequence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImageSequenceSource {
+    directory: PathBuf,
+    pattern: ImageSequencePattern,
+    frames: FrameRange,
+    rate: RationalRate,
+    known_missing_frames: Vec<i64>,
+}
+
+impl ImageSequenceSource {
+    /// Creates a sequence source without scanning its directory.
+    #[must_use]
+    pub fn new(
+        directory: impl Into<PathBuf>,
+        pattern: ImageSequencePattern,
+        frames: FrameRange,
+        rate: RationalRate,
+        known_missing_frames: Vec<i64>,
+    ) -> Self {
+        Self {
+            directory: directory.into(),
+            pattern,
+            frames,
+            rate,
+            known_missing_frames,
+        }
+    }
+}
 
 /// Inspects a regular file and prepares a validated original-media import.
 ///
@@ -80,6 +114,66 @@ fn prepare_single_file_representation_at(
         resource_id,
         uri,
         Some(now),
+        LocatorAvailability::Online,
+    )?;
+    RepresentationImport::new(representation, vec![resource], vec![locator])
+}
+
+/// Prepares a compact image-sequence representation for an existing asset.
+///
+/// The source is explicit: this verifies only that its locator is a directory
+/// and records the caller-supplied frame domain and exceptions. Automatic
+/// sequence discovery and filesystem frame inventory are separate operations.
+///
+/// # Errors
+///
+/// Returns an I/O error when the directory cannot be inspected, an
+/// invalid-argument error when it is not a directory, or domain validation
+/// errors for an invalid descriptor.
+pub fn prepare_image_sequence_representation(
+    asset_id: AssetId,
+    kind: RepresentationKind,
+    source: &ImageSequenceSource,
+) -> Result<RepresentationImport> {
+    let metadata = fs::metadata(&source.directory).map_err(|error| {
+        postproject_core::Error::new(
+            postproject_core::ErrorKind::Io,
+            format!(
+                "cannot read image-sequence directory {}: {error}",
+                source.directory.display()
+            ),
+        )
+    })?;
+    if !metadata.is_dir() {
+        return Err(postproject_core::Error::new(
+            postproject_core::ErrorKind::InvalidArgument,
+            format!(
+                "image-sequence locator is not a directory: {}",
+                source.directory.display()
+            ),
+        ));
+    }
+    let resource_id = ResourceId::new();
+    let descriptor = ImageSequenceDescriptor::new(
+        resource_id,
+        source.pattern.clone(),
+        source.frames,
+        source.rate,
+        source.known_missing_frames.clone(),
+    )?;
+    let representation = Representation::new(
+        RepresentationId::new(),
+        asset_id,
+        kind,
+        ContentStructure::image_sequence(descriptor),
+        Vec::new(),
+    );
+    let resource = Resource::new(resource_id, Vec::new(), None);
+    let locator = Locator::new(
+        LocatorId::new(),
+        resource_id,
+        canonical_file_uri(&source.directory)?,
+        Some(Timestamp::now()?),
         LocatorAvailability::Online,
     )?;
     RepresentationImport::new(representation, vec![resource], vec![locator])
@@ -192,6 +286,35 @@ mod tests {
         assert_eq!(prepared.representation().fingerprints().len(), 1);
         assert_eq!(prepared.resources()[0].fingerprints().len(), 1);
         assert_eq!(prepared.locators().len(), 1);
+    }
+
+    #[test]
+    fn prepares_compact_image_sequence_without_scanning_frames() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let source = ImageSequenceSource::new(
+            directory.path(),
+            ImageSequencePattern::new("shot.", ".exr", 4).expect("valid pattern"),
+            FrameRange::new(1_001, 1_100, 1).expect("valid range"),
+            RationalRate::new(24_000, 1_001).expect("valid rate"),
+            vec![1_027],
+        );
+
+        let prepared = prepare_image_sequence_representation(
+            AssetId::new(),
+            RepresentationKind::Derived,
+            &source,
+        )
+        .expect("prepare sequence");
+
+        let descriptor = prepared
+            .representation()
+            .content_structure()
+            .image_sequence_descriptor()
+            .expect("sequence descriptor");
+        assert_eq!(descriptor.known_missing_frames(), &[1_027]);
+        assert_eq!(prepared.resources().len(), 1);
+        assert!(prepared.resources()[0].fingerprints().is_empty());
+        assert!(prepared.locators()[0].uri().starts_with("file:"));
     }
 
     #[test]
