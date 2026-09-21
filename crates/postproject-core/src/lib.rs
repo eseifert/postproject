@@ -11,6 +11,7 @@ mod id;
 mod identifier;
 mod identifier_registry;
 mod metadata;
+mod metadata_registry;
 mod model;
 mod provenance;
 mod resolution;
@@ -46,6 +47,10 @@ pub use metadata::{
     MAX_METADATA_TOTAL_BYTES, MAX_METADATA_URI_BYTES, MAX_PROPERTY_ID_BYTES,
     MAX_VOCABULARY_ID_BYTES, MetadataAssertion, MetadataField, MetadataMatch, MetadataProperty,
     MetadataValue, MetadataValueKind, PropertyId, RationalValue, VocabularyId,
+};
+pub use metadata_registry::{
+    METADATA_VOCABULARIES, MetadataCardinality, MetadataPropertyAlias, MetadataPropertyDefinition,
+    MetadataVocabularyDefinition, metadata_property_definition, metadata_vocabulary_definition,
 };
 pub use model::{
     Asset, MediaRoot, OriginalMediaImport, Production, Representation, RepresentationKind,
