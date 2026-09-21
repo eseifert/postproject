@@ -349,7 +349,11 @@ fn file_uri_to_path(uri: &str) -> Result<PathBuf> {
 mod tests {
     use std::fs;
 
-    use postproject_core::ResourceResolutionState;
+    use postproject_core::{
+        ContentStructure, FrameRange, ImageSequenceDescriptor, ImageSequencePattern, LocatorId,
+        RationalRate, RepresentationAvailability, RepresentationId, RepresentationResolution,
+        ResourceId, ResourceResolutionState,
+    };
 
     use super::*;
     use crate::{prepare_media_root, prepare_original_media};
@@ -378,6 +382,51 @@ mod tests {
             resolution.candidates()[0].uri(),
             prepared.locators()[0].uri()
         );
+    }
+
+    #[test]
+    fn sequence_directory_is_online_and_recorded_gaps_are_partial() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let sequence_directory = directory.path().join("plate");
+        fs::create_dir(&sequence_directory).expect("create sequence directory");
+        let resource_id = ResourceId::new();
+        let descriptor = ImageSequenceDescriptor::new(
+            resource_id,
+            ImageSequencePattern::new("plate.", ".exr", 4).expect("valid pattern"),
+            FrameRange::new(1, 3, 1).expect("valid frame range"),
+            RationalRate::new(24, 1).expect("valid rate"),
+            vec![2],
+        )
+        .expect("valid sequence");
+        let structure = ContentStructure::image_sequence(descriptor);
+        let resource = Resource::new(resource_id, Vec::new(), None);
+        let locator = Locator::new(
+            LocatorId::new(),
+            resource_id,
+            canonical_file_uri(&sequence_directory).expect("sequence URI"),
+            None,
+            postproject_core::LocatorAvailability::Online,
+        )
+        .expect("valid locator");
+
+        let resolved = MediaResolver::default()
+            .resolve_resource(&resource, &structure, &[locator], &[])
+            .expect("resolve known sequence directory");
+        assert_eq!(
+            resolved.state(),
+            ResourceResolutionState::OnlineAtKnownLocator
+        );
+        let aggregate = RepresentationResolution::aggregate(
+            RepresentationId::new(),
+            &structure,
+            vec![resolved],
+        )
+        .expect("aggregate sequence");
+        assert_eq!(
+            aggregate.availability(),
+            RepresentationAvailability::Partial
+        );
+        assert_eq!(aggregate.issues()[0].frames(), &[2]);
     }
 
     #[test]
