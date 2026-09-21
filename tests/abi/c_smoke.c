@@ -257,6 +257,42 @@ int main(int argc, char **argv) {
     pp_error_release(error);
     return 15;
   }
+  pp_representation_set_t *representations = NULL;
+  pp_uuid_t representation_asset_id = {{0}};
+  pp_representation_kind_t representation_kind = 0;
+  pp_content_structure_kind_t structure_kind = 0;
+  uint64_t member_count = 0;
+  status = pp_production_representations(production, &asset_id,
+                                         &representations, &error);
+  if (status != PP_OK || representations == NULL ||
+      pp_representation_set_count(representations) != UINT64_C(1) ||
+      pp_representation_set_get(
+          representations, 0, &representation_id, &representation_asset_id,
+          &representation_kind, &structure_kind, &member_count, &error) !=
+          PP_OK ||
+      memcmp(representation_asset_id.bytes, asset_id.bytes,
+             sizeof(asset_id.bytes)) != 0 ||
+      representation_kind != PP_REPRESENTATION_ORIGINAL ||
+      structure_kind != PP_CONTENT_SINGLE_RESOURCE ||
+      member_count != UINT64_C(1)) {
+    pp_representation_set_release(representations);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 43;
+  }
+  const char *member_role = NULL;
+  uint8_t member_required = 0;
+  status = pp_representation_set_get_member(
+      representations, 0, 0, &resource_id, &member_role, &member_required,
+      &error);
+  if (status != PP_OK || uuid_is_zero(&resource_id) || member_role != NULL ||
+      member_required != UINT8_C(1)) {
+    pp_representation_set_release(representations);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 44;
+  }
+  pp_representation_set_release(representations);
   pp_external_identifier_set_t *identifiers = NULL;
   status = pp_production_external_identifiers(production, &asset_ref, &identifiers,
                                            &error);
