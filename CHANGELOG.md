@@ -35,6 +35,8 @@ All notable changes to PostProject will be documented here. The project uses
   remain independent of the registry.
 - Extended external-identifier attachments to activities in SQLite schema
   version 4, including exact lookup and transactional persistence.
+- Added deterministic, structure-aware representation fingerprint computation
+  for single resources, image sequences, ordered parts, and packages.
 
 ### Added
 

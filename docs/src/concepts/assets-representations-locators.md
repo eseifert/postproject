@@ -13,6 +13,13 @@ image sequence uses one compact patterned resource instead of creating one
 database object per frame. File facts and storage-level fingerprints belong to
 resources.
 
+A **representation fingerprint** combines the content structure with its
+resource-fingerprint evidence. It excludes PostProject object IDs and locators,
+preserves order for spanned media, treats package member order as irrelevant,
+and hashes an image sequence's compact descriptor without visiting every
+frame. Its confidence cannot exceed the resource evidence it aggregates: a
+sampled resource fingerprint does not become a full-content identity claim.
+
 A **locator** describes where or how a resource can currently be accessed. One
 resource may have several locators, such as paths through different mounts.
 Moving content changes its locator rather than its resource, representation, or
