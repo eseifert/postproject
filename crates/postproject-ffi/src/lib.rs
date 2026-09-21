@@ -3514,6 +3514,8 @@ fn panic_message(payload: &(dyn Any + Send)) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::mpsc, thread, time::Duration};
+
     use super::*;
     use postproject_core::{
         Confidence, ContentStructure, EvidenceKind, FrameRange, ImageSequenceDescriptor,
@@ -3557,6 +3559,68 @@ mod tests {
         assert_ne!(id.bytes, [0; 16]);
         // SAFETY: The live handle is released exactly once.
         unsafe { pp_production_release(production) };
+    }
+
+    #[test]
+    fn production_handles_are_send_sync_and_block_on_concurrent_access() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<PpProduction>();
+
+        let directory = tempfile::tempdir().expect("create directory");
+        let production = SqliteProduction::create(directory.path().join("production.pproj"), None)
+            .expect("create production");
+        let handle = Arc::new(production_handle(production));
+        let guard = lock_production(&handle.state);
+        let worker_handle = Arc::clone(&handle);
+        let (sender, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let mut id = PpUuid { bytes: [0; 16] };
+            let mut error = ptr::null_mut();
+            // SAFETY: The Arc keeps the handle live, the outputs are local, and
+            // no thread releases the handle while this call runs.
+            let status = unsafe {
+                pp_production_id(Arc::as_ptr(&worker_handle), &raw mut id, &raw mut error)
+            };
+            sender.send((status, id, error.is_null())).unwrap();
+        });
+
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(guard);
+        let (status, id, error_is_null) = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("concurrent read completes after unlock");
+        worker.join().expect("join reader");
+        assert_eq!(status, PP_OK);
+        assert_ne!(id.bytes, [0; 16]);
+        assert!(error_is_null);
+    }
+
+    #[test]
+    fn poisoned_production_lock_is_recovered() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let production = SqliteProduction::create(directory.path().join("production.pproj"), None)
+            .expect("create production");
+        let handle = Arc::new(production_handle(production));
+        let state = Arc::clone(&handle.state);
+        assert!(
+            thread::spawn(move || {
+                let _guard = lock_production(&state);
+                panic!("poison production lock");
+            })
+            .join()
+            .is_err()
+        );
+
+        let mut id = PpUuid { bytes: [0; 16] };
+        let mut error = ptr::null_mut();
+        // SAFETY: The Arc keeps the handle live and outputs are writable.
+        let status = unsafe { pp_production_id(Arc::as_ptr(&handle), &raw mut id, &raw mut error) };
+        assert_eq!(status, PP_OK);
+        assert_ne!(id.bytes, [0; 16]);
+        assert!(error.is_null());
     }
 
     #[test]
