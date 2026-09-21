@@ -14,6 +14,9 @@ from uuid import UUID
 
 from . import _abi
 from ._abi import (
+    ActivityEdge as NativeActivityEdge,
+)
+from ._abi import (
     ActivitySet,
     Error,
     ExternalIdentifierSet,
@@ -42,6 +45,7 @@ from ._model import (
     ActivityId,
     ActivityInputAddedEvent,
     ActivityOutputAddedEvent,
+    ActivitySpec,
     AgentIdentity,
     AssetId,
     AssetImportedEvent,
@@ -678,6 +682,41 @@ class Transaction:
         )
         self._native.check(status, error)
 
+    def create_activity(self, spec: ActivitySpec) -> ActivityId:
+        """Stage one complete provenance activity."""
+
+        self._require_open()
+        inputs = _native_activity_edges(spec.inputs)
+        outputs = _native_activity_edges(spec.outputs)
+        started_at = _optional_i64(spec.started_at_unix_micros)
+        finished_at = _optional_i64(spec.finished_at_unix_micros)
+        tool = spec.tool
+        agent = spec.agent
+        identifier = agent.identifier if agent is not None else None
+        activity_id = Uuid()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_create_activity(
+            self._handle,
+            _utf8(spec.kind, "activity kind"),
+            inputs,
+            len(inputs),
+            outputs,
+            len(outputs),
+            None if started_at is None else ctypes.byref(started_at),
+            None if finished_at is None else ctypes.byref(finished_at),
+            _optional_text(tool.name if tool else None),
+            _optional_text(tool.version if tool else None),
+            _optional_text(tool.uri if tool else None),
+            _optional_text(agent.name if agent else None),
+            _optional_text(identifier.scheme if identifier else None),
+            _optional_text(identifier.value if identifier else None),
+            _optional_text(identifier.qualifier if identifier else None),
+            ctypes.byref(activity_id),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        return ActivityId(_uuid(activity_id))
+
     def remove_metadata_property(
         self, target: ObjectReference, property: MetadataProperty
     ) -> None:
@@ -793,6 +832,24 @@ def _native_uuid(value: UUID) -> Uuid:
     native = Uuid()
     native.bytes[:] = value.bytes
     return native
+
+
+def _native_activity_edges(
+    edges: tuple[ActivityEdge, ...],
+) -> ctypes.Array[NativeActivityEdge]:
+    array_type = NativeActivityEdge * len(edges)
+    return array_type(
+        *(
+            NativeActivityEdge(
+                _native_uuid(edge.representation_id.value), _optional_text(edge.role)
+            )
+            for edge in edges
+        )
+    )
+
+
+def _optional_i64(value: int | None) -> ctypes.c_int64 | None:
+    return None if value is None else ctypes.c_int64(value)
 
 
 def _native_object_reference(value: ObjectReference) -> _abi.ObjectRef:
