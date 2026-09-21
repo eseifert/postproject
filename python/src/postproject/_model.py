@@ -126,6 +126,92 @@ class ActivitySpec:
     agent: AgentIdentity | None = None
 
 
+class RepresentationKind(Enum):
+    """Semantic role of an asset representation."""
+
+    ORIGINAL = "original"
+    PROXY = "proxy"
+    OPTIMIZED = "optimized"
+    DERIVED = "derived"
+
+
+class ContentStructureKind(Enum):
+    """Structural shape used to realize a representation."""
+
+    SINGLE_RESOURCE = "single_resource"
+    IMAGE_SEQUENCE = "image_sequence"
+    ORDERED_PARTS = "ordered_parts"
+    PACKAGE = "package"
+
+
+class LocatorAvailability(Enum):
+    """Last observed availability of a resource locator."""
+
+    UNKNOWN = "unknown"
+    ONLINE = "online"
+    OFFLINE = "offline"
+
+
+@dataclass(frozen=True, slots=True)
+class Fingerprint:
+    """Versioned, opaque content-identity evidence."""
+
+    algorithm: str
+    version: int
+    value: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class RepresentationMember:
+    resource_id: ResourceId
+    role: str | None
+    required: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ImageSequenceDescriptor:
+    """Compact patterned description of an image sequence."""
+
+    prefix: str
+    suffix: str
+    padding: int
+    start: int
+    end: int
+    step: int
+    rate_numerator: int
+    rate_denominator: int
+    missing_frames: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Locator:
+    id: LocatorId
+    uri: str
+    availability: LocatorAvailability
+    last_seen_unix_micros: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class Resource:
+    id: ResourceId
+    file_size: int | None
+    modified_at_unix_micros: int | None
+    fingerprints: tuple[Fingerprint, ...]
+    locators: tuple[Locator, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Representation:
+    id: RepresentationId
+    asset_id: AssetId
+    kind: RepresentationKind
+    structure_kind: ContentStructureKind
+    members: tuple[RepresentationMember, ...]
+    image_sequence: ImageSequenceDescriptor | None
+    fingerprints: tuple[Fingerprint, ...]
+    resources: tuple[Resource, ...]
+
+
 class RepresentationAvailability(Enum):
     """Aggregate availability of a complete representation."""
 
