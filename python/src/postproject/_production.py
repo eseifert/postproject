@@ -693,6 +693,42 @@ class Transaction:
         self._native.check(status, error)
         return AssetId(_uuid(asset_id))
 
+    def add_media_root(
+        self,
+        path: str | os.PathLike[str],
+        label: str | None = None,
+        priority: int = 0,
+    ) -> MediaRootId:
+        """Stage a directory used for deterministic resource discovery."""
+
+        self._require_open()
+        root_id = Uuid()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_add_media_root(
+            self._handle,
+            _path_bytes(path),
+            _optional_text(label),
+            priority,
+            ctypes.byref(root_id),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        return MediaRootId(_uuid(root_id))
+
+    def confirm_locator(self, resource_id: ResourceId, uri: str) -> None:
+        """Stage explicit confirmation of one resource candidate URI."""
+
+        self._require_open()
+        native_id = _native_uuid(resource_id.value)
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_confirm_locator(
+            self._handle,
+            ctypes.byref(native_id),
+            _utf8(uri, "locator URI"),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
     def add_external_identifier(
         self, target: ObjectReference, identifier: ExternalIdentifier
     ) -> None:
