@@ -30,16 +30,18 @@ also persist a human-readable fallback such as a display name or last known loca
 fallback never participates in identity. An object UUID is production-scoped; the complete
 `(ProductionId, object kind, object UUID)` tuple is the portable reference.
 
-The canonical serialized form is an opaque, versioned ASCII value:
+The canonical serialized form is a versioned HTTPS identifier under the
+project-controlled domain:
 
 ```text
-postproject:v1:<production UUID>:<object kind>:<object UUID>
+https://postproject.org/ref/v1/<production UUID>/<object kind>/<object UUID>
 ```
 
 Object-kind tokens are `production`, `asset`, `representation`, `resource`, and `activity`.
 UUIDs use lowercase hyphenated RFC 9562 text. Parsers reject unknown versions, unknown kinds,
-extra fields, and non-canonical UUID spellings. This is a PostProject interchange value, not a
-registered URI scheme; hosts must preserve it as opaque text. Advisory fallback text is stored
+extra path segments, query strings, fragments, and non-canonical UUID spellings. Hosts must
+preserve it as an opaque identity even though its HTTPS namespace can dereference to format
+documentation. Parsing and use never require network access. Advisory fallback text is stored
 separately and is deliberately absent from the serialized identity.
 
 The host remains authoritative for its private project, session, scene, timeline, and UI
