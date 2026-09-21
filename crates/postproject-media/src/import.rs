@@ -8,7 +8,7 @@ use postproject_core::{
     Resource, ResourceId, Result, Timestamp,
 };
 
-use crate::{canonical_file_uri, fingerprint_file};
+use crate::{canonical_file_uri, fingerprint_file, fingerprint_representation};
 
 /// Inspects a regular file and prepares a validated original-media import.
 ///
@@ -31,14 +31,17 @@ pub fn prepare_original_media(
     let asset = Asset::new(AssetId::new(), now, display_name, import_source);
     let (fingerprint, facts, _) = report.into_parts();
     let resource_id = ResourceId::new();
+    let structure = ContentStructure::single_resource(resource_id);
+    let resource = Resource::new(resource_id, vec![fingerprint], Some(facts));
+    let representation_fingerprint =
+        fingerprint_representation(&structure, std::slice::from_ref(&resource))?;
     let representation = Representation::new(
         RepresentationId::new(),
         asset.id(),
         RepresentationKind::Original,
-        ContentStructure::single_resource(resource_id),
-        Vec::new(),
+        structure,
+        vec![representation_fingerprint],
     );
-    let resource = Resource::new(resource_id, vec![fingerprint], Some(facts));
     let locator = Locator::new(
         LocatorId::new(),
         resource_id,
@@ -131,6 +134,7 @@ mod tests {
         .expect("prepare import");
 
         assert_eq!(prepared.representation().asset_id(), prepared.asset().id());
+        assert_eq!(prepared.representation().fingerprints().len(), 1);
         assert_eq!(prepared.resources().len(), 1);
         assert_eq!(prepared.resources()[0].fingerprints().len(), 1);
         assert_eq!(

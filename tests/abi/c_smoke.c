@@ -299,11 +299,30 @@ int main(int argc, char **argv) {
       structure_kind != PP_CONTENT_SINGLE_RESOURCE ||
       member_count != UINT64_C(1) ||
       representation_resource_count != UINT64_C(1) ||
-      representation_fingerprint_count != UINT64_C(0)) {
+      representation_fingerprint_count != UINT64_C(1)) {
     pp_representation_set_release(representations);
     pp_production_release(production);
     pp_error_release(error);
     return 43;
+  }
+  const char *representation_fingerprint_algorithm = NULL;
+  uint16_t representation_fingerprint_version = 0;
+  const uint8_t *representation_fingerprint_value = NULL;
+  uint64_t representation_fingerprint_value_length = 0;
+  status = pp_representation_set_get_fingerprint(
+      representations, 0, 0, &representation_fingerprint_algorithm,
+      &representation_fingerprint_version, &representation_fingerprint_value,
+      &representation_fingerprint_value_length, &error);
+  if (status != PP_OK || representation_fingerprint_algorithm == NULL ||
+      strcmp(representation_fingerprint_algorithm,
+             "pp-blake3-representation") != 0 ||
+      representation_fingerprint_version != UINT16_C(1) ||
+      representation_fingerprint_value == NULL ||
+      representation_fingerprint_value_length != UINT64_C(32)) {
+    pp_representation_set_release(representations);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 48;
   }
   const char *member_role = NULL;
   uint8_t member_required = 0;
