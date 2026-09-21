@@ -23,6 +23,8 @@ All notable changes to PostProject will be documented here. The project uses
   and ancestry/descendant traversal with C++17 value wrappers.
 - Added ABI version 9 representation structure, ordered membership, compact
   image-sequence, concrete resource, locator, and typed fingerprint inspection.
+- Added a strict, versioned host-object binding format for portable
+  production-scoped references.
 
 ### Added
 

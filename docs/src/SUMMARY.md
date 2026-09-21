@@ -21,6 +21,7 @@
 # For integrators
 
 - [Integrator guide](integrators/README.md)
+  - [Host-object bindings](integrators/host-object-bindings.md)
 - [Python quickstart](integrators/python.md)
 - [Metadata vocabularies](integrators/metadata-vocabularies.md)
 - [Provenance integration](integrators/provenance.md)
