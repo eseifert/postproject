@@ -37,6 +37,8 @@ All notable changes to PostProject will be documented here. The project uses
   version 4, including exact lookup and transactional persistence.
 - Added deterministic, structure-aware representation fingerprint computation
   for single resources, image sequences, ordered parts, and packages.
+- Added tagged JSON input for every recursively typed metadata value in the
+  CLI, while retaining the concise text command.
 
 ### Added
 

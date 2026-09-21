@@ -19,12 +19,29 @@ API supports:
 All writes belong to an explicit production transaction. A failed operation or
 rollback leaves no partial assertions.
 
-## CLI inspection
+## CLI input and inspection
 
-The demonstrator can add text, list recursively typed values, find a property,
-and remove all values of a property:
+The demonstrator can add text or any recursively typed value, list values, find
+a property, and remove all values of a property. A typed value uses the same
+tagged JSON shape emitted by `--json` output. For example, `contact.json` may
+contain:
+
+```json
+{
+  "type": "struct",
+  "fields": [
+    {"name": "name", "value": {"type": "string", "value": "Camera department"}},
+    {"name": "confidence", "value": {"type": "decimal", "coefficient": "995", "scale": 3}}
+  ]
+}
+```
+
+Write it and inspect it with:
 
 ```sh
+postproject metadata add production.pproj asset "$ASSET_ID" \
+  https://example.com/vocabulary contact contact.json
+
 postproject metadata add-text production.pproj asset "$ASSET_ID" \
   https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json \
   title "Interview" \
@@ -45,10 +62,6 @@ postproject metadata remove production.pproj asset "$ASSET_ID" \
 JSON output is explicitly tagged with value types. Decimal coefficients are
 strings so JSON consumers do not lose precision. Binary values use hexadecimal
 text. Lists and structured fields are recursive and ordered.
-
-The CLI currently creates plain and language-tagged text values. Complex value
-input will use a documented typed file format rather than requiring unreadable
-shell quoting.
 
 Python uses typed immutable values and keyed reads:
 
@@ -71,7 +84,7 @@ matching = production.metadata_by_property[title]
 The decoder preserves all current ABI value kinds, including exact decimals
 and rationals, bytes, ordered lists and structures, and typed object references.
 The current mutation ABI accepts plain and language-tagged strings; broader
-typed writes remain outstanding.
+typed C and Python writes remain outstanding.
 
 ## Optional Rust registry
 
@@ -88,10 +101,10 @@ keeps unknown and application-specific metadata fully round-trippable.
 ## Availability
 
 The typed domain model, optional vocabulary registry, SQLite persistence, Rust
-production API, C traversal, CLI read surface, and Python traversal are
+production API, C traversal, typed CLI surface, and Python traversal are
 implemented. Activity metadata is writable after the activity is created in
 the same or an earlier transaction. The C++ typed wrapper and general typed
-writes through the C ABI, CLI, and Python remain outstanding.
+writes through the C ABI and Python remain outstanding.
 
 See [standards boundaries](../concepts/standards-boundaries.md) and the
 [mapping matrix](../reference/standards-mapping-matrix.md) for the intended
