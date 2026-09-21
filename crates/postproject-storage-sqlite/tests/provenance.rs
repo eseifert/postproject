@@ -46,7 +46,7 @@ fn import(label: u8) -> (OriginalMediaImport, RepresentationId) {
 fn activity(id: ActivityId, input: RepresentationId, output: RepresentationId) -> Activity {
     Activity::new(
         id,
-        ActivityKind::new("postproject:transcode").expect("valid kind"),
+        ActivityKind::new("org.postproject:transcode").expect("valid kind"),
         vec![ActivityInput::new(input, None)],
         vec![ActivityOutput::new(output, None)],
     )
@@ -69,14 +69,14 @@ fn activity_metadata_is_atomic_with_activity_creation() {
     .expect("valid identifier");
     let activity = Activity::new(
         activity_id,
-        ActivityKind::new("postproject:transcode").expect("valid kind"),
+        ActivityKind::new("org.postproject:transcode").expect("valid kind"),
         vec![ActivityInput::new(
             source_id,
-            Some(ActivityRole::new("postproject:input.primary").expect("valid role")),
+            Some(ActivityRole::new("org.postproject:input.primary").expect("valid role")),
         )],
         vec![ActivityOutput::new(
             proxy_id,
-            Some(ActivityRole::new("postproject:output.proxy").expect("valid role")),
+            Some(ActivityRole::new("org.postproject:output.proxy").expect("valid role")),
         )],
     )
     .expect("valid activity")

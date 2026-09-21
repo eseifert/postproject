@@ -238,7 +238,7 @@ impl ImageSequenceDescriptor {
 pub struct ResourceRole(String);
 
 impl ResourceRole {
-    /// Creates a role such as `postproject:essence` or `vendor:playlist`.
+    /// Creates a role such as `org.postproject:essence` or `vendor:playlist`.
     ///
     /// # Errors
     ///
@@ -508,10 +508,10 @@ mod tests {
 
     #[test]
     fn resource_roles_are_namespaced_and_open_world() {
-        let standard = ResourceRole::new("postproject:essence").expect("valid role");
+        let standard = ResourceRole::new("org.postproject:essence").expect("valid role");
         let vendor = ResourceRole::new("example.camera:playlist-v2").expect("valid role");
 
-        assert_eq!(standard.as_str(), "postproject:essence");
+        assert_eq!(standard.as_str(), "org.postproject:essence");
         assert_eq!(vendor.as_str(), "example.camera:playlist-v2");
         assert!(ResourceRole::new("essence").is_err());
         assert!(ResourceRole::new("vendor:").is_err());
@@ -521,18 +521,18 @@ mod tests {
     #[test]
     fn membership_preserves_role_and_requiredness() {
         let resource_id = ResourceId::new();
-        let role = ResourceRole::new("postproject:thumbnail").expect("valid role");
+        let role = ResourceRole::new("org.postproject:thumbnail").expect("valid role");
         let member = ResourceMember::new(resource_id, role, false);
 
         assert_eq!(member.resource_id(), resource_id);
-        assert_eq!(member.role().as_str(), "postproject:thumbnail");
+        assert_eq!(member.role().as_str(), "org.postproject:thumbnail");
         assert!(!member.is_required());
     }
 
     #[test]
     fn compound_structures_enforce_membership_invariants() {
-        let essence = ResourceRole::new("postproject:essence").expect("valid role");
-        let thumbnail = ResourceRole::new("postproject:thumbnail").expect("valid role");
+        let essence = ResourceRole::new("org.postproject:essence").expect("valid role");
+        let thumbnail = ResourceRole::new("org.postproject:thumbnail").expect("valid role");
         let required = ResourceMember::new(ResourceId::new(), essence, true);
         let optional = ResourceMember::new(ResourceId::new(), thumbnail, false);
 

@@ -9,6 +9,10 @@ use postproject_core::{
 use postproject_storage_sqlite::SqliteProduction;
 use serde_json::Value;
 
+const TRANSCODE_KIND: &str = "org.postproject:transcode";
+const PRIMARY_INPUT_ROLE: &str = "org.postproject:input.primary-video";
+const PROXY_OUTPUT_ROLE: &str = "org.postproject:output.proxy";
+
 fn run_json(arguments: &[&str]) -> Value {
     let assertion = cargo_bin_cmd!("postproject")
         .arg("--json")
@@ -128,14 +132,14 @@ fn exercise_provenance(
     let output_representation_id = imported["representation_id"]
         .as_str()
         .expect("proxy representation ID");
-    let input = format!("{input_representation_id}=postproject:input.primary-video");
-    let output = format!("{output_representation_id}=postproject:output.proxy");
+    let input = format!("{input_representation_id}={PRIMARY_INPUT_ROLE}");
+    let output = format!("{output_representation_id}={PROXY_OUTPUT_ROLE}");
 
     let created = run_json(&[
         "activity",
         "add",
         production,
-        "postproject:transcode",
+        TRANSCODE_KIND,
         "--input",
         &input,
         "--output",
@@ -171,8 +175,8 @@ fn exercise_provenance(
     assert_eq!(agent_identifier["value"], "worker-42");
     assert_eq!(agent_identifier["qualifier"], "primary");
     let created_input = &created["inputs"][0];
-    assert_eq!(created_input["role"], "postproject:input.primary-video");
-    assert_eq!(created["outputs"][0]["role"], "postproject:output.proxy");
+    assert_eq!(created_input["role"], PRIMARY_INPUT_ROLE);
+    assert_eq!(created["outputs"][0]["role"], PROXY_OUTPUT_ROLE);
 
     let parameter = run_json(&[
         "metadata",

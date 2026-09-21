@@ -139,7 +139,7 @@ int main(int argc, char **argv) {
     }
 
     const postproject::ActivitySpec activity_spec{
-        "postproject:ingest",
+        "org.postproject:ingest",
         100,
         200,
         postproject::ToolIdentity{
@@ -151,7 +151,7 @@ int main(int argc, char **argv) {
                                             std::string("primary")}},
         {},
         {{resolutions[0].representation_id,
-          std::string("postproject:output.master")}}};
+          std::string("org.postproject:output.master")}}};
     auto provenance = production.beginTransaction();
     const auto activity_id = provenance.createActivity(activity_spec);
     provenance.commit();
@@ -161,7 +161,7 @@ int main(int argc, char **argv) {
         production.activitiesProducing(resolutions[0].representation_id);
     if (activities.size() != 1 || producing.size() != 1 ||
         activities[0].id != activity_id ||
-        activities[0].kind != "postproject:ingest" ||
+        activities[0].kind != "org.postproject:ingest" ||
         activities[0].started_at_unix_micros != 100 ||
         activities[0].finished_at_unix_micros != 200 ||
         !activities[0].tool.has_value() ||
@@ -172,7 +172,7 @@ int main(int argc, char **argv) {
         activities[0].outputs[0].representation_id !=
             resolutions[0].representation_id ||
         activities[0].outputs[0].role !=
-            std::string("postproject:output.master") ||
+            std::string("org.postproject:output.master") ||
         !production.ancestors(resolutions[0].representation_id).empty()) {
       return 14;
     }

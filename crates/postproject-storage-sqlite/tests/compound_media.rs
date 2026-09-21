@@ -118,7 +118,7 @@ fn ordered_parts_and_package_membership_round_trip() {
     let package = ContentStructure::package(vec![
         ResourceMember::new(
             package_ids[0],
-            ResourceRole::new("postproject:essence").expect("valid role"),
+            ResourceRole::new("org.postproject:essence").expect("valid role"),
             true,
         ),
         ResourceMember::new(
@@ -128,7 +128,7 @@ fn ordered_parts_and_package_membership_round_trip() {
         ),
         ResourceMember::new(
             package_ids[2],
-            ResourceRole::new("postproject:thumbnail").expect("valid role"),
+            ResourceRole::new("org.postproject:thumbnail").expect("valid role"),
             false,
         ),
     ])

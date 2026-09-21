@@ -517,12 +517,12 @@ int main(int argc, char **argv) {
     return 29;
   }
   const pp_activity_edge_t activity_output = {
-      representation_id, "postproject:output.master"};
+      representation_id, "org.postproject:output.master"};
   const int64_t started_at = INT64_C(100);
   const int64_t finished_at = INT64_C(200);
   pp_uuid_t activity_id = {{0}};
   status = pp_transaction_create_activity(
-      transaction, "postproject:ingest", NULL, 0, &activity_output, 1,
+      transaction, "org.postproject:ingest", NULL, 0, &activity_output, 1,
       &started_at, &finished_at, "C ingest", "1.0",
       "https://example.com/tools/ingest", "C operator", "com.example.agent",
       "operator-1", "primary", &activity_id, &error);
@@ -559,7 +559,7 @@ int main(int argc, char **argv) {
                           &error) != PP_OK ||
       memcmp(read_activity_id.bytes, activity_id.bytes,
              sizeof(activity_id.bytes)) != 0 ||
-      activity_kind == NULL || strcmp(activity_kind, "postproject:ingest") != 0 ||
+      activity_kind == NULL || strcmp(activity_kind, "org.postproject:ingest") != 0 ||
       has_started_at != UINT8_C(1) || read_started_at != started_at ||
       has_finished_at != UINT8_C(1) || read_finished_at != finished_at ||
       input_count != 0 || output_count != UINT64_C(1)) {
@@ -596,7 +596,7 @@ int main(int argc, char **argv) {
                                  &error) != PP_OK ||
       memcmp(output_representation_id.bytes, representation_id.bytes,
              sizeof(representation_id.bytes)) != 0 ||
-      output_role == NULL || strcmp(output_role, "postproject:output.master") != 0) {
+      output_role == NULL || strcmp(output_role, "org.postproject:output.master") != 0) {
     pp_activity_set_release(activities);
     pp_resolution_set_release(resolutions);
     pp_production_release(production);

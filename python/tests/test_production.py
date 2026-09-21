@@ -441,13 +441,13 @@ class ProductionTests(unittest.TestCase):
             )
 
             input_edge = ActivityEdge(
-                source_event.representation_id, "postproject:primary"
+                source_event.representation_id, "org.postproject:primary"
             )
             output_edge = ActivityEdge(
-                output_event.representation_id, "postproject:proxy"
+                output_event.representation_id, "org.postproject:proxy"
             )
             spec = ActivitySpec(
-                "postproject:transcode",
+                "org.postproject:transcode",
                 outputs=(output_edge,),
                 inputs=(input_edge,),
                 started_at_unix_micros=100,

@@ -25,7 +25,7 @@ pub const MAX_ACTIVITY_EDGES: usize = 100_000;
 pub struct ActivityKind(String);
 
 impl ActivityKind {
-    /// Creates a kind such as `postproject:transcode`.
+    /// Creates a kind such as `org.postproject:transcode`.
     ///
     /// # Errors
     ///
@@ -48,7 +48,7 @@ impl ActivityKind {
 pub struct ActivityRole(String);
 
 impl ActivityRole {
-    /// Creates a role such as `postproject:input.primary-video`.
+    /// Creates a role such as `org.postproject:input.primary-video`.
     ///
     /// # Errors
     ///
@@ -481,7 +481,7 @@ mod tests {
         let second_output = RepresentationId::from_bytes([3; 16]);
         let activity = Activity::new(
             ActivityId::new(),
-            ActivityKind::new("postproject:transcode").expect("valid kind"),
+            ActivityKind::new("org.postproject:transcode").expect("valid kind"),
             vec![
                 ActivityInput::new(first_input, None),
                 ActivityInput::new(second_input, None),
@@ -507,7 +507,7 @@ mod tests {
     #[test]
     fn activity_rejects_incomplete_or_ambiguous_graph_facts() {
         let representation = RepresentationId::new();
-        let kind = || ActivityKind::new("postproject:vfx-render").expect("valid kind");
+        let kind = || ActivityKind::new("org.postproject:vfx-render").expect("valid kind");
         let input = || ActivityInput::new(representation, None);
         let output = || ActivityOutput::new(representation, None);
 

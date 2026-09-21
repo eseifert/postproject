@@ -211,9 +211,10 @@ fn journal_decodes_every_non_import_event_kind() {
     );
     let value = MetadataValue::string("approved").expect("valid metadata");
     let activity_id = ActivityId::new();
-    let input_role = ActivityRole::new("postproject:input.primary").expect("valid input role");
-    let output_role = ActivityRole::new("postproject:output.proxy").expect("valid output role");
-    let activity_kind = ActivityKind::new("postproject:transcode").expect("valid activity kind");
+    let input_role = ActivityRole::new("org.postproject:input.primary").expect("valid input role");
+    let output_role = ActivityRole::new("org.postproject:output.proxy").expect("valid output role");
+    let activity_kind =
+        ActivityKind::new("org.postproject:transcode").expect("valid activity kind");
     let activity = Activity::new(
         activity_id,
         activity_kind.clone(),

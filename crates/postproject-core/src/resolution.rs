@@ -564,12 +564,12 @@ mod tests {
         let structure = ContentStructure::package(vec![
             ResourceMember::new(
                 essence,
-                ResourceRole::new("postproject:essence").expect("valid role"),
+                ResourceRole::new("org.postproject:essence").expect("valid role"),
                 true,
             ),
             ResourceMember::new(
                 thumbnail,
-                ResourceRole::new("postproject:thumbnail").expect("valid role"),
+                ResourceRole::new("org.postproject:thumbnail").expect("valid role"),
                 false,
             ),
         ])
@@ -598,7 +598,7 @@ mod tests {
     fn some_missing_required_members_make_a_representation_partial() {
         let first = ResourceId::new();
         let second = ResourceId::new();
-        let role = ResourceRole::new("postproject:essence").expect("valid role");
+        let role = ResourceRole::new("org.postproject:essence").expect("valid role");
         let structure = ContentStructure::ordered_parts(vec![
             ResourceMember::new(first, role.clone(), true),
             ResourceMember::new(second, role, true),

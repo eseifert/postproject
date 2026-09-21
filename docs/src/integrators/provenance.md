@@ -42,9 +42,9 @@ from postproject import ActivityEdge, ActivitySpec, ToolIdentity
 with production.transaction() as transaction:
     activity_id = transaction.create_activity(
         ActivitySpec(
-            "postproject:transcode",
-            inputs=(ActivityEdge(source_id, "postproject:primary"),),
-            outputs=(ActivityEdge(proxy_id, "postproject:proxy"),),
+            "org.postproject:transcode",
+            inputs=(ActivityEdge(source_id, "org.postproject:primary"),),
+            outputs=(ActivityEdge(proxy_id, "org.postproject:proxy"),),
             tool=ToolIdentity("FFmpeg", "8.0", "https://ffmpeg.org/"),
         )
     )

@@ -267,7 +267,7 @@ enum ActivityCommand {
 #[derive(Debug, Args)]
 struct ActivityAddArgs {
     production: PathBuf,
-    /// Namespaced activity kind, such as `postproject:transcode`.
+    /// Namespaced activity kind, such as `org.postproject:transcode`.
     kind: String,
     /// Consumed representation, optionally followed by `=ROLE`.
     #[arg(long = "input", value_name = "REPRESENTATION_ID[=ROLE]")]
