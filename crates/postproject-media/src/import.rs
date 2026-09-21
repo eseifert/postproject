@@ -9,7 +9,7 @@ use postproject_core::{
     Asset, AssetId, ContentStructure, FrameRange, ImageSequenceDescriptor, ImageSequencePattern,
     Locator, LocatorAvailability, LocatorId, MediaRoot, MediaRootId, OriginalMediaImport,
     RationalRate, Representation, RepresentationId, RepresentationImport, RepresentationKind,
-    Resource, ResourceId, Result, Timestamp,
+    Resource, ResourceId, ResourceMember, ResourceRole, Result, Timestamp,
 };
 
 use crate::{canonical_file_uri, fingerprint_file, fingerprint_representation};
@@ -42,6 +42,32 @@ impl ImageSequenceSource {
             known_missing_frames,
         }
     }
+}
+
+/// One explicitly supplied file in an ordered or package representation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileResourceSource {
+    path: PathBuf,
+    role: ResourceRole,
+    required: bool,
+}
+
+impl FileResourceSource {
+    /// Creates a file source with its membership role and requiredness.
+    #[must_use]
+    pub fn new(path: impl Into<PathBuf>, role: ResourceRole, required: bool) -> Self {
+        Self {
+            path: path.into(),
+            role,
+            required,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CompoundShape {
+    OrderedParts,
+    Package,
 }
 
 /// Inspects a regular file and prepares a validated original-media import.
@@ -177,6 +203,85 @@ pub fn prepare_image_sequence_representation(
         LocatorAvailability::Online,
     )?;
     RepresentationImport::new(representation, vec![resource], vec![locator])
+}
+
+/// Prepares an ordered, fully required multi-file representation.
+///
+/// Sources retain their supplied order. Every source must be marked required,
+/// as enforced by the content-structure domain model.
+///
+/// # Errors
+///
+/// Returns domain validation errors or errors while inspecting and
+/// fingerprinting any source file.
+pub fn prepare_ordered_parts_representation(
+    asset_id: AssetId,
+    kind: RepresentationKind,
+    sources: &[FileResourceSource],
+) -> Result<RepresentationImport> {
+    prepare_compound_file_representation(asset_id, kind, sources, CompoundShape::OrderedParts)
+}
+
+/// Prepares a role-bearing package of required and optional files.
+///
+/// # Errors
+///
+/// Returns domain validation errors or errors while inspecting and
+/// fingerprinting any source file.
+pub fn prepare_package_representation(
+    asset_id: AssetId,
+    kind: RepresentationKind,
+    sources: &[FileResourceSource],
+) -> Result<RepresentationImport> {
+    prepare_compound_file_representation(asset_id, kind, sources, CompoundShape::Package)
+}
+
+fn prepare_compound_file_representation(
+    asset_id: AssetId,
+    kind: RepresentationKind,
+    sources: &[FileResourceSource],
+    shape: CompoundShape,
+) -> Result<RepresentationImport> {
+    let resource_ids = sources
+        .iter()
+        .map(|_| ResourceId::new())
+        .collect::<Vec<_>>();
+    let members = sources
+        .iter()
+        .zip(&resource_ids)
+        .map(|(source, resource_id)| {
+            ResourceMember::new(*resource_id, source.role.clone(), source.required)
+        })
+        .collect();
+    let structure = match shape {
+        CompoundShape::OrderedParts => ContentStructure::ordered_parts(members)?,
+        CompoundShape::Package => ContentStructure::package(members)?,
+    };
+    let now = Timestamp::now()?;
+    let mut resources = Vec::with_capacity(sources.len());
+    let mut locators = Vec::with_capacity(sources.len());
+    for (source, resource_id) in sources.iter().zip(resource_ids) {
+        let report = fingerprint_file(&source.path)?;
+        let uri = canonical_file_uri(&source.path)?;
+        let (fingerprint, facts, _) = report.into_parts();
+        resources.push(Resource::new(resource_id, vec![fingerprint], Some(facts)));
+        locators.push(Locator::new(
+            LocatorId::new(),
+            resource_id,
+            uri,
+            Some(now),
+            LocatorAvailability::Online,
+        )?);
+    }
+    let representation_fingerprint = fingerprint_representation(&structure, &resources)?;
+    let representation = Representation::new(
+        RepresentationId::new(),
+        asset_id,
+        kind,
+        structure,
+        vec![representation_fingerprint],
+    );
+    RepresentationImport::new(representation, resources, locators)
 }
 
 /// Validates a directory and prepares a canonical resolver media root.
