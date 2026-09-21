@@ -171,7 +171,7 @@ impl fmt::Display for HostObjectBinding {
         };
         write!(
             formatter,
-            "postproject:v1:{}:{kind}:{object_id}",
+            "https://postproject.org/ref/v1/{}/{kind}/{object_id}",
             self.production_id
         )
     }
@@ -181,17 +181,16 @@ impl FromStr for HostObjectBinding {
     type Err = Error;
 
     fn from_str(value: &str) -> Result<Self> {
-        let mut parts = value.split(':');
-        let (Some(prefix), Some(version), Some(production_id), Some(kind), Some(object_id)) = (
-            parts.next(),
-            parts.next(),
-            parts.next(),
-            parts.next(),
-            parts.next(),
-        ) else {
+        let Some(path) = value.strip_prefix("https://postproject.org/ref/v1/") else {
             return Err(invalid_binding());
         };
-        if prefix != "postproject" || version != "v1" || parts.next().is_some() {
+        let mut parts = path.split('/');
+        let (Some(production_id), Some(kind), Some(object_id)) =
+            (parts.next(), parts.next(), parts.next())
+        else {
+            return Err(invalid_binding());
+        };
+        if parts.next().is_some() {
             return Err(invalid_binding());
         }
         let production_id = parse_canonical_id::<ProductionId>(production_id, "production UUID")?;
@@ -226,7 +225,7 @@ where
 fn invalid_binding() -> Error {
     Error::new(
         ErrorKind::InvalidArgument,
-        "host binding must be postproject:v1:<production UUID>:<object kind>:<object UUID>",
+        "host binding must be https://postproject.org/ref/v1/<production UUID>/<object kind>/<object UUID>",
     )
 }
 
@@ -294,11 +293,12 @@ mod tests {
     fn host_bindings_reject_noncanonical_or_ambiguous_text() {
         let production_id = ProductionId::from_bytes([1; 16]);
         let asset_id = AssetId::from_bytes([2; 16]);
-        let valid = format!("postproject:v1:{production_id}:asset:{asset_id}");
+        let valid = format!("https://postproject.org/ref/v1/{production_id}/asset/{asset_id}");
         assert!(HostObjectBinding::from_str(&valid.to_uppercase()).is_err());
-        assert!(HostObjectBinding::from_str(&valid.replace(":v1:", ":v2:")).is_err());
-        assert!(HostObjectBinding::from_str(&format!("{valid}:fallback")).is_err());
-        assert!(HostObjectBinding::from_str(&valid.replace(":asset:", ":locator:")).is_err());
+        assert!(HostObjectBinding::from_str(&valid.replace("/v1/", "/v2/")).is_err());
+        assert!(HostObjectBinding::from_str(&format!("{valid}/fallback")).is_err());
+        assert!(HostObjectBinding::from_str(&valid.replace("/asset/", "/locator/")).is_err());
+        assert!(HostObjectBinding::from_str("postproject:v1:old:asset:old").is_err());
         assert!(
             HostObjectBinding::new(
                 production_id,
