@@ -7,6 +7,7 @@ All notable changes to PostProject will be documented here. The project uses
 
 ### Changed
 
+- Raised the Python binding's minimum supported version to Python 3.11.
 - Renamed the durable root container from `Project` to `Production` across the
   domain, SQLite schema, CLI, C ABI version 8, C++ wrapper, and Python binding;
   `.pproj` remains the PostProject storage-format extension.
