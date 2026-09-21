@@ -14,6 +14,7 @@ from uuid import UUID
 
 from . import _abi
 from ._abi import (
+    ActivitySet,
     Error,
     ExternalIdentifierSet,
     MetadataSet,
@@ -35,10 +36,13 @@ from ._abi import (
     Transaction as NativeTransaction,
 )
 from ._model import (
+    Activity,
     ActivityCreatedEvent,
+    ActivityEdge,
     ActivityId,
     ActivityInputAddedEvent,
     ActivityOutputAddedEvent,
+    AgentIdentity,
     AssetId,
     AssetImportedEvent,
     ExternalIdentifier,
@@ -79,6 +83,7 @@ from ._model import (
     RevisionContext,
     RevisionEvent,
     RevisionId,
+    ToolIdentity,
     TransactionId,
 )
 from ._native import NativeLibrary
@@ -92,6 +97,28 @@ class _Assets:
         if not isinstance(asset_id, AssetId):
             return False
         return self._production._contains_asset(asset_id)
+
+
+class _ActivitiesByRepresentation:
+    def __init__(self, production: Production, direction: str) -> None:
+        self._production = production
+        self._direction = direction
+
+    def __getitem__(self, representation_id: RepresentationId) -> tuple[Activity, ...]:
+        return self._production._activities_for(self._direction, representation_id)
+
+
+class _ProvenanceRepresentations:
+    def __init__(self, production: Production, direction: str) -> None:
+        self._production = production
+        self._direction = direction
+
+    def __getitem__(
+        self, representation_id: RepresentationId
+    ) -> tuple[RepresentationId, ...]:
+        return self._production._provenance_representations(
+            self._direction, representation_id
+        )
 
 
 class _ExternalIdentifiers:
@@ -214,6 +241,43 @@ class Production:
         return _Assets(self)
 
     @property
+    def activities(self) -> tuple[Activity, ...]:
+        """Return every provenance activity in deterministic order."""
+
+        self._require_open()
+        return self._activity_set(
+            self._native.lib.pp_production_activities, self._handle
+        )
+
+    @property
+    def activities_producing(self) -> _ActivitiesByRepresentation:
+        """Return producing activities keyed by representation identity."""
+
+        self._require_open()
+        return _ActivitiesByRepresentation(self, "producing")
+
+    @property
+    def activities_consuming(self) -> _ActivitiesByRepresentation:
+        """Return consuming activities keyed by representation identity."""
+
+        self._require_open()
+        return _ActivitiesByRepresentation(self, "consuming")
+
+    @property
+    def provenance_ancestors(self) -> _ProvenanceRepresentations:
+        """Return transitive ancestors keyed by representation identity."""
+
+        self._require_open()
+        return _ProvenanceRepresentations(self, "ancestors")
+
+    @property
+    def provenance_descendants(self) -> _ProvenanceRepresentations:
+        """Return transitive descendants keyed by representation identity."""
+
+        self._require_open()
+        return _ProvenanceRepresentations(self, "descendants")
+
+    @property
     def external_identifiers(self) -> _ExternalIdentifiers:
         """Return external identifiers keyed by their target object."""
 
@@ -263,6 +327,51 @@ class Production:
         )
         self._native.check(status, error)
         return bool(exists.value)
+
+    def _activities_for(
+        self, direction: str, representation_id: RepresentationId
+    ) -> tuple[Activity, ...]:
+        self._require_open()
+        function = {
+            "producing": self._native.lib.pp_production_activities_producing,
+            "consuming": self._native.lib.pp_production_activities_consuming,
+        }[direction]
+        native_id = _native_uuid(representation_id.value)
+        return self._activity_set(function, self._handle, ctypes.byref(native_id))
+
+    def _provenance_representations(
+        self, direction: str, representation_id: RepresentationId
+    ) -> tuple[RepresentationId, ...]:
+        self._require_open()
+        function = {
+            "ancestors": self._native.lib.pp_production_provenance_ancestors,
+            "descendants": self._native.lib.pp_production_provenance_descendants,
+        }[direction]
+        native_id = _native_uuid(representation_id.value)
+        handle = ctypes.POINTER(ObjectRefSet)()
+        error = ctypes.POINTER(Error)()
+        status = function(
+            self._handle,
+            ctypes.byref(native_id),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native provenance query returned no result set")
+        try:
+            count = self._native.lib.pp_object_ref_set_count(handle)
+            result: list[RepresentationId] = []
+            for index in range(int(count)):
+                reference = _object_reference_at(self._native, handle, index)
+                if not isinstance(reference, RepresentationId):
+                    raise RuntimeError(
+                        "native provenance query returned a non-representation"
+                    )
+                result.append(reference)
+            return tuple(result)
+        finally:
+            self._native.lib.pp_object_ref_set_release(handle)
 
     def _external_identifiers(
         self, target: ObjectReference
@@ -447,6 +556,23 @@ class Production:
             )
         finally:
             self._native.lib.pp_revision_set_release(handle)
+
+    def _activity_set(
+        self, function: Callable[..., int], *arguments: object
+    ) -> tuple[Activity, ...]:
+        handle = ctypes.POINTER(ActivitySet)()
+        error = ctypes.POINTER(Error)()
+        status = function(*arguments, ctypes.byref(handle), ctypes.byref(error))
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native activity query returned no result set")
+        try:
+            count = self._native.lib.pp_activity_set_count(handle)
+            return tuple(
+                _activity_at(self._native, handle, index) for index in range(int(count))
+            )
+        finally:
+            self._native.lib.pp_activity_set_release(handle)
 
     def _metadata_set(
         self, function: Callable[..., int], *arguments: object
@@ -724,6 +850,136 @@ def _object_reference_at(
     )
     native.check(status, error)
     return _object_reference(value)
+
+
+def _activity_at(
+    native: NativeLibrary,
+    activities: _Pointer[ActivitySet],
+    index: int,
+) -> Activity:
+    activity_id = Uuid()
+    kind = ctypes.c_char_p()
+    has_started_at = ctypes.c_uint8()
+    started_at = ctypes.c_int64()
+    has_finished_at = ctypes.c_uint8()
+    finished_at = ctypes.c_int64()
+    input_count = ctypes.c_uint64()
+    output_count = ctypes.c_uint64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_activity_set_get(
+        activities,
+        index,
+        ctypes.byref(activity_id),
+        ctypes.byref(kind),
+        ctypes.byref(has_started_at),
+        ctypes.byref(started_at),
+        ctypes.byref(has_finished_at),
+        ctypes.byref(finished_at),
+        ctypes.byref(input_count),
+        ctypes.byref(output_count),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return Activity(
+        ActivityId(_uuid(activity_id)),
+        _decode_required(kind.value, "activity kind"),
+        int(started_at.value) if has_started_at.value else None,
+        int(finished_at.value) if has_finished_at.value else None,
+        _activity_tool(native, activities, index),
+        _activity_agent(native, activities, index),
+        tuple(
+            _activity_edge(native, activities, index, edge_index, False)
+            for edge_index in range(int(input_count.value))
+        ),
+        tuple(
+            _activity_edge(native, activities, index, edge_index, True)
+            for edge_index in range(int(output_count.value))
+        ),
+    )
+
+
+def _activity_tool(
+    native: NativeLibrary, activities: _Pointer[ActivitySet], index: int
+) -> ToolIdentity | None:
+    name = ctypes.c_char_p()
+    version = ctypes.c_char_p()
+    uri = ctypes.c_char_p()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_activity_set_get_tool(
+        activities,
+        index,
+        ctypes.byref(name),
+        ctypes.byref(version),
+        ctypes.byref(uri),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    if name.value is None and version.value is None and uri.value is None:
+        return None
+    return ToolIdentity(
+        _decode_required(name.value, "activity tool name"),
+        _decode_optional(version.value),
+        _decode_optional(uri.value),
+    )
+
+
+def _activity_agent(
+    native: NativeLibrary, activities: _Pointer[ActivitySet], index: int
+) -> AgentIdentity | None:
+    name = ctypes.c_char_p()
+    scheme = ctypes.c_char_p()
+    value = ctypes.c_char_p()
+    qualifier = ctypes.c_char_p()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_activity_set_get_agent(
+        activities,
+        index,
+        ctypes.byref(name),
+        ctypes.byref(scheme),
+        ctypes.byref(value),
+        ctypes.byref(qualifier),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    if name.value is None and scheme.value is None and value.value is None:
+        return None
+    identifier = None
+    if scheme.value is not None or value.value is not None:
+        identifier = ExternalIdentifier(
+            _decode_required(scheme.value, "agent identifier scheme"),
+            _decode_required(value.value, "agent identifier value"),
+            _decode_optional(qualifier.value),
+        )
+    return AgentIdentity(_decode_optional(name.value), identifier)
+
+
+def _activity_edge(
+    native: NativeLibrary,
+    activities: _Pointer[ActivitySet],
+    activity_index: int,
+    edge_index: int,
+    output: bool,
+) -> ActivityEdge:
+    representation_id = Uuid()
+    role = ctypes.c_char_p()
+    error = ctypes.POINTER(Error)()
+    function = (
+        native.lib.pp_activity_set_get_output
+        if output
+        else native.lib.pp_activity_set_get_input
+    )
+    status = function(
+        activities,
+        activity_index,
+        edge_index,
+        ctypes.byref(representation_id),
+        ctypes.byref(role),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return ActivityEdge(
+        RepresentationId(_uuid(representation_id)), _decode_optional(role.value)
+    )
 
 
 def _metadata_at(
