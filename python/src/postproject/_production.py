@@ -5,28 +5,57 @@ from __future__ import annotations
 import ctypes
 import os
 import weakref
+from _ctypes import _Pointer
+from collections.abc import Callable
 from pathlib import Path
 from types import TracebackType
-from typing import Self
+from typing import TypeVar
 from uuid import UUID
 
+from . import _abi
 from ._abi import (
     Error,
     Production as NativeProduction,
+    RevisionEvent as NativeRevisionEvent,
+    RevisionEventSet,
     RevisionSet,
     Transaction as NativeTransaction,
     Uuid,
 )
 from ._model import (
+    ActivityCreatedEvent,
+    ActivityId,
+    ActivityInputAddedEvent,
+    ActivityOutputAddedEvent,
+    AssetImportedEvent,
     AssetId,
+    ExternalIdentifier,
+    ExternalIdentifierAddedEvent,
+    ExternalIdentifierRemovedEvent,
+    LocatorAddedEvent,
+    LocatorId,
+    MediaRootAddedEvent,
+    MediaRootId,
+    MetadataAddedOrReplacedEvent,
+    MetadataProperty,
+    MetadataRemovedEvent,
+    ObjectReference,
     OriginIdentity,
     ProductionId,
+    RepresentationAddedEvent,
+    RepresentationId,
+    RepresentationResourceAddedEvent,
+    ResourceAddedEvent,
+    ResourceId,
     Revision,
     RevisionContext,
+    RevisionEvent,
     RevisionId,
     TransactionId,
 )
 from ._native import NativeLibrary
+
+_ProductionT = TypeVar("_ProductionT", bound="Production")
 
 
 class Production:
@@ -35,7 +64,7 @@ class Production:
     def __init__(
         self,
         native: NativeLibrary,
-        handle: ctypes.POINTER(NativeProduction),
+        handle: _Pointer[NativeProduction],
     ) -> None:
         self._native = native
         self._handle = handle
@@ -45,12 +74,12 @@ class Production:
 
     @classmethod
     def create(
-        cls,
+        cls: type[_ProductionT],
         path: str | os.PathLike[str],
         display_name: str | None = None,
         *,
         library_path: str | os.PathLike[str] | None = None,
-    ) -> Self:
+    ) -> _ProductionT:
         """Create a new production without overwriting an existing path."""
 
         native = NativeLibrary(library_path)
@@ -69,11 +98,11 @@ class Production:
 
     @classmethod
     def open(
-        cls,
+        cls: type[_ProductionT],
         path: str | os.PathLike[str],
         *,
         library_path: str | os.PathLike[str] | None = None,
-    ) -> Self:
+    ) -> _ProductionT:
         """Open an existing production."""
 
         native = NativeLibrary(library_path)
@@ -138,6 +167,31 @@ class Production:
             limit,
         )
 
+    def revision_events(self, revision_id: RevisionId) -> tuple[RevisionEvent, ...]:
+        """Return the ordered semantic events for one revision."""
+
+        self._require_open()
+        native_id = _native_uuid(revision_id.value)
+        handle = ctypes.POINTER(RevisionEventSet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_revision_events(
+            self._handle,
+            ctypes.byref(native_id),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native revision-event query returned no result set")
+        try:
+            count = self._native.lib.pp_revision_event_set_count(handle)
+            return tuple(
+                _revision_event_at(self._native, handle, index)
+                for index in range(int(count))
+            )
+        finally:
+            self._native.lib.pp_revision_event_set_release(handle)
+
     def transaction(
         self,
         *,
@@ -167,7 +221,7 @@ class Production:
         self._finalizer()
         self._handle = ctypes.POINTER(NativeProduction)()
 
-    def __enter__(self) -> Self:
+    def __enter__(self: _ProductionT) -> _ProductionT:
         self._require_open()
         return self
 
@@ -183,7 +237,9 @@ class Production:
         if not self._finalizer.alive:
             raise RuntimeError("production is closed")
 
-    def _revision_set(self, function: ctypes._CFuncPtr, *arguments: object) -> tuple[Revision, ...]:
+    def _revision_set(
+        self, function: Callable[..., int], *arguments: object
+    ) -> tuple[Revision, ...]:
         handle = ctypes.POINTER(RevisionSet)()
         error = ctypes.POINTER(Error)()
         status = function(*arguments, ctypes.byref(handle), ctypes.byref(error))
@@ -205,7 +261,7 @@ class Transaction:
     def __init__(
         self,
         native: NativeLibrary,
-        handle: ctypes.POINTER(NativeTransaction),
+        handle: _Pointer[NativeTransaction],
     ) -> None:
         self._native = native
         self._handle = handle
@@ -264,7 +320,7 @@ class Transaction:
         self._finalizer()
         self._handle = ctypes.POINTER(NativeTransaction)()
 
-    def __enter__(self) -> Self:
+    def __enter__(self) -> Transaction:
         self._require_open()
         return self
 
@@ -283,7 +339,7 @@ class Transaction:
         finally:
             self.close()
 
-    def _finish(self, function: ctypes._CFuncPtr) -> None:
+    def _finish(self, function: Callable[..., int]) -> None:
         self._require_open()
         error = ctypes.POINTER(Error)()
         status = function(self._handle, ctypes.byref(error))
@@ -324,7 +380,7 @@ def _native_uuid(value: UUID) -> Uuid:
 
 def _revision_at(
     native: NativeLibrary,
-    revisions: ctypes.POINTER(RevisionSet),
+    revisions: _Pointer[RevisionSet],
     index: int,
 ) -> Revision:
     revision_id = Uuid()
@@ -366,6 +422,117 @@ def _revision_at(
         origin,
         _decode_optional(message.value),
     )
+
+
+def _revision_event_at(
+    native: NativeLibrary,
+    events: _Pointer[RevisionEventSet],
+    index: int,
+) -> RevisionEvent:
+    event = NativeRevisionEvent()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_revision_event_set_get(
+        events, index, ctypes.byref(event), ctypes.byref(error)
+    )
+    native.check(status, error)
+
+    kind = int(event.kind)
+    if kind == _abi.PP_REVISION_ASSET_IMPORTED:
+        payload = AssetImportedEvent(AssetId(_uuid(event.asset_id)))
+    elif kind == _abi.PP_REVISION_REPRESENTATION_ADDED:
+        payload = RepresentationAddedEvent(
+            AssetId(_uuid(event.asset_id)),
+            RepresentationId(_uuid(event.representation_id)),
+        )
+    elif kind == _abi.PP_REVISION_RESOURCE_ADDED:
+        payload = ResourceAddedEvent(ResourceId(_uuid(event.resource_id)))
+    elif kind == _abi.PP_REVISION_REPRESENTATION_RESOURCE_ADDED:
+        payload = RepresentationResourceAddedEvent(
+            RepresentationId(_uuid(event.representation_id)),
+            ResourceId(_uuid(event.resource_id)),
+            int(event.structural_position),
+        )
+    elif kind == _abi.PP_REVISION_LOCATOR_ADDED:
+        payload = LocatorAddedEvent(
+            ResourceId(_uuid(event.resource_id)),
+            LocatorId(_uuid(event.locator_id)),
+        )
+    elif kind == _abi.PP_REVISION_MEDIA_ROOT_ADDED:
+        payload = MediaRootAddedEvent(MediaRootId(_uuid(event.media_root_id)))
+    elif kind == _abi.PP_REVISION_EXTERNAL_IDENTIFIER_ADDED:
+        payload = ExternalIdentifierAddedEvent(
+            _object_reference(event.target), _external_identifier(event)
+        )
+    elif kind == _abi.PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED:
+        payload = ExternalIdentifierRemovedEvent(
+            _object_reference(event.target), _external_identifier(event)
+        )
+    elif kind == _abi.PP_REVISION_METADATA_ADDED_OR_REPLACED:
+        payload = MetadataAddedOrReplacedEvent(
+            _object_reference(event.target), _metadata_property(event)
+        )
+    elif kind == _abi.PP_REVISION_METADATA_REMOVED:
+        payload = MetadataRemovedEvent(
+            _object_reference(event.target), _metadata_property(event)
+        )
+    elif kind == _abi.PP_REVISION_ACTIVITY_CREATED:
+        payload = ActivityCreatedEvent(
+            ActivityId(_uuid(event.activity_id)),
+            _decode_required(event.activity_kind, "activity kind"),
+        )
+    elif kind == _abi.PP_REVISION_ACTIVITY_INPUT_ADDED:
+        payload = ActivityInputAddedEvent(
+            ActivityId(_uuid(event.activity_id)),
+            RepresentationId(_uuid(event.representation_id)),
+            _decode_optional(event.role),
+        )
+    elif kind == _abi.PP_REVISION_ACTIVITY_OUTPUT_ADDED:
+        payload = ActivityOutputAddedEvent(
+            ActivityId(_uuid(event.activity_id)),
+            RepresentationId(_uuid(event.representation_id)),
+            _decode_optional(event.role),
+        )
+    else:
+        raise RuntimeError("revision event has an unknown semantic kind")
+
+    return RevisionEvent(int(event.position), payload)
+
+
+def _external_identifier(event: NativeRevisionEvent) -> ExternalIdentifier:
+    return ExternalIdentifier(
+        _decode_required(event.identifier_scheme, "identifier scheme"),
+        _decode_required(event.identifier_value, "identifier value"),
+        _decode_optional(event.identifier_qualifier),
+    )
+
+
+def _metadata_property(event: NativeRevisionEvent) -> MetadataProperty:
+    return MetadataProperty(
+        _decode_required(event.vocabulary, "metadata vocabulary"),
+        _decode_required(event.property, "metadata property"),
+    )
+
+
+def _object_reference(value: _abi.ObjectRef) -> ObjectReference:
+    object_id = _uuid(value.id)
+    kind = int(value.kind)
+    if kind == _abi.PP_OBJECT_PRODUCTION:
+        return ProductionId(object_id)
+    if kind == _abi.PP_OBJECT_ASSET:
+        return AssetId(object_id)
+    if kind == _abi.PP_OBJECT_REPRESENTATION:
+        return RepresentationId(object_id)
+    if kind == _abi.PP_OBJECT_RESOURCE:
+        return ResourceId(object_id)
+    if kind == _abi.PP_OBJECT_ACTIVITY:
+        return ActivityId(object_id)
+    raise RuntimeError("revision event has an unknown object-reference kind")
+
+
+def _decode_required(value: bytes | None, label: str) -> str:
+    if value is None:
+        raise RuntimeError(f"revision event is missing {label}")
+    return value.decode("utf-8")
 
 
 def _decode_optional(value: bytes | None) -> str | None:

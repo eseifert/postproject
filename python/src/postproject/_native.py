@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+from _ctypes import _Pointer
 from pathlib import Path
 
 from ._abi import Error, configure_api
@@ -26,7 +27,7 @@ class NativeLibrary:
                 f"PostProject ABI {version} is incompatible with required ABI {ABI_VERSION}"
             )
 
-    def check(self, status: int, error: ctypes.POINTER(Error)) -> None:
+    def check(self, status: int, error: _Pointer[Error]) -> None:
         """Release an optional native error and raise its Python equivalent."""
 
         if status == 0:
