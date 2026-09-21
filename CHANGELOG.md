@@ -23,10 +23,11 @@ All notable changes to PostProject will be documented here. The project uses
   and ancestry/descendant traversal with C++17 value wrappers.
 - Added ABI version 9 representation structure, ordered membership, compact
   image-sequence, concrete resource, locator, and typed fingerprint inspection.
-- Added a strict, versioned host-object binding format for portable
-  production-scoped references.
+- Added a strict, versioned HTTPS host-object binding format under
+  `postproject.org` for portable production-scoped references.
 - Added an opt-in registry for UMID, ISAN, EIDR, and application identifier
-  schemes with local syntax checks and no network behavior.
+  schemes with local syntax checks and no network behavior; PostProject-owned
+  application identifiers use `https://postproject.org/id/application`.
 
 ### Added
 

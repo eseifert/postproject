@@ -19,7 +19,7 @@ registry currently describes:
 | `urn:smpte:umid` | the UMID namespace-specific hex value | SMPTE ST 2029 lexical form |
 | `urn:isan` | the ISAN namespace-specific value | RFC 4246 lexical form |
 | `urn:eidr` | the EIDR prefix and suffix, such as `10.5240:…` | RFC 7972 lexical form |
-| `org.postproject.application` | application-owned opaque text | generic limits only |
+| `https://postproject.org/id/application` | application-owned opaque text | generic limits only |
 
 These are opt-in syntax hints, not a closed allow-list. Checks do not normalize
 case, validate registry assignment, verify every standard checksum, or contact a
