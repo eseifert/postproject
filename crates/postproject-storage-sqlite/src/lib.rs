@@ -1620,9 +1620,10 @@ pub(crate) fn encode_identifier_target(target: &ObjectRef) -> Result<(i64, &[u8;
         ObjectRef::Asset(id) => Ok((1, id.as_bytes())),
         ObjectRef::Representation(id) => Ok((2, id.as_bytes())),
         ObjectRef::Resource(id) => Ok((3, id.as_bytes())),
-        ObjectRef::Production(_) | ObjectRef::Activity(_) => Err(Error::new(
+        ObjectRef::Activity(id) => Ok((4, id.as_bytes())),
+        ObjectRef::Production(_) => Err(Error::new(
             ErrorKind::Unsupported,
-            "external identifiers support assets, representations, and resources",
+            "external identifiers do not support productions",
         )),
         _ => Err(Error::new(
             ErrorKind::Unsupported,
@@ -1637,6 +1638,9 @@ fn decode_identifier_target(kind: i64, id: Vec<u8>) -> Result<ObjectRef> {
         1 => Ok(ObjectRef::Asset(AssetId::from_bytes(id))),
         2 => Ok(ObjectRef::Representation(RepresentationId::from_bytes(id))),
         3 => Ok(ObjectRef::Resource(ResourceId::from_bytes(id))),
+        4 => Ok(ObjectRef::Activity(
+            postproject_core::ActivityId::from_bytes(id),
+        )),
         _ => Err(Error::new(
             ErrorKind::Storage,
             format!("stored external identifier target kind {kind} is invalid"),

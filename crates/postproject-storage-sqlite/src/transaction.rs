@@ -1065,6 +1065,7 @@ fn identifier_target_exists(
         1 => "assets",
         2 => "representations",
         3 => "resources",
+        4 => "activities",
         _ => {
             return Err(Error::new(
                 ErrorKind::Unsupported,

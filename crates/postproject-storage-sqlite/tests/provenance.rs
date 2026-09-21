@@ -53,6 +53,26 @@ fn activity(id: ActivityId, input: RepresentationId, output: RepresentationId) -
     .expect("valid activity")
 }
 
+fn assert_activity_identifier(
+    production: &SqliteProduction,
+    activity_id: ActivityId,
+    identifier: &ExternalIdentifier,
+) {
+    let target = ObjectRef::Activity(activity_id);
+    assert_eq!(
+        production
+            .external_identifiers(target)
+            .expect("load activity identifiers"),
+        std::slice::from_ref(identifier)
+    );
+    assert_eq!(
+        production
+            .find_by_external_identifier(identifier.scheme(), identifier.value())
+            .expect("look up activity identifier"),
+        [target]
+    );
+}
+
 #[test]
 fn activity_metadata_is_atomic_with_activity_creation() {
     let directory = tempdir().expect("create temporary directory");
@@ -64,6 +84,12 @@ fn activity_metadata_is_atomic_with_activity_creation() {
     let agent_identifier = ExternalIdentifier::new(
         IdentifierScheme::new("com.example.worker").expect("valid scheme"),
         "worker-7",
+        None,
+    )
+    .expect("valid identifier");
+    let activity_identifier = ExternalIdentifier::new(
+        IdentifierScheme::new("com.example.render-job").expect("valid scheme"),
+        "job-42",
         None,
     )
     .expect("valid identifier");
@@ -110,6 +136,9 @@ fn activity_metadata_is_atomic_with_activity_creation() {
             .create_activity(&activity)
             .expect("create activity");
         transaction
+            .add_external_identifier(ObjectRef::Activity(activity_id), &activity_identifier)
+            .expect("attach activity identifier");
+        transaction
             .add_metadata_value(ObjectRef::Activity(activity_id), &property, &value)
             .expect("attach activity metadata");
         transaction.commit().expect("commit provenance");
@@ -138,6 +167,7 @@ fn activity_metadata_is_atomic_with_activity_creation() {
             .expect("load activity metadata"),
         [value]
     );
+    assert_activity_identifier(&reopened, activity_id, &activity_identifier);
 }
 
 #[test]

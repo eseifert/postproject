@@ -4,7 +4,7 @@ use postproject_core::{Error, ErrorKind, Result, Timestamp};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 /// The newest schema understood by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 3;
+pub const CURRENT_SCHEMA_VERSION: u32 = 4;
 
 struct Migration {
     version: u32,
@@ -23,6 +23,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 3,
         sql: include_str!("migrations/003_revisions.sql"),
+    },
+    Migration {
+        version: 4,
+        sql: include_str!("migrations/004_activity_identifiers.sql"),
     },
 ];
 
@@ -121,7 +125,7 @@ mod tests {
             .expect("query migration history")
             .collect::<std::result::Result<_, _>>()
             .expect("read migration history");
-        assert_eq!(applied, [1, 2, 3]);
+        assert_eq!(applied, [1, 2, 3, 4]);
         for table in [
             "productions",
             "assets",
