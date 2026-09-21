@@ -58,6 +58,12 @@ typedef uint32_t pp_content_structure_kind_t;
 #define PP_CONTENT_ORDERED_PARTS UINT32_C(3)
 #define PP_CONTENT_PACKAGE UINT32_C(4)
 
+typedef uint32_t pp_locator_availability_t;
+
+#define PP_LOCATOR_UNKNOWN UINT32_C(1)
+#define PP_LOCATOR_ONLINE UINT32_C(2)
+#define PP_LOCATOR_OFFLINE UINT32_C(3)
+
 typedef uint32_t pp_revision_event_kind_t;
 
 #define PP_REVISION_ASSET_IMPORTED UINT32_C(1)
@@ -221,6 +227,18 @@ PP_API pp_error_code_t pp_representation_set_get_sequence_missing_frame(
     const pp_representation_set_t *representations,
     uint64_t representation_index, uint64_t frame_index, int64_t *out_frame,
     pp_error_t **out_error);
+PP_API pp_error_code_t pp_representation_set_get_resource(
+    const pp_representation_set_t *representations,
+    uint64_t representation_index, uint64_t resource_index, pp_uuid_t *out_id,
+    uint8_t *out_has_file_facts, uint64_t *out_file_size,
+    uint8_t *out_has_modified_at, int64_t *out_modified_at_unix_micros,
+    uint64_t *out_locator_count, pp_error_t **out_error);
+PP_API pp_error_code_t pp_representation_set_get_locator(
+    const pp_representation_set_t *representations,
+    uint64_t representation_index, uint64_t resource_index,
+    uint64_t locator_index, pp_uuid_t *out_id, const char **out_uri,
+    pp_locator_availability_t *out_availability, uint8_t *out_has_last_seen,
+    int64_t *out_last_seen_unix_micros, pp_error_t **out_error);
 PP_API void pp_representation_set_release(
     pp_representation_set_t *representations);
 /* Result strings are borrowed until the owning result set is released. */

@@ -1,8 +1,9 @@
 use std::{ffi::CString, os::raw::c_char, ptr};
 
 use postproject_core::{
-    AssetId, ContentStructure, ContentStructureKind, Error, ErrorKind, Representation,
-    RepresentationId, RepresentationKind, ResourceId,
+    AssetId, ContentStructure, ContentStructureKind, Error, ErrorKind, Locator,
+    LocatorAvailability, LocatorId, Representation, RepresentationId, RepresentationKind, Resource,
+    ResourceId,
 };
 
 use crate::{
@@ -20,6 +21,10 @@ const PP_CONTENT_IMAGE_SEQUENCE: u32 = 2;
 const PP_CONTENT_ORDERED_PARTS: u32 = 3;
 const PP_CONTENT_PACKAGE: u32 = 4;
 
+const PP_LOCATOR_UNKNOWN: u32 = 1;
+const PP_LOCATOR_ONLINE: u32 = 2;
+const PP_LOCATOR_OFFLINE: u32 = 3;
+
 /// Opaque immutable representation result set owned by the C caller.
 pub struct PpRepresentationSet {
     representations: Vec<AbiRepresentation>,
@@ -32,6 +37,7 @@ struct AbiRepresentation {
     structure_kind: u32,
     members: Vec<AbiMember>,
     sequence: Option<AbiSequence>,
+    resources: Vec<AbiResource>,
 }
 
 struct AbiMember {
@@ -50,6 +56,20 @@ struct AbiSequence {
     rate_numerator: u32,
     rate_denominator: u32,
     missing_frames: Vec<i64>,
+}
+
+struct AbiResource {
+    id: ResourceId,
+    file_size: Option<u64>,
+    modified_at: Option<i64>,
+    locators: Vec<AbiLocator>,
+}
+
+struct AbiLocator {
+    id: LocatorId,
+    uri: CString,
+    availability: u32,
+    last_seen: Option<i64>,
 }
 
 /// Loads the representations belonging to one asset in stable order.
@@ -85,11 +105,15 @@ pub unsafe extern "C" fn pp_production_representations(
             if !inner.assets()?.iter().any(|asset| asset.id() == asset_id) {
                 return Err(Error::new(ErrorKind::NotFound, "asset does not exist"));
             }
-            let representations = inner
-                .representations(asset_id)?
-                .into_iter()
-                .map(AbiRepresentation::try_from)
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut representations = Vec::new();
+            for representation in inner.representations(asset_id)? {
+                let mut resources = Vec::new();
+                for resource in inner.resources(representation.id())? {
+                    let locators = inner.locators(resource.id())?;
+                    resources.push(AbiResource::new(&resource, locators)?);
+                }
+                representations.push(AbiRepresentation::new(&representation, resources)?);
+            }
             out_representations.write(Box::into_raw(Box::new(PpRepresentationSet {
                 representations,
             })));
@@ -310,6 +334,104 @@ pub unsafe extern "C" fn pp_representation_set_get_sequence_missing_frame(
     }
 }
 
+/// Reads one concrete resource and its stored file facts.
+///
+/// # Safety
+///
+/// The set must be live and every output pointer must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_representation_set_get_resource(
+    representations: *const PpRepresentationSet,
+    representation_index: u64,
+    resource_index: u64,
+    out_id: *mut PpUuid,
+    out_has_file_facts: *mut u8,
+    out_file_size: *mut u64,
+    out_has_modified_at: *mut u8,
+    out_modified_at_unix_micros: *mut i64,
+    out_locator_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_uuid(out_id);
+        initialize_value(out_has_file_facts, 0);
+        initialize_value(out_file_size, 0);
+        initialize_value(out_has_modified_at, 0);
+        initialize_value(out_modified_at_unix_micros, 0);
+        initialize_value(out_locator_count, 0);
+        ffi_call(out_error, || {
+            require_output(out_id, "out_id")?;
+            require_output(out_has_file_facts, "out_has_file_facts")?;
+            require_output(out_file_size, "out_file_size")?;
+            require_output(out_has_modified_at, "out_has_modified_at")?;
+            require_output(out_modified_at_unix_micros, "out_modified_at_unix_micros")?;
+            require_output(out_locator_count, "out_locator_count")?;
+            let resource = resource_at(representations, representation_index, resource_index)?;
+            out_id.write(PpUuid {
+                bytes: resource.id.into_bytes(),
+            });
+            if let Some(size) = resource.file_size {
+                out_has_file_facts.write(1);
+                out_file_size.write(size);
+            }
+            if let Some(modified_at) = resource.modified_at {
+                out_has_modified_at.write(1);
+                out_modified_at_unix_micros.write(modified_at);
+            }
+            out_locator_count.write(u64::try_from(resource.locators.len()).unwrap_or(u64::MAX));
+            Ok(())
+        })
+    }
+}
+
+/// Reads one locator belonging to a representation resource.
+///
+/// # Safety
+///
+/// The set must be live and every output pointer must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_representation_set_get_locator(
+    representations: *const PpRepresentationSet,
+    representation_index: u64,
+    resource_index: u64,
+    locator_index: u64,
+    out_id: *mut PpUuid,
+    out_uri: *mut *const c_char,
+    out_availability: *mut u32,
+    out_has_last_seen: *mut u8,
+    out_last_seen_unix_micros: *mut i64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_uuid(out_id);
+        initialize_const_output(out_uri);
+        initialize_value(out_availability, 0);
+        initialize_value(out_has_last_seen, 0);
+        initialize_value(out_last_seen_unix_micros, 0);
+        ffi_call(out_error, || {
+            require_output(out_id, "out_id")?;
+            require_output(out_uri, "out_uri")?;
+            require_output(out_availability, "out_availability")?;
+            require_output(out_has_last_seen, "out_has_last_seen")?;
+            require_output(out_last_seen_unix_micros, "out_last_seen_unix_micros")?;
+            let resource = resource_at(representations, representation_index, resource_index)?;
+            let locator = item_at(&resource.locators, locator_index, "locator")?;
+            out_id.write(PpUuid {
+                bytes: locator.id.into_bytes(),
+            });
+            out_uri.write(locator.uri.as_ptr());
+            out_availability.write(locator.availability);
+            if let Some(last_seen) = locator.last_seen {
+                out_has_last_seen.write(1);
+                out_last_seen_unix_micros.write(last_seen);
+            }
+            Ok(())
+        })
+    }
+}
+
 /// Releases a representation result set. Null is a no-op.
 ///
 /// # Safety
@@ -325,10 +447,8 @@ pub unsafe extern "C" fn pp_representation_set_release(representations: *mut PpR
     }));
 }
 
-impl TryFrom<Representation> for AbiRepresentation {
-    type Error = Error;
-
-    fn try_from(representation: Representation) -> Result<Self, Self::Error> {
+impl AbiRepresentation {
+    fn new(representation: &Representation, resources: Vec<AbiResource>) -> Result<Self, Error> {
         let structure = representation.content_structure();
         Ok(Self {
             id: representation.id(),
@@ -337,8 +457,53 @@ impl TryFrom<Representation> for AbiRepresentation {
             structure_kind: content_structure_kind(structure.kind()),
             members: members(structure)?,
             sequence: sequence(structure)?,
+            resources,
         })
     }
+}
+
+impl AbiResource {
+    fn new(resource: &Resource, locators: Vec<Locator>) -> Result<Self, Error> {
+        let file_facts = resource.file_facts();
+        Ok(Self {
+            id: resource.id(),
+            file_size: file_facts.map(postproject_core::FileFacts::size_bytes),
+            modified_at: file_facts
+                .and_then(postproject_core::FileFacts::modified_at)
+                .map(postproject_core::Timestamp::as_unix_micros),
+            locators: locators
+                .into_iter()
+                .map(AbiLocator::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+}
+
+impl TryFrom<Locator> for AbiLocator {
+    type Error = Error;
+
+    fn try_from(locator: Locator) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: locator.id(),
+            uri: exact_cstring(locator.uri(), "locator URI")?,
+            availability: locator_availability(locator.availability()),
+            last_seen: locator
+                .last_seen()
+                .map(postproject_core::Timestamp::as_unix_micros),
+        })
+    }
+}
+
+unsafe fn resource_at<'a>(
+    representations: *const PpRepresentationSet,
+    representation_index: u64,
+    resource_index: u64,
+) -> Result<&'a AbiResource, Error> {
+    // SAFETY: The caller contract keeps the set alive for the returned borrow.
+    let set = unsafe { representations.as_ref() }
+        .ok_or_else(|| invalid_argument("representations must not be null"))?;
+    let representation = item_at(&set.representations, representation_index, "representation")?;
+    item_at(&representation.resources, resource_index, "resource")
 }
 
 fn members(structure: &ContentStructure) -> Result<Vec<AbiMember>, Error> {
@@ -404,6 +569,15 @@ const fn content_structure_kind(kind: ContentStructureKind) -> u32 {
     }
 }
 
+const fn locator_availability(availability: LocatorAvailability) -> u32 {
+    match availability {
+        LocatorAvailability::Unknown => PP_LOCATOR_UNKNOWN,
+        LocatorAvailability::Online => PP_LOCATOR_ONLINE,
+        LocatorAvailability::Offline => PP_LOCATOR_OFFLINE,
+        _ => 0,
+    }
+}
+
 fn invalid_argument(message: impl Into<String>) -> Error {
     Error::new(ErrorKind::InvalidArgument, message)
 }
@@ -439,7 +613,7 @@ mod tests {
         );
         let set = PpRepresentationSet {
             representations: vec![
-                AbiRepresentation::try_from(representation).expect("ABI representation"),
+                AbiRepresentation::new(&representation, Vec::new()).expect("ABI representation"),
             ],
         };
         let mut prefix = ptr::null();
