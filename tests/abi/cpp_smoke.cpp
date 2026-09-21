@@ -91,7 +91,9 @@ int main(int argc, char **argv) {
         !representations[0].members[0].required ||
         representations[0].members[0].role.has_value() ||
         representations[0].image_sequence.has_value() ||
-        !representations[0].fingerprints.empty() ||
+        representations[0].fingerprints.size() != 1 ||
+        representations[0].fingerprints[0].version != 1 ||
+        representations[0].fingerprints[0].value.empty() ||
         representations[0].resources.size() != 1 ||
         representations[0].resources[0].id !=
             representations[0].members[0].resource_id ||

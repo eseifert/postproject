@@ -106,7 +106,12 @@ class ProductionTests(unittest.TestCase):
             representation.structure_kind, ContentStructureKind.SINGLE_RESOURCE
         )
         self.assertIsNone(representation.image_sequence)
-        self.assertEqual(representation.fingerprints, ())
+        self.assertEqual(len(representation.fingerprints), 1)
+        self.assertEqual(
+            representation.fingerprints[0].algorithm, "pp-blake3-representation"
+        )
+        self.assertEqual(representation.fingerprints[0].version, 1)
+        self.assertTrue(representation.fingerprints[0].value)
         self.assertEqual(len(representation.members), 1)
         self.assertTrue(representation.members[0].required)
         self.assertIsNone(representation.members[0].role)
