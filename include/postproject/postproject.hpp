@@ -232,6 +232,76 @@ struct RevisionEvent final {
   RevisionEventPayload payload;
 };
 
+enum class RepresentationKind : std::uint32_t {
+  original = PP_REPRESENTATION_ORIGINAL,
+  proxy = PP_REPRESENTATION_PROXY,
+  optimized = PP_REPRESENTATION_OPTIMIZED,
+  derived = PP_REPRESENTATION_DERIVED,
+};
+
+enum class ContentStructureKind : std::uint32_t {
+  single_resource = PP_CONTENT_SINGLE_RESOURCE,
+  image_sequence = PP_CONTENT_IMAGE_SEQUENCE,
+  ordered_parts = PP_CONTENT_ORDERED_PARTS,
+  package = PP_CONTENT_PACKAGE,
+};
+
+enum class LocatorAvailability : std::uint32_t {
+  unknown = PP_LOCATOR_UNKNOWN,
+  online = PP_LOCATOR_ONLINE,
+  offline = PP_LOCATOR_OFFLINE,
+};
+
+struct Fingerprint final {
+  std::string algorithm;
+  std::uint16_t version;
+  std::vector<std::uint8_t> value;
+};
+
+struct RepresentationMember final {
+  Uuid resource_id;
+  std::optional<std::string> role;
+  bool required;
+};
+
+struct ImageSequenceDescriptor final {
+  std::string prefix;
+  std::string suffix;
+  std::uint8_t padding;
+  std::int64_t start;
+  std::int64_t end;
+  std::uint32_t step;
+  std::uint32_t rate_numerator;
+  std::uint32_t rate_denominator;
+  std::vector<std::int64_t> missing_frames;
+};
+
+struct Locator final {
+  Uuid id;
+  std::string uri;
+  LocatorAvailability availability;
+  std::optional<std::int64_t> last_seen_unix_micros;
+};
+
+struct Resource final {
+  Uuid id;
+  std::optional<std::uint64_t> file_size;
+  std::optional<std::int64_t> modified_at_unix_micros;
+  std::vector<Fingerprint> fingerprints;
+  std::vector<Locator> locators;
+};
+
+struct Representation final {
+  Uuid id;
+  Uuid asset_id;
+  RepresentationKind kind;
+  ContentStructureKind structure_kind;
+  std::vector<RepresentationMember> members;
+  std::optional<ImageSequenceDescriptor> image_sequence;
+  std::vector<Fingerprint> fingerprints;
+  std::vector<Resource> resources;
+};
+
 enum class RepresentationAvailability : std::uint32_t {
   online = PP_AVAILABILITY_ONLINE,
   partial = PP_AVAILABILITY_PARTIAL,
