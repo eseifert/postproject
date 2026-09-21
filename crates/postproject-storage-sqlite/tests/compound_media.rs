@@ -1,10 +1,10 @@
 //! Persistence coverage for compact and multi-resource content structures.
 
 use postproject_core::{
-    Asset, AssetId, ContentStructure, FrameRange, ImageSequenceDescriptor, ImageSequencePattern,
-    Locator, LocatorAvailability, LocatorId, OriginalMediaImport, RationalRate, Representation,
-    RepresentationId, RepresentationKind, Resource, ResourceId, ResourceMember, ResourceRole,
-    Timestamp,
+    Asset, AssetId, ContentStructure, ErrorKind, FrameRange, ImageSequenceDescriptor,
+    ImageSequencePattern, Locator, LocatorAvailability, LocatorId, OriginalMediaImport,
+    RationalRate, Representation, RepresentationId, RepresentationImport, RepresentationKind,
+    Resource, ResourceId, ResourceMember, ResourceRole, RevisionEventKind, Timestamp,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use rusqlite::Connection;
@@ -164,6 +164,133 @@ fn ordered_parts_and_package_membership_round_trip() {
             expected_ids
         );
     }
+}
+
+#[test]
+fn additional_representation_round_trips_and_is_journaled() {
+    let directory = tempfile::tempdir().expect("create temporary directory");
+    let production_path = directory.path().join("additional.pproj");
+    let original = compound_import(
+        "Source and proxy",
+        ContentStructure::single_resource(ResourceId::from_bytes([10; 16])),
+        &[ResourceId::from_bytes([10; 16])],
+    );
+    let asset_id = original.asset().id();
+    let proxy_resource_id = ResourceId::from_bytes([11; 16]);
+    let proxy = Representation::new(
+        RepresentationId::from_bytes([12; 16]),
+        asset_id,
+        RepresentationKind::Proxy,
+        ContentStructure::single_resource(proxy_resource_id),
+        Vec::new(),
+    );
+    let proxy_locator = Locator::new(
+        LocatorId::from_bytes([13; 16]),
+        proxy_resource_id,
+        "file:///production/proxy.mp4",
+        Some(Timestamp::from_unix_micros(3_000)),
+        LocatorAvailability::Online,
+    )
+    .expect("valid proxy locator");
+    let proxy_import = RepresentationImport::new(
+        proxy.clone(),
+        vec![Resource::new(proxy_resource_id, Vec::new(), None)],
+        vec![proxy_locator.clone()],
+    )
+    .expect("valid proxy import");
+
+    let mut production =
+        SqliteProduction::create(&production_path, None).expect("create production");
+    let mut transaction = production.begin_transaction().expect("begin transaction");
+    transaction
+        .import_original(&original)
+        .expect("import original");
+    transaction.commit().expect("commit original");
+    drop(transaction);
+
+    let mut transaction = production.begin_transaction().expect("begin transaction");
+    transaction
+        .add_representation(&proxy_import)
+        .expect("add proxy");
+    transaction.commit().expect("commit proxy");
+    drop(transaction);
+    drop(production);
+
+    let reopened = SqliteProduction::open(&production_path).expect("reopen production");
+    let representations = reopened
+        .representations(asset_id)
+        .expect("load representations");
+    assert!(representations.contains(&proxy));
+    assert_eq!(
+        reopened
+            .resources(proxy.id())
+            .expect("load proxy resources"),
+        proxy_import.resources()
+    );
+    assert_eq!(
+        reopened
+            .locators(proxy_resource_id)
+            .expect("load proxy locators"),
+        [proxy_locator]
+    );
+    let revision = reopened
+        .latest_revision()
+        .expect("load latest revision")
+        .expect("proxy revision");
+    let events = reopened
+        .events_for_revision(revision.id())
+        .expect("load proxy events");
+    assert_eq!(events.len(), 4);
+    assert!(matches!(
+        events[0].kind(),
+        RevisionEventKind::RepresentationAdded {
+            representation_id,
+            ..
+        } if *representation_id == proxy.id()
+    ));
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event.kind(), RevisionEventKind::AssetImported { .. }))
+    );
+}
+
+#[test]
+fn additional_representation_requires_an_existing_asset() {
+    let directory = tempfile::tempdir().expect("create temporary directory");
+    let mut production = SqliteProduction::create(directory.path().join("missing.pproj"), None)
+        .expect("create production");
+    let resource_id = ResourceId::new();
+    let representation = Representation::new(
+        RepresentationId::new(),
+        AssetId::new(),
+        RepresentationKind::Derived,
+        ContentStructure::single_resource(resource_id),
+        Vec::new(),
+    );
+    let locator = Locator::new(
+        LocatorId::new(),
+        resource_id,
+        "file:///production/output.mov",
+        None,
+        LocatorAvailability::Online,
+    )
+    .expect("valid locator");
+    let import = RepresentationImport::new(
+        representation,
+        vec![Resource::new(resource_id, Vec::new(), None)],
+        vec![locator],
+    )
+    .expect("valid representation import");
+    let mut transaction = production.begin_transaction().expect("begin transaction");
+
+    assert_eq!(
+        transaction
+            .add_representation(&import)
+            .expect_err("missing asset must fail")
+            .kind(),
+        ErrorKind::NotFound
+    );
 }
 
 fn compound_import(
