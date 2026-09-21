@@ -18,12 +18,14 @@ from postproject import (
     AgentIdentity,
     AssetImportedEvent,
     AvailabilityIssueKind,
+    ContentStructureKind,
     EvidenceKind,
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
     InvalidArgumentError,
     LocatorAddedEvent,
+    LocatorAvailability,
     MetadataAddedOrReplacedEvent,
     MetadataAssertion,
     MetadataLanguageString,
@@ -35,6 +37,7 @@ from postproject import (
     Production,
     RepresentationAddedEvent,
     RepresentationAvailability,
+    RepresentationKind,
     RepresentationResourceAddedEvent,
     ResourceAddedEvent,
     ResourceResolutionState,
@@ -85,6 +88,39 @@ class ProductionTests(unittest.TestCase):
         ) as reopened:
             self.assertEqual(reopened.id, production_id)
             self.assertIn(asset_id, reopened.assets)
+
+    def test_representations_are_typed_keyed_and_copied(self) -> None:
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+            representations = production.representations[asset_id]
+
+        self.assertEqual(len(representations), 1)
+        representation = representations[0]
+        self.assertEqual(representation.asset_id, asset_id)
+        self.assertEqual(representation.kind, RepresentationKind.ORIGINAL)
+        self.assertEqual(
+            representation.structure_kind, ContentStructureKind.SINGLE_RESOURCE
+        )
+        self.assertIsNone(representation.image_sequence)
+        self.assertEqual(representation.fingerprints, ())
+        self.assertEqual(len(representation.members), 1)
+        self.assertTrue(representation.members[0].required)
+        self.assertIsNone(representation.members[0].role)
+
+        self.assertEqual(len(representation.resources), 1)
+        resource = representation.resources[0]
+        self.assertEqual(resource.id, representation.members[0].resource_id)
+        self.assertEqual(resource.file_size, len(self.media_path.read_bytes()))
+        self.assertIsNotNone(resource.modified_at_unix_micros)
+        self.assertEqual(len(resource.fingerprints), 1)
+        self.assertEqual(resource.fingerprints[0].version, 1)
+        self.assertTrue(resource.fingerprints[0].value)
+        self.assertEqual(len(resource.locators), 1)
+        self.assertEqual(resource.locators[0].availability, LocatorAvailability.ONLINE)
+        self.assertIsNotNone(resource.locators[0].last_seen_unix_micros)
 
     def test_context_exception_and_explicit_rollback_discard_imports(self) -> None:
         with Production.create(
