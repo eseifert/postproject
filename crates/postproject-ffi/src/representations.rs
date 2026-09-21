@@ -31,12 +31,25 @@ struct AbiRepresentation {
     kind: u32,
     structure_kind: u32,
     members: Vec<AbiMember>,
+    sequence: Option<AbiSequence>,
 }
 
 struct AbiMember {
     resource_id: ResourceId,
     role: Option<CString>,
     required: bool,
+}
+
+struct AbiSequence {
+    prefix: CString,
+    suffix: CString,
+    padding: u8,
+    start: i64,
+    end: i64,
+    step: u32,
+    rate_numerator: u32,
+    rate_denominator: u32,
+    missing_frames: Vec<i64>,
 }
 
 /// Loads the representations belonging to one asset in stable order.
@@ -195,6 +208,108 @@ pub unsafe extern "C" fn pp_representation_set_get_member(
     }
 }
 
+/// Reads the compact image-sequence descriptor for one representation.
+///
+/// # Safety
+///
+/// The set must be live and every output pointer must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_representation_set_get_sequence(
+    representations: *const PpRepresentationSet,
+    representation_index: u64,
+    out_prefix: *mut *const c_char,
+    out_suffix: *mut *const c_char,
+    out_padding: *mut u8,
+    out_start: *mut i64,
+    out_end: *mut i64,
+    out_step: *mut u32,
+    out_rate_numerator: *mut u32,
+    out_rate_denominator: *mut u32,
+    out_missing_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_const_output(out_prefix);
+        initialize_const_output(out_suffix);
+        initialize_value(out_padding, 0);
+        initialize_value(out_start, 0);
+        initialize_value(out_end, 0);
+        initialize_value(out_step, 0);
+        initialize_value(out_rate_numerator, 0);
+        initialize_value(out_rate_denominator, 0);
+        initialize_value(out_missing_count, 0);
+        ffi_call(out_error, || {
+            require_output(out_prefix, "out_prefix")?;
+            require_output(out_suffix, "out_suffix")?;
+            require_output(out_padding, "out_padding")?;
+            require_output(out_start, "out_start")?;
+            require_output(out_end, "out_end")?;
+            require_output(out_step, "out_step")?;
+            require_output(out_rate_numerator, "out_rate_numerator")?;
+            require_output(out_rate_denominator, "out_rate_denominator")?;
+            require_output(out_missing_count, "out_missing_count")?;
+            let set = representations
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representations must not be null"))?;
+            let representation =
+                item_at(&set.representations, representation_index, "representation")?;
+            let sequence = representation
+                .sequence
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation is not an image sequence"))?;
+            out_prefix.write(sequence.prefix.as_ptr());
+            out_suffix.write(sequence.suffix.as_ptr());
+            out_padding.write(sequence.padding);
+            out_start.write(sequence.start);
+            out_end.write(sequence.end);
+            out_step.write(sequence.step);
+            out_rate_numerator.write(sequence.rate_numerator);
+            out_rate_denominator.write(sequence.rate_denominator);
+            out_missing_count
+                .write(u64::try_from(sequence.missing_frames.len()).unwrap_or(u64::MAX));
+            Ok(())
+        })
+    }
+}
+
+/// Reads one known missing frame from an image-sequence descriptor.
+///
+/// # Safety
+///
+/// The set must be live and `out_frame` writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_representation_set_get_sequence_missing_frame(
+    representations: *const PpRepresentationSet,
+    representation_index: u64,
+    frame_index: u64,
+    out_frame: *mut i64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_value(out_frame, 0);
+        ffi_call(out_error, || {
+            require_output(out_frame, "out_frame")?;
+            let set = representations
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representations must not be null"))?;
+            let representation =
+                item_at(&set.representations, representation_index, "representation")?;
+            let sequence = representation
+                .sequence
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation is not an image sequence"))?;
+            out_frame.write(*item_at(
+                &sequence.missing_frames,
+                frame_index,
+                "missing frame",
+            )?);
+            Ok(())
+        })
+    }
+}
+
 /// Releases a representation result set. Null is a no-op.
 ///
 /// # Safety
@@ -221,6 +336,7 @@ impl TryFrom<Representation> for AbiRepresentation {
             kind: representation_kind(representation.kind()),
             structure_kind: content_structure_kind(structure.kind()),
             members: members(structure)?,
+            sequence: sequence(structure)?,
         })
     }
 }
@@ -247,6 +363,25 @@ fn members(structure: &ContentStructure) -> Result<Vec<AbiMember>, Error> {
             required: true,
         })
         .collect())
+}
+
+fn sequence(structure: &ContentStructure) -> Result<Option<AbiSequence>, Error> {
+    let Some(descriptor) = structure.image_sequence_descriptor() else {
+        return Ok(None);
+    };
+    let frames = descriptor.frames();
+    let rate = descriptor.rate();
+    Ok(Some(AbiSequence {
+        prefix: exact_cstring(descriptor.pattern().prefix(), "sequence prefix")?,
+        suffix: exact_cstring(descriptor.pattern().suffix(), "sequence suffix")?,
+        padding: descriptor.pattern().padding(),
+        start: frames.start(),
+        end: frames.end(),
+        step: frames.step(),
+        rate_numerator: rate.numerator(),
+        rate_denominator: rate.denominator(),
+        missing_frames: descriptor.known_missing_frames().to_vec(),
+    }))
 }
 
 const fn representation_kind(kind: RepresentationKind) -> u32 {

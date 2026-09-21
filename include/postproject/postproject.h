@@ -210,6 +210,17 @@ PP_API pp_error_code_t pp_representation_set_get_member(
     uint64_t representation_index, uint64_t member_index,
     pp_uuid_t *out_resource_id, const char **out_role, uint8_t *out_required,
     pp_error_t **out_error);
+PP_API pp_error_code_t pp_representation_set_get_sequence(
+    const pp_representation_set_t *representations,
+    uint64_t representation_index, const char **out_prefix,
+    const char **out_suffix, uint8_t *out_padding, int64_t *out_start,
+    int64_t *out_end, uint32_t *out_step, uint32_t *out_rate_numerator,
+    uint32_t *out_rate_denominator, uint64_t *out_missing_count,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_representation_set_get_sequence_missing_frame(
+    const pp_representation_set_t *representations,
+    uint64_t representation_index, uint64_t frame_index, int64_t *out_frame,
+    pp_error_t **out_error);
 PP_API void pp_representation_set_release(
     pp_representation_set_t *representations);
 /* Result strings are borrowed until the owning result set is released. */

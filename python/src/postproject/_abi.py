@@ -261,6 +261,8 @@ EXPORTED_SYMBOLS = (
     "pp_representation_set_count",
     "pp_representation_set_get",
     "pp_representation_set_get_member",
+    "pp_representation_set_get_sequence",
+    "pp_representation_set_get_sequence_missing_frame",
     "pp_representation_set_release",
     "pp_resolution_set_get_candidate",
     "pp_resolution_set_get_candidate_evidence",
@@ -313,6 +315,10 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_representation_set_get.restype = ErrorCode
     lib.pp_representation_set_get_member.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_representation_set_get_member.restype = ErrorCode
+    lib.pp_representation_set_get_sequence.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_representation_set_get_sequence.restype = ErrorCode
+    lib.pp_representation_set_get_sequence_missing_frame.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_representation_set_get_sequence_missing_frame.restype = ErrorCode
     lib.pp_representation_set_release.argtypes = [ctypes.POINTER(RepresentationSet)]
     lib.pp_representation_set_release.restype = None
     lib.pp_production_external_identifiers.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.POINTER(ExternalIdentifierSet)), ctypes.POINTER(ctypes.POINTER(Error))]
