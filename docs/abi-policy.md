@@ -1,14 +1,14 @@
 # ABI policy
 
-ABI version 8 is pre-release and may change during the 0.x series, with every
+ABI version 9 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
 
 ## Types and ownership
 
-Productions, transactions, resolution sets, activity sets, external-identifier
-sets, object-reference sets, and errors are opaque handles. A
+Productions, transactions, representation sets, resolution sets, activity sets,
+external-identifier sets, object-reference sets, and errors are opaque handles. A
 successful creation/open call transfers one production ownership reference to the
 caller, which releases it exactly once with `pp_production_release`. Failed calls
 optionally transfer an error object, released exactly once with
@@ -75,6 +75,21 @@ candidate using `pp_transaction_confirm_locator`, and only transaction commit
 makes that location durable. The caller is responsible for passing a URI from
 the result it reviewed; the API validates the URI and resource identity at
 persistence time but does not silently choose a candidate.
+
+## Representation inspection
+
+`pp_production_representations` returns immutable snapshots of an asset's
+representations. Index-checked accessors expose structure kind, ordered members,
+requiredness and roles, compact image-sequence descriptors, concrete resources,
+locators, and their last observed availability. Resource fingerprints and
+structure-aware representation fingerprints have separate accessors and counts;
+callers must not treat one as the other. Returned strings and fingerprint byte
+spans borrow the result set and remain valid until
+`pp_representation_set_release`.
+
+The C++ wrapper copies the complete snapshot into `Representation`, `Resource`,
+`Locator`, and `Fingerprint` values. Compact image sequences remain one resource
+with a pattern and frame domain rather than one synthetic resource per frame.
 
 ## External identifiers
 

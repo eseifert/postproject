@@ -53,7 +53,7 @@ order.
 
 Consumers poll with three operations:
 
-- `latest_revision()` discovers the current cursor;
+- `latest_revision` discovers the current cursor;
 - `changes_since(sequence, limit)` reads a bounded ascending page; and
 - `events_for_revision(revision_id)` reads that revision's ordered events.
 
