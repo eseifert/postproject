@@ -38,6 +38,7 @@ original-media import, revision context, asset existence, and the paginated
 revision feed with typed semantic events. External identifiers can be added,
 removed, enumerated, and found by exact scheme and value. Metadata reads preserve
 all typed value kinds; plain and language-tagged text can be written through a
-transaction. Provenance, compound-media, and resolution wrappers remain under
-development. The generated low-level declaration table already covers every
-function and struct in the current ABI.
+transaction. Provenance activities can be created and queried through immutable
+value objects and keyed graph views. Compound-media and resolution wrappers
+remain under development. The generated low-level declaration table already
+covers every function and struct in the current ABI.

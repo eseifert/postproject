@@ -31,6 +31,30 @@ Edges inside an activity are canonicalized by representation ID and role. Graph
 traversal returns unique representation IDs in stable order. A representation
 with no provenance has empty results; an unknown representation is an error.
 
+## Python
+
+The Python API uses immutable value objects for activity facts and keyed views
+for graph queries:
+
+```python
+from postproject import ActivityEdge, ActivitySpec, ToolIdentity
+
+with production.transaction() as transaction:
+    activity_id = transaction.create_activity(
+        ActivitySpec(
+            "postproject:transcode",
+            inputs=(ActivityEdge(source_id, "postproject:primary"),),
+            outputs=(ActivityEdge(proxy_id, "postproject:proxy"),),
+            tool=ToolIdentity("FFmpeg", "8.0", "https://ffmpeg.org/"),
+        )
+    )
+
+activity = next(item for item in production.activities if item.id == activity_id)
+assert production.activities_consuming[source_id] == (activity,)
+assert production.activities_producing[proxy_id] == (activity,)
+assert production.provenance_ancestors[proxy_id] == (source_id,)
+```
+
 ## Mapping guidance
 
 An activity maps strongly at a conceptual level to a W3C PROV Activity, while
@@ -39,6 +63,5 @@ implementation. MovieLabs OMC task and relationship concepts may be carried by
 adapters, but PostProject does not infer revision, variant, or alternative
 semantics from processing lineage.
 
-The native and Python provenance surfaces are still under development. Do not
-parse the private SQLite tables or encode tool parameters as an ad hoc JSON
-column; use the public domain contracts and metadata model.
+Do not parse the private SQLite tables or encode tool parameters as an ad hoc
+JSON column; use the public domain contracts and metadata model.
