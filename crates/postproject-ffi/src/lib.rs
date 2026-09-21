@@ -12,13 +12,15 @@ mod revisions;
 
 use std::{
     any::Any,
-    cell::{Cell, RefCell},
     ffi::{CStr, CString, c_char},
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
     ptr,
-    rc::Rc,
     str::FromStr,
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use postproject_core::{
@@ -178,17 +180,17 @@ pub struct PpRevisionEvent {
 
 /// Opaque production handle owned by the C caller.
 pub struct PpProduction {
-    state: Rc<ProductionState>,
+    state: Arc<ProductionState>,
 }
 
 struct ProductionState {
-    inner: RefCell<SqliteProduction>,
-    transaction_open: Cell<bool>,
+    inner: Mutex<SqliteProduction>,
+    transaction_open: AtomicBool,
 }
 
 /// Opaque transaction handle owned by the C caller.
 pub struct PpTransaction {
-    state: Rc<ProductionState>,
+    state: Arc<ProductionState>,
     lifecycle: TransactionLifecycle,
     revision_context: RevisionContext,
     mutations: Vec<StagedMutation>,
@@ -432,11 +434,7 @@ pub unsafe extern "C" fn pp_production_id(
             if out_id.is_null() {
                 return Err(invalid_argument("out_id must not be null"));
             }
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             out_id.write(uuid(inner.production().id()));
             Ok(())
         })
@@ -472,11 +470,7 @@ pub unsafe extern "C" fn pp_production_asset_exists(
             if out_exists.is_null() {
                 return Err(invalid_argument("out_exists must not be null"));
             }
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             let expected = AssetId::from_bytes(asset_id.bytes);
             let exists = inner.assets()?.iter().any(|asset| asset.id() == expected);
             out_exists.write(u8::from(exists));
@@ -515,11 +509,7 @@ pub unsafe extern "C" fn pp_production_external_identifiers(
                 return Err(invalid_argument("out_identifiers must not be null"));
             }
             let target = object_ref_from_abi(*target)?;
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             let identifiers = inner
                 .external_identifiers(target)?
                 .into_iter()
@@ -560,11 +550,7 @@ pub unsafe extern "C" fn pp_production_find_by_external_identifier(
             }
             let scheme = IdentifierScheme::new(required_utf8(scheme, "scheme")?)?;
             let value = required_utf8(value, "value")?;
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             let objects = inner
                 .find_by_external_identifier(&scheme, value)?
                 .into_iter()
@@ -742,11 +728,7 @@ pub unsafe extern "C" fn pp_production_metadata(
                 .ok_or_else(|| invalid_argument("target must not be null"))?;
             require_output(out_metadata, "out_metadata")?;
             let target = object_ref_from_abi(*target)?;
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             let metadata = PpMetadataSet::from_assertions(target, &inner.metadata(target)?)?;
             out_metadata.write(Box::into_raw(Box::new(metadata)));
             Ok(())
@@ -777,11 +759,7 @@ pub unsafe extern "C" fn pp_production_find_metadata(
                 .ok_or_else(|| invalid_argument("production must not be null"))?;
             require_output(out_metadata, "out_metadata")?;
             let property = metadata_property_from_abi(vocabulary, property)?;
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             let metadata =
                 PpMetadataSet::from_matches(&inner.query_by_metadata_property(&property)?)?;
             out_metadata.write(Box::into_raw(Box::new(metadata)));
@@ -883,11 +861,7 @@ pub unsafe extern "C" fn pp_production_activities(
                 .as_ref()
                 .ok_or_else(|| invalid_argument("production must not be null"))?;
             require_output(out_activities, "out_activities")?;
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             let activities = PpActivitySet::new(&inner.activities()?)?;
             out_activities.write(Box::into_raw(Box::new(activities)));
             Ok(())
@@ -1292,11 +1266,7 @@ pub unsafe extern "C" fn pp_production_latest_revision(
                 .as_ref()
                 .ok_or_else(|| invalid_argument("production must not be null"))?;
             require_output(out_revisions, "out_revisions")?;
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             let revisions: Vec<_> = inner.latest_revision()?.into_iter().collect();
             out_revisions.write(Box::into_raw(Box::new(PpRevisionSet::new(&revisions)?)));
             Ok(())
@@ -1325,11 +1295,7 @@ pub unsafe extern "C" fn pp_production_changes_since(
                 .as_ref()
                 .ok_or_else(|| invalid_argument("production must not be null"))?;
             require_output(out_revisions, "out_revisions")?;
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             let revisions = PpRevisionSet::new(&inner.changes_since(sequence, limit)?)?;
             out_revisions.write(Box::into_raw(Box::new(revisions)));
             Ok(())
@@ -1477,11 +1443,7 @@ pub unsafe extern "C" fn pp_production_revision_events(
                 .as_ref()
                 .ok_or_else(|| invalid_argument("revision_id must not be null"))?;
             require_output(out_events, "out_events")?;
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             let events = inner.events_for_revision(RevisionId::from_bytes(revision_id.bytes))?;
             out_events.write(Box::into_raw(Box::new(PpRevisionEventSet::new(&events)?)));
             Ok(())
@@ -1948,30 +1910,34 @@ pub unsafe extern "C" fn pp_production_resolve_asset(
                 return Err(invalid_argument("out_resolutions must not be null"));
             }
 
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
             let asset_id = AssetId::from_bytes(asset_id.bytes);
-            if !inner.assets()?.iter().any(|asset| asset.id() == asset_id) {
-                return Err(Error::new(
-                    ErrorKind::NotFound,
-                    format!("asset {asset_id} does not exist"),
-                ));
-            }
+            let (media_roots, work) = {
+                let inner = lock_production(&production.state);
+                if !inner.assets()?.iter().any(|asset| asset.id() == asset_id) {
+                    return Err(Error::new(
+                        ErrorKind::NotFound,
+                        format!("asset {asset_id} does not exist"),
+                    ));
+                }
+                let mut work = Vec::new();
+                for representation in inner.representations(asset_id)? {
+                    let mut resources = Vec::new();
+                    for resource in inner.resources(representation.id())? {
+                        let locators = inner.locators(resource.id())?;
+                        resources.push((resource, locators));
+                    }
+                    work.push((representation, resources));
+                }
+                (inner.production().media_roots().to_vec(), work)
+            };
 
             let resolver = MediaResolver::default();
             let mut resolutions = Vec::new();
-            for representation in inner.representations(asset_id)? {
+            for (representation, resources) in work {
                 let mut resource_resolutions = Vec::new();
-                for resource in inner.resources(representation.id())? {
-                    let locators = inner.locators(resource.id())?;
-                    let resolution = resolver.resolve_resource(
-                        &resource,
-                        &locators,
-                        inner.production().media_roots(),
-                    )?;
+                for (resource, locators) in resources {
+                    let resolution =
+                        resolver.resolve_resource(&resource, &locators, &media_roots)?;
                     resource_resolutions.push(resolution);
                 }
                 resolutions.push(RepresentationResolution::aggregate(
@@ -2296,14 +2262,19 @@ pub unsafe extern "C" fn pp_production_begin_transaction(
             if out_transaction.is_null() {
                 return Err(invalid_argument("out_transaction must not be null"));
             }
-            if production.state.transaction_open.replace(true) {
+            if production
+                .state
+                .transaction_open
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+            {
                 return Err(Error::new(
                     ErrorKind::Conflict,
                     "production already has an open transaction",
                 ));
             }
             out_transaction.write(Box::into_raw(Box::new(PpTransaction {
-                state: Rc::clone(&production.state),
+                state: Arc::clone(&production.state),
                 lifecycle: TransactionLifecycle::new(),
                 revision_context: RevisionContext::default(),
                 mutations: Vec::new(),
@@ -2934,11 +2905,7 @@ unsafe fn production_activities_for_representation(
                 .as_ref()
                 .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
             require_output(out_activities, "out_activities")?;
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             let representation_id = RepresentationId::from_bytes(representation_id.bytes);
             let activities = match relation {
                 ActivityRelation::Producing => inner.activities_producing(representation_id),
@@ -2974,11 +2941,7 @@ unsafe fn production_provenance_relatives(
                 .as_ref()
                 .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
             require_output(out_representations, "out_representations")?;
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             let representation_id = RepresentationId::from_bytes(representation_id.bytes);
             let related = match direction {
                 ProvenanceDirection::Ancestors => inner.ancestors(representation_id),
@@ -3284,11 +3247,18 @@ fn uuid(id: ProductionId) -> PpUuid {
 
 fn production_handle(production: SqliteProduction) -> PpProduction {
     PpProduction {
-        state: Rc::new(ProductionState {
-            inner: RefCell::new(production),
-            transaction_open: Cell::new(false),
+        state: Arc::new(ProductionState {
+            inner: Mutex::new(production),
+            transaction_open: AtomicBool::new(false),
         }),
     }
+}
+
+fn lock_production(state: &ProductionState) -> MutexGuard<'_, SqliteProduction> {
+    state
+        .inner
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 unsafe fn representation_resolution_at<'a>(
@@ -3477,11 +3447,7 @@ impl PpTransaction {
     fn commit(&mut self) -> Result<(), Error> {
         self.lifecycle.ensure_open()?;
         let result = (|| {
-            let mut production = self
-                .state
-                .inner
-                .try_borrow_mut()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let mut production = lock_production(&self.state);
             let mut transaction = production.begin_transaction()?;
             transaction.set_revision_context(self.revision_context.clone())?;
             for mutation in &self.mutations {
@@ -3509,7 +3475,7 @@ impl PpTransaction {
             transaction.commit()
         })();
 
-        self.state.transaction_open.set(false);
+        self.state.transaction_open.store(false, Ordering::Release);
         if result.is_ok() {
             self.lifecycle.mark_committed()?;
             self.mutations.clear();
@@ -3523,14 +3489,14 @@ impl PpTransaction {
     fn rollback(&mut self) -> Result<(), Error> {
         self.lifecycle.mark_rolled_back()?;
         self.mutations.clear();
-        self.state.transaction_open.set(false);
+        self.state.transaction_open.store(false, Ordering::Release);
         Ok(())
     }
 }
 
 impl Drop for PpTransaction {
     fn drop(&mut self) {
-        self.state.transaction_open.set(false);
+        self.state.transaction_open.store(false, Ordering::Release);
     }
 }
 

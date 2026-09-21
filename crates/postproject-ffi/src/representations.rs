@@ -8,7 +8,7 @@ use postproject_core::{
 
 use crate::{
     PpError, PpProduction, PpUuid, exact_cstring, ffi_call, initialize_const_output,
-    initialize_output, initialize_uuid, initialize_value, item_at, require_output,
+    initialize_output, initialize_uuid, initialize_value, item_at, lock_production, require_output,
 };
 
 const PP_REPRESENTATION_ORIGINAL: u32 = 1;
@@ -105,11 +105,7 @@ pub unsafe extern "C" fn pp_production_representations(
                 .ok_or_else(|| invalid_argument("asset_id must not be null"))?;
             require_output(out_representations, "out_representations")?;
             let asset_id = AssetId::from_bytes(asset_id.bytes);
-            let inner = production
-                .state
-                .inner
-                .try_borrow()
-                .map_err(|_| Error::new(ErrorKind::Conflict, "production is already in use"))?;
+            let inner = lock_production(&production.state);
             if !inner.assets()?.iter().any(|asset| asset.id() == asset_id) {
                 return Err(Error::new(ErrorKind::NotFound, "asset does not exist"));
             }
