@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import TypeAlias
 from uuid import UUID
 
@@ -123,6 +124,88 @@ class ActivitySpec:
     finished_at_unix_micros: int | None = None
     tool: ToolIdentity | None = None
     agent: AgentIdentity | None = None
+
+
+class RepresentationAvailability(Enum):
+    """Aggregate availability of a complete representation."""
+
+    ONLINE = "online"
+    PARTIAL = "partial"
+    OFFLINE = "offline"
+    AMBIGUOUS = "ambiguous"
+    ERROR = "error"
+
+
+class ResourceResolutionState(Enum):
+    """Outcome of resolving one storage resource."""
+
+    ONLINE_AT_KNOWN_LOCATOR = "online_at_known_locator"
+    RESOLVED_EXACT = "resolved_exact"
+    RESOLVED_PROBABLE = "resolved_probable"
+    OFFLINE = "offline"
+    AMBIGUOUS = "ambiguous"
+    ERROR = "error"
+
+
+class AvailabilityIssueKind(Enum):
+    """Machine-readable category of a representation availability issue."""
+
+    OFFLINE_RESOURCE = "offline_resource"
+    AMBIGUOUS_RESOURCE = "ambiguous_resource"
+    RESOURCE_ERROR = "resource_error"
+    MISSING_FRAMES = "missing_frames"
+
+
+class EvidenceKind(Enum):
+    """Machine-readable reason supporting or opposing a candidate."""
+
+    KNOWN_LOCATOR_AVAILABLE = "known_locator_available"
+    EXACT_FINGERPRINT_MATCH = "exact_fingerprint_match"
+    FULL_HASH_MATCH = "full_hash_match"
+    PARTIAL_FINGERPRINT_MATCH = "partial_fingerprint_match"
+    FILE_SIZE_MATCH = "file_size_match"
+    FILE_NAME_MATCH = "file_name_match"
+    RELATIVE_PATH_SIMILARITY = "relative_path_similarity"
+    MEDIA_ROOT_RELATION = "media_root_relation"
+    CONFLICTING_CANDIDATE = "conflicting_candidate"
+    DISCOVERY_ERROR = "discovery_error"
+
+
+@dataclass(frozen=True, slots=True)
+class ResolutionEvidence:
+    kind: EvidenceKind
+    detail: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResolutionCandidate:
+    uri: str
+    confidence_basis_points: int
+    evidence: tuple[ResolutionEvidence, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceResolution:
+    resource_id: ResourceId
+    state: ResourceResolutionState
+    candidates: tuple[ResolutionCandidate, ...]
+    evidence: tuple[ResolutionEvidence, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class AvailabilityIssue:
+    resource_id: ResourceId
+    required: bool
+    kind: AvailabilityIssueKind
+    frames: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RepresentationResolution:
+    representation_id: RepresentationId
+    availability: RepresentationAvailability
+    resources: tuple[ResourceResolution, ...]
+    issues: tuple[AvailabilityIssue, ...]
 
 
 @dataclass(frozen=True, slots=True)
