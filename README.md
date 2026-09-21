@@ -106,5 +106,6 @@ Build the documentation book with `mdbook build docs`.
 
 ## License
 
-Licensed under either the MIT License or the Apache License, Version 2.0, at
-your option: `MIT OR Apache-2.0`.
+Licensed under either the MIT License ([`LICENSE-MIT`](LICENSE-MIT)) or the
+Apache License, Version 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE)), at your
+option: `MIT OR Apache-2.0`.
