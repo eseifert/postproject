@@ -262,19 +262,21 @@ int main(int argc, char **argv) {
   pp_representation_kind_t representation_kind = 0;
   pp_content_structure_kind_t structure_kind = 0;
   uint64_t member_count = 0;
+  uint64_t representation_fingerprint_count = 0;
   status = pp_production_representations(production, &asset_id,
                                          &representations, &error);
   if (status != PP_OK || representations == NULL ||
       pp_representation_set_count(representations) != UINT64_C(1) ||
       pp_representation_set_get(
           representations, 0, &representation_id, &representation_asset_id,
-          &representation_kind, &structure_kind, &member_count, &error) !=
-          PP_OK ||
+          &representation_kind, &structure_kind, &member_count,
+          &representation_fingerprint_count, &error) != PP_OK ||
       memcmp(representation_asset_id.bytes, asset_id.bytes,
              sizeof(asset_id.bytes)) != 0 ||
       representation_kind != PP_REPRESENTATION_ORIGINAL ||
       structure_kind != PP_CONTENT_SINGLE_RESOURCE ||
-      member_count != UINT64_C(1)) {
+      member_count != UINT64_C(1) ||
+      representation_fingerprint_count != UINT64_C(0)) {
     pp_representation_set_release(representations);
     pp_production_release(production);
     pp_error_release(error);
@@ -298,19 +300,37 @@ int main(int argc, char **argv) {
   uint8_t has_modified_at = 0;
   int64_t modified_at = 0;
   uint64_t locator_count = 0;
+  uint64_t resource_fingerprint_count = 0;
   status = pp_representation_set_get_resource(
       representations, 0, 0, &inspected_resource_id, &has_file_facts,
-      &file_size, &has_modified_at, &modified_at, &locator_count, &error);
+      &file_size, &has_modified_at, &modified_at, &locator_count,
+      &resource_fingerprint_count, &error);
   if (status != PP_OK ||
       memcmp(inspected_resource_id.bytes, resource_id.bytes,
              sizeof(resource_id.bytes)) != 0 ||
       has_file_facts != UINT8_C(1) || file_size != UINT64_C(11) ||
       has_modified_at != UINT8_C(1) || modified_at == 0 ||
-      locator_count != UINT64_C(1)) {
+      locator_count != UINT64_C(1) ||
+      resource_fingerprint_count != UINT64_C(1)) {
     pp_representation_set_release(representations);
     pp_production_release(production);
     pp_error_release(error);
     return 45;
+  }
+  const char *fingerprint_algorithm = NULL;
+  uint16_t fingerprint_version = 0;
+  const uint8_t *fingerprint_value = NULL;
+  uint64_t fingerprint_value_length = 0;
+  status = pp_representation_set_get_resource_fingerprint(
+      representations, 0, 0, 0, &fingerprint_algorithm, &fingerprint_version,
+      &fingerprint_value, &fingerprint_value_length, &error);
+  if (status != PP_OK || fingerprint_algorithm == NULL ||
+      fingerprint_version != UINT16_C(1) || fingerprint_value == NULL ||
+      fingerprint_value_length == UINT64_C(0)) {
+    pp_representation_set_release(representations);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 47;
   }
   pp_uuid_t locator_id = {{0}};
   const char *locator_uri = NULL;
