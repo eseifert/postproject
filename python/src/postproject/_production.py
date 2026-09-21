@@ -9,7 +9,7 @@ from _ctypes import _Pointer
 from collections.abc import Callable
 from pathlib import Path
 from types import TracebackType
-from typing import TypeVar
+from typing import Self
 from uuid import UUID
 
 from . import _abi
@@ -17,22 +17,30 @@ from ._abi import (
     Error,
     ExternalIdentifierSet,
     MetadataSet,
-    MetadataValue as NativeMetadataValue,
     ObjectRefSet,
-    Production as NativeProduction,
-    RevisionEvent as NativeRevisionEvent,
     RevisionEventSet,
     RevisionSet,
-    Transaction as NativeTransaction,
     Uuid,
+)
+from ._abi import (
+    MetadataValue as NativeMetadataValue,
+)
+from ._abi import (
+    Production as NativeProduction,
+)
+from ._abi import (
+    RevisionEvent as NativeRevisionEvent,
+)
+from ._abi import (
+    Transaction as NativeTransaction,
 )
 from ._model import (
     ActivityCreatedEvent,
     ActivityId,
     ActivityInputAddedEvent,
     ActivityOutputAddedEvent,
-    AssetImportedEvent,
     AssetId,
+    AssetImportedEvent,
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
@@ -75,8 +83,6 @@ from ._model import (
 )
 from ._native import NativeLibrary
 
-_ProductionT = TypeVar("_ProductionT", bound="Production")
-
 
 class _Assets:
     def __init__(self, production: Production) -> None:
@@ -117,9 +123,7 @@ class _MetadataByProperty:
     def __init__(self, production: Production) -> None:
         self._production = production
 
-    def __getitem__(
-        self, property: MetadataProperty
-    ) -> tuple[MetadataAssertion, ...]:
+    def __getitem__(self, property: MetadataProperty) -> tuple[MetadataAssertion, ...]:
         return self._production._metadata_by_property(property)
 
 
@@ -147,12 +151,12 @@ class Production:
 
     @classmethod
     def create(
-        cls: type[_ProductionT],
+        cls,
         path: str | os.PathLike[str],
         display_name: str | None = None,
         *,
         library_path: str | os.PathLike[str] | None = None,
-    ) -> _ProductionT:
+    ) -> Self:
         """Create a new production without overwriting an existing path."""
 
         native = NativeLibrary(library_path)
@@ -171,11 +175,11 @@ class Production:
 
     @classmethod
     def open(
-        cls: type[_ProductionT],
+        cls,
         path: str | os.PathLike[str],
         *,
         library_path: str | os.PathLike[str] | None = None,
-    ) -> _ProductionT:
+    ) -> Self:
         """Open an existing production."""
 
         native = NativeLibrary(library_path)
@@ -411,7 +415,7 @@ class Production:
         self._finalizer()
         self._handle = ctypes.POINTER(NativeProduction)()
 
-    def __enter__(self: _ProductionT) -> _ProductionT:
+    def __enter__(self) -> Self:
         self._require_open()
         return self
 
@@ -456,8 +460,7 @@ class Production:
         try:
             count = self._native.lib.pp_metadata_set_count(handle)
             return tuple(
-                _metadata_at(self._native, handle, index)
-                for index in range(int(count))
+                _metadata_at(self._native, handle, index) for index in range(int(count))
             )
         finally:
             self._native.lib.pp_metadata_set_release(handle)
@@ -582,7 +585,7 @@ class Transaction:
         self._finalizer()
         self._handle = ctypes.POINTER(NativeTransaction)()
 
-    def __enter__(self) -> Transaction:
+    def __enter__(self) -> Self:
         self._require_open()
         return self
 

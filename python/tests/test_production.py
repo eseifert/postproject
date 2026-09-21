@@ -31,7 +31,6 @@ from postproject import (
     RevisionId,
 )
 
-
 LIBRARY_PATH = os.environ.get("POSTPROJECT_LIBRARY")
 
 
@@ -89,9 +88,7 @@ class ProductionTests(unittest.TestCase):
             self.assertNotIn(explicit_asset, production.assets)
 
     def test_close_is_idempotent_and_closed_handles_are_rejected(self) -> None:
-        production = Production.create(
-            self.production_path, library_path=LIBRARY_PATH
-        )
+        production = Production.create(self.production_path, library_path=LIBRARY_PATH)
         transaction = production.transaction()
         transaction.close()
         transaction.close()
@@ -174,7 +171,9 @@ class ProductionTests(unittest.TestCase):
             assert isinstance(locator, LocatorAddedEvent)
             self.assertEqual(imported.asset_id, asset_id)
             self.assertEqual(representation.asset_id, asset_id)
-            self.assertEqual(membership.representation_id, representation.representation_id)
+            self.assertEqual(
+                membership.representation_id, representation.representation_id
+            )
             self.assertEqual(membership.resource_id, resource.resource_id)
             self.assertEqual(membership.structural_position, 0)
             self.assertEqual(locator.resource_id, resource.resource_id)
@@ -184,12 +183,8 @@ class ProductionTests(unittest.TestCase):
                 _ = production.revision_events[missing]
 
     def test_external_identifiers_roundtrip_lookup_and_remove(self) -> None:
-        camera_id = ExternalIdentifier(
-            "com.example.camera", "A001-C023", "primary"
-        )
-        umid = ExternalIdentifier(
-            "urn:smpte:umid", "060A2B340101010501010D4313000000"
-        )
+        camera_id = ExternalIdentifier("com.example.camera", "A001-C023", "primary")
+        umid = ExternalIdentifier("urn:smpte:umid", "060A2B340101010501010D4313000000")
         with Production.create(
             self.production_path, library_path=LIBRARY_PATH
         ) as production:
@@ -239,14 +234,16 @@ class ProductionTests(unittest.TestCase):
             self.assertEqual(payload.identifier, camera_id)
 
     def test_external_identifier_nul_is_rejected_before_native_call(self) -> None:
-        with Production.create(
-            self.production_path, library_path=LIBRARY_PATH
-        ) as production:
-            with self.assertRaisesRegex(ValueError, "NUL"):
-                with production.transaction() as transaction:
-                    transaction.add_external_identifier(
-                        production.id, ExternalIdentifier("invalid\0scheme", "value")
-                    )
+        with (
+            Production.create(
+                self.production_path, library_path=LIBRARY_PATH
+            ) as production,
+            self.assertRaisesRegex(ValueError, "NUL"),
+        ):
+            with production.transaction() as transaction:
+                transaction.add_external_identifier(
+                    production.id, ExternalIdentifier("invalid\0scheme", "value")
+                )
 
     def test_text_metadata_is_typed_repeatable_searchable_and_removable(self) -> None:
         title = MetadataProperty("https://example.com/metadata", "title")

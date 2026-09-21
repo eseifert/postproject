@@ -45,7 +45,9 @@ class NativeLibrary:
 
 
 def _library_path(path: str | os.PathLike[str] | None) -> Path:
-    supplied = path if path is not None else os.environ.get(LIBRARY_ENVIRONMENT_VARIABLE)
+    supplied = (
+        path if path is not None else os.environ.get(LIBRARY_ENVIRONMENT_VARIABLE)
+    )
     if supplied is None:
         raise RuntimeError(
             "pass library_path or set POSTPROJECT_LIBRARY to the native shared library"

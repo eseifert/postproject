@@ -9,15 +9,13 @@ from ._errors import (
     StorageError,
     UnsupportedError,
 )
-from ._native import ABI_VERSION, NativeLibrary
-from ._production import Production, Transaction
 from ._model import (
     ActivityCreatedEvent,
     ActivityId,
     ActivityInputAddedEvent,
     ActivityOutputAddedEvent,
-    AssetImportedEvent,
     AssetId,
+    AssetImportedEvent,
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
@@ -59,6 +57,8 @@ from ._model import (
     RevisionId,
     TransactionId,
 )
+from ._native import ABI_VERSION, NativeLibrary
+from ._production import Production, Transaction
 
 __all__ = [
     "ABI_VERSION",
@@ -67,8 +67,8 @@ __all__ = [
     "ActivityInputAddedEvent",
     "ActivityOutputAddedEvent",
     "AlreadyExistsError",
-    "AssetImportedEvent",
     "AssetId",
+    "AssetImportedEvent",
     "ConflictError",
     "ExternalIdentifier",
     "ExternalIdentifierAddedEvent",
@@ -115,7 +115,7 @@ __all__ = [
     "RevisionEventPayload",
     "RevisionId",
     "StorageError",
-    "TransactionId",
     "Transaction",
+    "TransactionId",
     "UnsupportedError",
 ]
