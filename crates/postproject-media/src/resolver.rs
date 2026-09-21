@@ -7,9 +7,9 @@ use std::{
 };
 
 use postproject_core::{
-    Confidence, Error, ErrorKind, EvidenceKind, FileFacts, Locator, MediaRoot, ResolutionCandidate,
-    ResolutionEvidence, Resource, ResourceFingerprint, ResourceResolution, ResourceResolutionState,
-    Result,
+    Confidence, ContentStructure, Error, ErrorKind, EvidenceKind, FileFacts, Locator, MediaRoot,
+    ResolutionCandidate, ResolutionEvidence, Resource, ResourceFingerprint, ResourceResolution,
+    ResourceResolutionState, Result,
 };
 use url::Url;
 use walkdir::WalkDir;
@@ -72,9 +72,16 @@ impl MediaResolver {
     pub fn resolve_resource(
         &self,
         resource: &Resource,
+        structure: &ContentStructure,
         known_locators: &[Locator],
         media_roots: &[MediaRoot],
     ) -> Result<ResourceResolution> {
+        if !structure.resource_ids().contains(&resource.id()) {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "resource does not belong to the supplied content structure",
+            ));
+        }
         if known_locators
             .iter()
             .any(|locator| locator.resource_id() != resource.id())
@@ -84,11 +91,22 @@ impl MediaResolver {
                 "known locator belongs to a different resource",
             ));
         }
-        if let Some(candidate) = online_known_candidate(known_locators)? {
+        let is_image_sequence = structure
+            .image_sequence_descriptor()
+            .is_some_and(|sequence| sequence.resource_id() == resource.id());
+        if let Some(candidate) = online_known_candidate(known_locators, is_image_sequence)? {
             return ResourceResolution::new(
                 resource.id(),
                 ResourceResolutionState::OnlineAtKnownLocator,
                 vec![candidate],
+                Vec::new(),
+            );
+        }
+        if is_image_sequence {
+            return ResourceResolution::new(
+                resource.id(),
+                ResourceResolutionState::Offline,
+                Vec::new(),
                 Vec::new(),
             );
         }
@@ -205,13 +223,16 @@ impl MediaResolver {
     }
 }
 
-fn online_known_candidate(known_locators: &[Locator]) -> Result<Option<ResolutionCandidate>> {
+fn online_known_candidate(
+    known_locators: &[Locator],
+    requires_directory: bool,
+) -> Result<Option<ResolutionCandidate>> {
     let mut online = Vec::new();
     for locator in known_locators {
         let Ok(path) = file_uri_to_path(locator.uri()) else {
             continue;
         };
-        if path.is_file() {
+        if (requires_directory && path.is_dir()) || (!requires_directory && path.is_file()) {
             online.push(ResolutionCandidate::new(
                 locator.uri(),
                 Confidence::CERTAIN,
@@ -341,7 +362,12 @@ mod tests {
         let prepared = prepare_original_media(&path, None, None).expect("prepare import");
 
         let resolution = MediaResolver::default()
-            .resolve_resource(&prepared.resources()[0], prepared.locators(), &[])
+            .resolve_resource(
+                &prepared.resources()[0],
+                prepared.representation().content_structure(),
+                prepared.locators(),
+                &[],
+            )
             .expect("resolve known locator");
 
         assert_eq!(
@@ -369,7 +395,12 @@ mod tests {
         let root = prepare_media_root(&new_directory, None, 0).expect("prepare root");
 
         let resolution = MediaResolver::default()
-            .resolve_resource(&prepared.resources()[0], prepared.locators(), &[root])
+            .resolve_resource(
+                &prepared.resources()[0],
+                prepared.representation().content_structure(),
+                prepared.locators(),
+                &[root],
+            )
             .expect("resolve moved media");
 
         assert_eq!(resolution.state(), ResourceResolutionState::ResolvedExact);
@@ -394,7 +425,12 @@ mod tests {
         let root = prepare_media_root(directory.path(), None, 0).expect("prepare root");
 
         let resolution = MediaResolver::default()
-            .resolve_resource(&prepared.resources()[0], prepared.locators(), &[root])
+            .resolve_resource(
+                &prepared.resources()[0],
+                prepared.representation().content_structure(),
+                prepared.locators(),
+                &[root],
+            )
             .expect("resolve ambiguous media");
 
         assert_eq!(resolution.state(), ResourceResolutionState::Ambiguous);
@@ -418,7 +454,12 @@ mod tests {
         .expect("valid limits");
 
         let resolution = resolver
-            .resolve_resource(&prepared.resources()[0], prepared.locators(), &[root])
+            .resolve_resource(
+                &prepared.resources()[0],
+                prepared.representation().content_structure(),
+                prepared.locators(),
+                &[root],
+            )
             .expect("create error result");
 
         assert_eq!(resolution.state(), ResourceResolutionState::Error);

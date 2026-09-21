@@ -110,6 +110,7 @@ fn benchmark_resolver_scan(criterion: &mut Criterion) {
                 resolver
                     .resolve_resource(
                         &import.resources()[0],
+                        import.representation().content_structure(),
                         import.locators(),
                         std::slice::from_ref(&root),
                     )

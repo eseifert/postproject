@@ -1936,8 +1936,12 @@ pub unsafe extern "C" fn pp_production_resolve_asset(
             for (representation, resources) in work {
                 let mut resource_resolutions = Vec::new();
                 for (resource, locators) in resources {
-                    let resolution =
-                        resolver.resolve_resource(&resource, &locators, &media_roots)?;
+                    let resolution = resolver.resolve_resource(
+                        &resource,
+                        representation.content_structure(),
+                        &locators,
+                        &media_roots,
+                    )?;
                     resource_resolutions.push(resolution);
                 }
                 resolutions.push(RepresentationResolution::aggregate(

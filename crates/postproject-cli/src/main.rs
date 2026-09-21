@@ -1543,7 +1543,12 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
                 .context("load resource locators")?;
             resource_resolutions.push(
                 resolver
-                    .resolve_resource(resource, &locators, production.production().media_roots())
+                    .resolve_resource(
+                        resource,
+                        representation.content_structure(),
+                        &locators,
+                        production.production().media_roots(),
+                    )
                     .context("resolve representation resource")?,
             );
         }

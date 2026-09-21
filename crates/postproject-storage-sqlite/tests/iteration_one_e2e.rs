@@ -67,7 +67,13 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
 
     let mut production = SqliteProduction::open(&production_path).expect("reopen moved production");
     let resolver = MediaResolver::default();
-    for representation_id in identities.values() {
+    for (asset_id, representation_id) in &identities {
+        let representation = production
+            .representations(*asset_id)
+            .expect("load representation")
+            .into_iter()
+            .find(|item| item.id() == *representation_id)
+            .expect("find representation");
         let resource = production
             .resources(*representation_id)
             .expect("load resources")
@@ -76,7 +82,12 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
             .locators(resource.id())
             .expect("load known locators");
         let resolution = resolver
-            .resolve_resource(&resource, &locators, &[])
+            .resolve_resource(
+                &resource,
+                representation.content_structure(),
+                &locators,
+                &[],
+            )
             .expect("resolve without roots");
         assert_eq!(resolution.state(), ResourceResolutionState::Offline);
     }
@@ -103,7 +114,12 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
                 .remove(0);
             let locators = production.locators(resource.id()).expect("load locators");
             let resolution = resolver
-                .resolve_resource(&resource, &locators, production.production().media_roots())
+                .resolve_resource(
+                    &resource,
+                    representation.content_structure(),
+                    &locators,
+                    production.production().media_roots(),
+                )
                 .expect("resolve relocated media");
             match resolution.state() {
                 ResourceResolutionState::ResolvedExact => {
@@ -140,7 +156,13 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
     drop(production);
 
     let production = SqliteProduction::open(&production_path).expect("reopen confirmed production");
-    for (_, representation_id) in identities {
+    for (asset_id, representation_id) in identities {
+        let representation = production
+            .representations(asset_id)
+            .expect("load representation")
+            .into_iter()
+            .find(|item| item.id() == representation_id)
+            .expect("find representation");
         let resource = production
             .resources(representation_id)
             .expect("load persisted resources")
@@ -150,7 +172,12 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
             .expect("load persisted locators");
         assert_eq!(locators.len(), 2);
         let resolution = resolver
-            .resolve_resource(&resource, &locators, &[])
+            .resolve_resource(
+                &resource,
+                representation.content_structure(),
+                &locators,
+                &[],
+            )
             .expect("resolve from confirmed locator without roots");
         assert_eq!(
             resolution.state(),
