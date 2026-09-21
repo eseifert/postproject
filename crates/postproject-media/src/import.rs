@@ -4,8 +4,8 @@ use std::{fs, path::Path};
 
 use postproject_core::{
     Asset, AssetId, ContentStructure, Locator, LocatorAvailability, LocatorId, MediaRoot,
-    MediaRootId, OriginalMediaImport, Representation, RepresentationId, RepresentationKind,
-    Resource, ResourceId, Result, Timestamp,
+    MediaRootId, OriginalMediaImport, Representation, RepresentationId, RepresentationImport,
+    RepresentationKind, Resource, ResourceId, Result, Timestamp,
 };
 
 use crate::{canonical_file_uri, fingerprint_file, fingerprint_representation};
@@ -24,11 +24,44 @@ pub fn prepare_original_media(
     display_name: Option<String>,
     import_source: Option<String>,
 ) -> Result<OriginalMediaImport> {
-    let path = path.as_ref();
-    let report = fingerprint_file(path)?;
-    let uri = canonical_file_uri(path)?;
     let now = Timestamp::now()?;
     let asset = Asset::new(AssetId::new(), now, display_name, import_source);
+    let prepared = prepare_single_file_representation_at(
+        asset.id(),
+        RepresentationKind::Original,
+        path.as_ref(),
+        now,
+    )?;
+    let (representation, resources, locators) = prepared.into_parts();
+    OriginalMediaImport::new(asset, representation, resources, locators)
+}
+
+/// Inspects a regular file and prepares a representation for an existing asset.
+///
+/// The caller chooses the representation kind. This function does not mutate
+/// production state; persist the returned aggregate with a production
+/// transaction.
+///
+/// # Errors
+///
+/// Returns errors from path canonicalization, fingerprint calculation, time
+/// capture, or domain validation.
+pub fn prepare_single_file_representation(
+    asset_id: AssetId,
+    kind: RepresentationKind,
+    path: impl AsRef<Path>,
+) -> Result<RepresentationImport> {
+    prepare_single_file_representation_at(asset_id, kind, path.as_ref(), Timestamp::now()?)
+}
+
+fn prepare_single_file_representation_at(
+    asset_id: AssetId,
+    kind: RepresentationKind,
+    path: &Path,
+    now: Timestamp,
+) -> Result<RepresentationImport> {
+    let report = fingerprint_file(path)?;
+    let uri = canonical_file_uri(path)?;
     let (fingerprint, facts, _) = report.into_parts();
     let resource_id = ResourceId::new();
     let structure = ContentStructure::single_resource(resource_id);
@@ -37,8 +70,8 @@ pub fn prepare_original_media(
         fingerprint_representation(&structure, std::slice::from_ref(&resource))?;
     let representation = Representation::new(
         RepresentationId::new(),
-        asset.id(),
-        RepresentationKind::Original,
+        asset_id,
+        kind,
         structure,
         vec![representation_fingerprint],
     );
@@ -49,7 +82,7 @@ pub fn prepare_original_media(
         Some(now),
         LocatorAvailability::Online,
     )?;
-    OriginalMediaImport::new(asset, representation, vec![resource], vec![locator])
+    RepresentationImport::new(representation, vec![resource], vec![locator])
 }
 
 /// Validates a directory and prepares a canonical resolver media root.
@@ -142,6 +175,23 @@ mod tests {
             prepared.resources()[0].id()
         );
         assert!(prepared.locators()[0].uri().starts_with("file:"));
+    }
+
+    #[test]
+    fn prepares_non_original_single_file_representation() {
+        let mut file = NamedTempFile::new().expect("create file");
+        file.write_all(b"proxy media").expect("write file");
+        let asset_id = AssetId::new();
+
+        let prepared =
+            prepare_single_file_representation(asset_id, RepresentationKind::Proxy, file.path())
+                .expect("prepare proxy");
+
+        assert_eq!(prepared.representation().asset_id(), asset_id);
+        assert_eq!(prepared.representation().kind(), RepresentationKind::Proxy);
+        assert_eq!(prepared.representation().fingerprints().len(), 1);
+        assert_eq!(prepared.resources()[0].fingerprints().len(), 1);
+        assert_eq!(prepared.locators().len(), 1);
     }
 
     #[test]
