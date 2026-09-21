@@ -968,6 +968,7 @@ HostObjectBinding::fromString(std::string_view value) {
   return {detail::uuid(production_id), detail::object_ref(object)};
 }
 
+// Move-only and caller-serialized. Do not call one Transaction concurrently.
 class Transaction final {
 public:
   void setRevisionContext(const RevisionContext &context) {
@@ -1215,6 +1216,8 @@ private:
   pp_transaction_t *transaction_ = nullptr;
 };
 
+// Move-only owner of a thread-safe native handle. Concurrent const calls are
+// supported while ownership operations and destruction remain serialized.
 class Production final {
 public:
   static Production create(std::string_view path) {

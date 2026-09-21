@@ -32,6 +32,11 @@ typedef struct pp_revision_set pp_revision_set_t;
 typedef struct pp_revision_event_set pp_revision_event_set_t;
 typedef struct pp_error pp_error_t;
 
+/* Production handles may be moved between threads and called concurrently;
+ * calls on one handle serialize internally. Transaction handles require
+ * caller-side serialization. No handle may be released while another thread
+ * is using it. Result-set and error handles are caller-serialized. */
+
 typedef struct pp_uuid {
   uint8_t bytes[16];
 } pp_uuid_t;
@@ -457,14 +462,17 @@ PP_API pp_error_code_t pp_resolution_set_get_candidate_evidence(
     const char **out_detail, pp_error_t **out_error);
 PP_API void pp_resolution_set_release(pp_resolution_set_t *resolutions);
 /* Only one transaction may be open for a production state. The transaction keeps
- * that state alive independently of the production handle. */
+ * that state alive independently of the production handle. Staging does not
+ * block production reads; commit serializes with calls on the same production
+ * state. Open the production again to avoid that per-handle serialization. */
 PP_API pp_error_code_t pp_production_begin_transaction(
     pp_production_t *production, pp_transaction_t **out_transaction,
     pp_error_t **out_error);
 PP_API void pp_production_release(pp_production_t *production);
 
-/* Mutations remain in memory until commit. Input strings are borrowed UTF-8
- * without embedded NUL. Nullable names/labels represent absent values. */
+/* Mutations remain in memory until commit. Transaction calls require caller-side
+ * serialization. Input strings are borrowed UTF-8 without embedded NUL.
+ * Nullable names/labels represent absent values. */
 PP_API pp_error_code_t pp_transaction_set_revision_context(
     pp_transaction_t *transaction, const char *origin_name,
     const char *origin_version, const char *origin_uri, const char *message,

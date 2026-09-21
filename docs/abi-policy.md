@@ -37,10 +37,16 @@ codes are the contract; message wording is diagnostic and may evolve.
 ## Panics and threading
 
 Every exported operation contains Rust unwinding with `catch_unwind`. Panics are
-translated to `PP_ERROR_INTERNAL`; no panic may cross the C boundary. Production and
-transaction handles are not currently safe for concurrent access. Callers must
-externally serialize use and must not release a handle while another thread uses
-it.
+translated to `PP_ERROR_INTERNAL`; no panic may cross the C boundary. Production
+handles may move between threads and support concurrent calls. Calls on one handle
+serialize internally and block rather than reporting a contention conflict. A
+panic while the handle is locked does not poison later calls.
+
+Transaction, result-set, and error handles require caller-side serialization. No
+handle may be released while another thread uses it. Transactions stage mutations
+without holding the production lock; commit serializes with operations using the
+same production state. Opening the production again provides a separate handle for
+reads during that interval, subject to SQLite's own file-locking behavior.
 
 ## Header compatibility
 
@@ -75,6 +81,9 @@ candidate using `pp_transaction_confirm_locator`, and only transaction commit
 makes that location durable. The caller is responsible for passing a URI from
 the result it reviewed; the API validates the URI and resource identity at
 persistence time but does not silently choose a candidate.
+
+Resolution snapshots the database state it needs while holding the production
+lock, then releases that lock before filesystem discovery and fingerprinting.
 
 ## Representation inspection
 
