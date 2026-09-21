@@ -407,3 +407,91 @@ const fn content_structure_kind(kind: ContentStructureKind) -> u32 {
 fn invalid_argument(message: impl Into<String>) -> Error {
     Error::new(ErrorKind::InvalidArgument, message)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{ffi::CStr, ptr};
+
+    use postproject_core::{
+        AssetId, ContentStructure, FrameRange, ImageSequenceDescriptor, ImageSequencePattern,
+        RationalRate, Representation, RepresentationId, RepresentationKind, ResourceId,
+    };
+
+    use super::*;
+
+    #[test]
+    fn sequence_accessors_copy_compact_structure() {
+        let resource_id = ResourceId::new();
+        let descriptor = ImageSequenceDescriptor::new(
+            resource_id,
+            ImageSequencePattern::new("shot.", ".exr", 4).expect("valid pattern"),
+            FrameRange::new(1001, 1005, 1).expect("valid range"),
+            RationalRate::new(24_000, 1_001).expect("valid rate"),
+            vec![1003],
+        )
+        .expect("valid sequence");
+        let representation = Representation::new(
+            RepresentationId::new(),
+            AssetId::new(),
+            RepresentationKind::Original,
+            ContentStructure::image_sequence(descriptor),
+            Vec::new(),
+        );
+        let set = PpRepresentationSet {
+            representations: vec![
+                AbiRepresentation::try_from(representation).expect("ABI representation"),
+            ],
+        };
+        let mut prefix = ptr::null();
+        let mut suffix = ptr::null();
+        let mut padding = 0;
+        let mut start = 0;
+        let mut end = 0;
+        let mut step = 0;
+        let mut rate_numerator = 0;
+        let mut rate_denominator = 0;
+        let mut missing_count = 0;
+        let mut error = ptr::null_mut();
+
+        // SAFETY: The set and every output remain live and writable for the call.
+        let status = unsafe {
+            pp_representation_set_get_sequence(
+                &raw const set,
+                0,
+                &raw mut prefix,
+                &raw mut suffix,
+                &raw mut padding,
+                &raw mut start,
+                &raw mut end,
+                &raw mut step,
+                &raw mut rate_numerator,
+                &raw mut rate_denominator,
+                &raw mut missing_count,
+                &raw mut error,
+            )
+        };
+        assert_eq!(status, 0);
+        assert!(error.is_null());
+        // SAFETY: Both strings borrow the still-live result set.
+        assert_eq!(unsafe { CStr::from_ptr(prefix) }.to_bytes(), b"shot.");
+        // SAFETY: Same borrowed lifetime as `prefix`.
+        assert_eq!(unsafe { CStr::from_ptr(suffix) }.to_bytes(), b".exr");
+        assert_eq!((padding, start, end, step), (4, 1001, 1005, 1));
+        assert_eq!((rate_numerator, rate_denominator), (24_000, 1_001));
+        assert_eq!(missing_count, 1);
+
+        let mut missing_frame = 0;
+        // SAFETY: The set and output remain live and writable for the call.
+        let status = unsafe {
+            pp_representation_set_get_sequence_missing_frame(
+                &raw const set,
+                0,
+                0,
+                &raw mut missing_frame,
+                &raw mut error,
+            )
+        };
+        assert_eq!(status, 0);
+        assert_eq!(missing_frame, 1003);
+    }
+}
