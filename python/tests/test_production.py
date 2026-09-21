@@ -15,6 +15,12 @@ from postproject import (
     ExternalIdentifierRemovedEvent,
     InvalidArgumentError,
     LocatorAddedEvent,
+    MetadataAddedOrReplacedEvent,
+    MetadataAssertion,
+    MetadataLanguageString,
+    MetadataProperty,
+    MetadataRemovedEvent,
+    MetadataString,
     NotFoundError,
     OriginIdentity,
     Production,
@@ -241,6 +247,50 @@ class ProductionTests(unittest.TestCase):
                     transaction.add_external_identifier(
                         production.id, ExternalIdentifier("invalid\0scheme", "value")
                     )
+
+    def test_text_metadata_is_typed_repeatable_searchable_and_removable(self) -> None:
+        title = MetadataProperty("https://example.com/metadata", "title")
+        plain = MetadataString("Interview")
+        localized = MetadataLanguageString("Gespräch", "de")
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+
+            with production.transaction() as transaction:
+                transaction.add_metadata(asset_id, title, plain)
+                transaction.add_metadata(asset_id, title, localized)
+
+            expected = (
+                MetadataAssertion(asset_id, title, plain),
+                MetadataAssertion(asset_id, title, localized),
+            )
+            self.assertEqual(production.metadata[asset_id], expected)
+            self.assertEqual(production.metadata_by_property[title], expected)
+            revision = production.latest_revision
+            assert revision is not None
+            added = production.revision_events[revision.id]
+            self.assertTrue(
+                all(
+                    isinstance(event.payload, MetadataAddedOrReplacedEvent)
+                    for event in added
+                )
+            )
+
+            with production.transaction() as transaction:
+                transaction.remove_metadata_property(asset_id, title)
+
+            self.assertEqual(production.metadata[asset_id], ())
+            self.assertEqual(production.metadata_by_property[title], ())
+            revision = production.latest_revision
+            assert revision is not None
+            removed = production.revision_events[revision.id]
+            self.assertEqual(len(removed), 1)
+            payload = removed[0].payload
+            assert isinstance(payload, MetadataRemovedEvent)
+            self.assertEqual(payload.target, asset_id)
+            self.assertEqual(payload.property, title)
 
 
 if __name__ == "__main__":
