@@ -5,13 +5,13 @@ format. When that document refers to PostProject knowledge, persist the complete
 production-scoped identity rather than an object UUID by itself:
 
 ```text
-postproject:v1:<production UUID>:<object kind>:<object UUID>
+https://postproject.org/ref/v1/<production UUID>/<object kind>/<object UUID>
 ```
 
 The supported object-kind tokens are `production`, `asset`, `representation`,
-`resource`, and `activity`. Treat the serialized value as opaque text. It is
-versioned, but it is not a registered URI scheme and must not be resolved over a
-network.
+`resource`, and `activity`. Treat the serialized value as opaque identity text.
+Its project-controlled HTTPS namespace can point to documentation, but parsing
+and using a binding never performs a network request.
 
 Rust integrations can construct and parse the value with `HostObjectBinding`:
 
