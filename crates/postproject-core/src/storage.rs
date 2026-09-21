@@ -3,8 +3,9 @@
 use crate::{
     Activity, Asset, AssetId, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot,
     MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, Production, Representation, RepresentationId, Resource, ResourceId,
-    Result, Revision, RevisionContext, RevisionEvent, RevisionId, TransactionId, TransactionState,
+    OriginalMediaImport, Production, Representation, RepresentationId, RepresentationImport,
+    Resource, ResourceId, Result, Revision, RevisionContext, RevisionEvent, RevisionId,
+    TransactionId, TransactionState,
 };
 
 /// Read operations required from a production persistence backend.
@@ -181,6 +182,14 @@ pub trait ProductionStoreTransaction {
     /// Returns a domain error when the transaction is closed or persistence
     /// rejects the aggregate.
     fn import_original(&mut self, import: &OriginalMediaImport) -> Result<()>;
+
+    /// Stages a representation and its newly imported resources on an existing asset.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, the owning asset
+    /// does not exist, or persistence rejects the aggregate.
+    fn add_representation(&mut self, import: &RepresentationImport) -> Result<()>;
 
     /// Stages an explicitly confirmed resource locator.
     ///

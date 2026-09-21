@@ -3,9 +3,9 @@
 use postproject_core::{
     Activity, ContentStructure, ContentStructureKind, Error, ErrorKind, ExternalIdentifier,
     Locator, LocatorAvailability, MediaRoot, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, Production, ProductionStoreTransaction, Resource, Result, RevisionContext,
-    RevisionEventKind, RevisionId, Timestamp, TransactionId, TransactionLifecycle,
-    TransactionState,
+    OriginalMediaImport, Production, ProductionStoreTransaction, Representation,
+    RepresentationImport, RepresentationKind, Resource, Result, RevisionContext, RevisionEventKind,
+    RevisionId, Timestamp, TransactionId, TransactionLifecycle, TransactionState,
 };
 use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
 
@@ -76,7 +76,6 @@ impl<'production> SqliteTransaction<'production> {
     pub fn import_original(&mut self, import: &OriginalMediaImport) -> Result<()> {
         let transaction = self.open_transaction()?;
         let asset = import.asset();
-        let representation = import.representation();
 
         transaction
             .execute(
@@ -90,18 +89,57 @@ impl<'production> SqliteTransaction<'production> {
                 ],
             )
             .map_err(mutation_error("persist imported asset"))?;
+        self.pending_events.push(RevisionEventKind::AssetImported {
+            asset_id: asset.id(),
+        });
+        self.persist_representation(
+            import.representation(),
+            import.resources(),
+            import.locators(),
+        )
+    }
+
+    /// Stages a representation and its resources on an existing asset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the owning asset is absent, or a
+    /// storage-domain error when persistence rejects the aggregate.
+    pub fn add_representation(&mut self, import: &RepresentationImport) -> Result<()> {
+        let transaction = self.open_transaction()?;
+        if !asset_exists(transaction, import.representation().asset_id())? {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                "representation asset does not exist",
+            ));
+        }
+        self.persist_representation(
+            import.representation(),
+            import.resources(),
+            import.locators(),
+        )
+    }
+
+    fn persist_representation(
+        &mut self,
+        representation: &Representation,
+        resources: &[Resource],
+        locators: &[Locator],
+    ) -> Result<()> {
+        let transaction = self.open_transaction()?;
         transaction
             .execute(
                 "INSERT INTO representations (
                     id, asset_id, kind, structure_kind
-                 ) VALUES (?1, ?2, 0, ?3)",
+                 ) VALUES (?1, ?2, ?3, ?4)",
                 params![
                     representation.id().as_bytes().as_slice(),
-                    asset.id().as_bytes().as_slice(),
+                    representation.asset_id().as_bytes().as_slice(),
+                    encode_representation_kind(representation.kind())?,
                     encode_structure_kind(representation.content_structure().kind())?,
                 ],
             )
-            .map_err(mutation_error("persist original representation"))?;
+            .map_err(mutation_error("persist representation"))?;
         for fingerprint in representation.fingerprints() {
             transaction
                 .execute(
@@ -117,7 +155,7 @@ impl<'production> SqliteTransaction<'production> {
                 )
                 .map_err(mutation_error("persist representation fingerprint"))?;
         }
-        for resource in import.resources() {
+        for resource in resources {
             persist_resource(transaction, resource)?;
         }
         persist_content_structure(
@@ -125,26 +163,19 @@ impl<'production> SqliteTransaction<'production> {
             representation.id(),
             representation.content_structure(),
         )?;
-        for locator in import.locators() {
+        for locator in locators {
             persist_locator(transaction, locator)?;
         }
-        self.pending_events.push(RevisionEventKind::AssetImported {
-            asset_id: asset.id(),
-        });
         self.pending_events
             .push(RevisionEventKind::RepresentationAdded {
-                asset_id: asset.id(),
+                asset_id: representation.asset_id(),
                 representation_id: representation.id(),
             });
-        self.pending_events
-            .extend(
-                import
-                    .resources()
-                    .iter()
-                    .map(|resource| RevisionEventKind::ResourceAdded {
-                        resource_id: resource.id(),
-                    }),
-            );
+        self.pending_events.extend(resources.iter().map(|resource| {
+            RevisionEventKind::ResourceAdded {
+                resource_id: resource.id(),
+            }
+        }));
         for (position, resource_id) in representation
             .content_structure()
             .resource_ids()
@@ -164,16 +195,12 @@ impl<'production> SqliteTransaction<'production> {
                     position,
                 });
         }
-        self.pending_events
-            .extend(
-                import
-                    .locators()
-                    .iter()
-                    .map(|locator| RevisionEventKind::LocatorAdded {
-                        resource_id: locator.resource_id(),
-                        locator_id: locator.id(),
-                    }),
-            );
+        self.pending_events.extend(locators.iter().map(|locator| {
+            RevisionEventKind::LocatorAdded {
+                resource_id: locator.resource_id(),
+                locator_id: locator.id(),
+            }
+        }));
         Ok(())
     }
 
@@ -840,6 +867,10 @@ impl ProductionStoreTransaction for SqliteTransaction<'_> {
         SqliteTransaction::import_original(self, import)
     }
 
+    fn add_representation(&mut self, import: &RepresentationImport) -> Result<()> {
+        SqliteTransaction::add_representation(self, import)
+    }
+
     fn add_locator(&mut self, locator: &Locator) -> Result<()> {
         SqliteTransaction::add_locator(self, locator)
     }
@@ -914,6 +945,32 @@ fn encode_structure_kind(value: ContentStructureKind) -> Result<i64> {
             "content structure is not supported by this schema",
         )),
     }
+}
+
+fn encode_representation_kind(value: RepresentationKind) -> Result<i64> {
+    match value {
+        RepresentationKind::Original => Ok(0),
+        RepresentationKind::Proxy => Ok(1),
+        RepresentationKind::Optimized => Ok(2),
+        RepresentationKind::Derived => Ok(3),
+        _ => Err(Error::new(
+            ErrorKind::Unsupported,
+            "representation kind is not supported by this schema",
+        )),
+    }
+}
+
+fn asset_exists(
+    transaction: &Transaction<'_>,
+    asset_id: postproject_core::AssetId,
+) -> Result<bool> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM assets WHERE id = ?1)",
+            [asset_id.as_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .map_err(sqlite_error("check representation asset"))
 }
 
 fn encode_availability(value: LocatorAvailability) -> Result<i64> {
