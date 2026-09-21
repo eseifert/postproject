@@ -16,6 +16,8 @@ from . import _abi
 from ._abi import (
     Error,
     ExternalIdentifierSet,
+    MetadataSet,
+    MetadataValue as NativeMetadataValue,
     ObjectRefSet,
     Production as NativeProduction,
     RevisionEvent as NativeRevisionEvent,
@@ -39,8 +41,24 @@ from ._model import (
     MediaRootAddedEvent,
     MediaRootId,
     MetadataAddedOrReplacedEvent,
+    MetadataAssertion,
+    MetadataBool,
+    MetadataBytes,
+    MetadataDecimal,
+    MetadataI64,
+    MetadataLanguageString,
+    MetadataList,
     MetadataProperty,
+    MetadataRational,
+    MetadataReference,
     MetadataRemovedEvent,
+    MetadataString,
+    MetadataStruct,
+    MetadataStructField,
+    MetadataTimestamp,
+    MetadataU64,
+    MetadataUri,
+    MetadataValue,
     ObjectReference,
     OriginIdentity,
     ProductionId,
@@ -85,6 +103,24 @@ class _ObjectsByExternalIdentifier:
     def __getitem__(self, key: tuple[str, str]) -> tuple[ObjectReference, ...]:
         scheme, value = key
         return self._production._find_by_external_identifier(scheme, value)
+
+
+class _Metadata:
+    def __init__(self, production: Production) -> None:
+        self._production = production
+
+    def __getitem__(self, target: ObjectReference) -> tuple[MetadataAssertion, ...]:
+        return self._production._metadata(target)
+
+
+class _MetadataByProperty:
+    def __init__(self, production: Production) -> None:
+        self._production = production
+
+    def __getitem__(
+        self, property: MetadataProperty
+    ) -> tuple[MetadataAssertion, ...]:
+        return self._production._metadata_by_property(property)
 
 
 class _RevisionEvents:
@@ -188,6 +224,20 @@ class Production:
         return _ObjectsByExternalIdentifier(self)
 
     @property
+    def metadata(self) -> _Metadata:
+        """Return metadata assertions keyed by their target object."""
+
+        self._require_open()
+        return _Metadata(self)
+
+    @property
+    def metadata_by_property(self) -> _MetadataByProperty:
+        """Return metadata assertions keyed by vocabulary-qualified property."""
+
+        self._require_open()
+        return _MetadataByProperty(self)
+
+    @property
     def revision_events(self) -> _RevisionEvents:
         """Return semantic event lists keyed by revision identity."""
 
@@ -263,6 +313,26 @@ class Production:
             )
         finally:
             self._native.lib.pp_object_ref_set_release(handle)
+
+    def _metadata(self, target: ObjectReference) -> tuple[MetadataAssertion, ...]:
+        self._require_open()
+        native_target = _native_object_reference(target)
+        return self._metadata_set(
+            self._native.lib.pp_production_metadata,
+            self._handle,
+            ctypes.byref(native_target),
+        )
+
+    def _metadata_by_property(
+        self, property: MetadataProperty
+    ) -> tuple[MetadataAssertion, ...]:
+        self._require_open()
+        return self._metadata_set(
+            self._native.lib.pp_production_find_metadata,
+            self._handle,
+            _utf8(property.vocabulary, "metadata vocabulary"),
+            _utf8(property.property, "metadata property"),
+        )
 
     @property
     def latest_revision(self) -> Revision | None:
@@ -373,6 +443,24 @@ class Production:
             )
         finally:
             self._native.lib.pp_revision_set_release(handle)
+
+    def _metadata_set(
+        self, function: Callable[..., int], *arguments: object
+    ) -> tuple[MetadataAssertion, ...]:
+        handle = ctypes.POINTER(MetadataSet)()
+        error = ctypes.POINTER(Error)()
+        status = function(*arguments, ctypes.byref(handle), ctypes.byref(error))
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native metadata query returned no result set")
+        try:
+            count = self._native.lib.pp_metadata_set_count(handle)
+            return tuple(
+                _metadata_at(self._native, handle, index)
+                for index in range(int(count))
+            )
+        finally:
+            self._native.lib.pp_metadata_set_release(handle)
 
 
 class Transaction:
@@ -593,6 +681,190 @@ def _object_reference_at(
     )
     native.check(status, error)
     return _object_reference(value)
+
+
+def _metadata_at(
+    native: NativeLibrary,
+    metadata: _Pointer[MetadataSet],
+    index: int,
+) -> MetadataAssertion:
+    target = _abi.ObjectRef()
+    vocabulary = ctypes.c_char_p()
+    property_name = ctypes.c_char_p()
+    value = ctypes.POINTER(NativeMetadataValue)()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_metadata_set_get(
+        metadata,
+        index,
+        ctypes.byref(target),
+        ctypes.byref(vocabulary),
+        ctypes.byref(property_name),
+        ctypes.byref(value),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    if not value:
+        raise RuntimeError("native metadata assertion is missing its value")
+    return MetadataAssertion(
+        _object_reference(target),
+        MetadataProperty(
+            _decode_required(vocabulary.value, "metadata vocabulary"),
+            _decode_required(property_name.value, "metadata property"),
+        ),
+        _metadata_value(native, value),
+    )
+
+
+def _metadata_value(
+    native: NativeLibrary, value: _Pointer[NativeMetadataValue]
+) -> MetadataValue:
+    kind = int(native.lib.pp_metadata_value_kind(value))
+    error = ctypes.POINTER(Error)()
+
+    if kind in (_abi.PP_METADATA_STRING, _abi.PP_METADATA_LANG_STRING):
+        text = ctypes.c_char_p()
+        language = ctypes.c_char_p()
+        status = native.lib.pp_metadata_value_get_string(
+            value, ctypes.byref(text), ctypes.byref(language), ctypes.byref(error)
+        )
+        native.check(status, error)
+        decoded = _decode_required(text.value, "metadata text")
+        if kind == _abi.PP_METADATA_STRING:
+            return MetadataString(decoded)
+        return MetadataLanguageString(
+            decoded, _decode_required(language.value, "metadata language")
+        )
+
+    if kind == _abi.PP_METADATA_I64:
+        result = ctypes.c_int64()
+        status = native.lib.pp_metadata_value_get_i64(
+            value, ctypes.byref(result), ctypes.byref(error)
+        )
+        native.check(status, error)
+        return MetadataI64(int(result.value))
+
+    if kind == _abi.PP_METADATA_U64:
+        result = ctypes.c_uint64()
+        status = native.lib.pp_metadata_value_get_u64(
+            value, ctypes.byref(result), ctypes.byref(error)
+        )
+        native.check(status, error)
+        return MetadataU64(int(result.value))
+
+    if kind == _abi.PP_METADATA_DECIMAL:
+        coefficient = ctypes.c_char_p()
+        scale = ctypes.c_uint32()
+        status = native.lib.pp_metadata_value_get_decimal(
+            value,
+            ctypes.byref(coefficient),
+            ctypes.byref(scale),
+            ctypes.byref(error),
+        )
+        native.check(status, error)
+        coefficient_text = _decode_required(
+            coefficient.value, "metadata decimal coefficient"
+        )
+        try:
+            parsed_coefficient = int(coefficient_text)
+        except ValueError as exception:
+            raise RuntimeError("native metadata decimal is invalid") from exception
+        return MetadataDecimal(parsed_coefficient, int(scale.value))
+
+    if kind == _abi.PP_METADATA_BOOL:
+        result = ctypes.c_uint8()
+        status = native.lib.pp_metadata_value_get_bool(
+            value, ctypes.byref(result), ctypes.byref(error)
+        )
+        native.check(status, error)
+        return MetadataBool(bool(result.value))
+
+    if kind == _abi.PP_METADATA_TIMESTAMP:
+        result = ctypes.c_int64()
+        status = native.lib.pp_metadata_value_get_timestamp(
+            value, ctypes.byref(result), ctypes.byref(error)
+        )
+        native.check(status, error)
+        return MetadataTimestamp(int(result.value))
+
+    if kind == _abi.PP_METADATA_URI:
+        result = ctypes.c_char_p()
+        status = native.lib.pp_metadata_value_get_uri(
+            value, ctypes.byref(result), ctypes.byref(error)
+        )
+        native.check(status, error)
+        return MetadataUri(_decode_required(result.value, "metadata URI"))
+
+    if kind == _abi.PP_METADATA_BYTES:
+        result = ctypes.POINTER(ctypes.c_uint8)()
+        length = ctypes.c_uint64()
+        status = native.lib.pp_metadata_value_get_bytes(
+            value,
+            ctypes.byref(result),
+            ctypes.byref(length),
+            ctypes.byref(error),
+        )
+        native.check(status, error)
+        return MetadataBytes(bytes(result[: length.value]) if length.value else b"")
+
+    if kind == _abi.PP_METADATA_RATIONAL:
+        numerator = ctypes.c_int64()
+        denominator = ctypes.c_uint64()
+        status = native.lib.pp_metadata_value_get_rational(
+            value,
+            ctypes.byref(numerator),
+            ctypes.byref(denominator),
+            ctypes.byref(error),
+        )
+        native.check(status, error)
+        return MetadataRational(int(numerator.value), int(denominator.value))
+
+    if kind == _abi.PP_METADATA_LIST:
+        count = native.lib.pp_metadata_value_list_count(value)
+        items: list[MetadataValue] = []
+        for index in range(int(count)):
+            item = ctypes.POINTER(NativeMetadataValue)()
+            status = native.lib.pp_metadata_value_list_get(
+                value, index, ctypes.byref(item), ctypes.byref(error)
+            )
+            native.check(status, error)
+            if not item:
+                raise RuntimeError("native metadata list item is missing")
+            items.append(_metadata_value(native, item))
+        return MetadataList(tuple(items))
+
+    if kind == _abi.PP_METADATA_STRUCT:
+        count = native.lib.pp_metadata_value_struct_count(value)
+        fields: list[MetadataStructField] = []
+        for index in range(int(count)):
+            name = ctypes.c_char_p()
+            field_value = ctypes.POINTER(NativeMetadataValue)()
+            status = native.lib.pp_metadata_value_struct_get(
+                value,
+                index,
+                ctypes.byref(name),
+                ctypes.byref(field_value),
+                ctypes.byref(error),
+            )
+            native.check(status, error)
+            if not field_value:
+                raise RuntimeError("native metadata structure field is missing")
+            fields.append(
+                MetadataStructField(
+                    _decode_required(name.value, "metadata field name"),
+                    _metadata_value(native, field_value),
+                )
+            )
+        return MetadataStruct(tuple(fields))
+
+    if kind == _abi.PP_METADATA_REFERENCE:
+        target = _abi.ObjectRef()
+        status = native.lib.pp_metadata_value_get_reference(
+            value, ctypes.byref(target), ctypes.byref(error)
+        )
+        native.check(status, error)
+        return MetadataReference(_object_reference(target))
+
+    raise RuntimeError("metadata value has an unknown semantic kind")
 
 
 def _revision_at(
