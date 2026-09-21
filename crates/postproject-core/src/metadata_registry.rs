@@ -179,3 +179,104 @@ pub fn metadata_property_definition(
         .iter()
         .find(|definition| definition.property == property.property().as_str())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{MetadataProperty, MetadataValue, PropertyId, VocabularyId};
+
+    use super::*;
+
+    fn property(vocabulary: &str, property: &str) -> MetadataProperty {
+        MetadataProperty::new(
+            VocabularyId::new(vocabulary).expect("valid vocabulary"),
+            PropertyId::new(property).expect("valid property"),
+        )
+    }
+
+    #[test]
+    fn vocabulary_lookup_is_exact_and_descriptive() {
+        let vocabulary = VocabularyId::new(IPTC_VMH_JSON_VOCABULARY).unwrap();
+        let definition = metadata_vocabulary_definition(&vocabulary).expect("known vocabulary");
+        assert_eq!(definition.vocabulary(), IPTC_VMH_JSON_VOCABULARY);
+        assert_eq!(definition.label(), "IPTC Video Metadata Hub 1.7 JSON");
+        assert_eq!(definition.reference(), IPTC_VMH_JSON_VOCABULARY);
+        assert_eq!(definition.properties().len(), 2);
+
+        let unknown = VocabularyId::new("https://example.com/metadata").unwrap();
+        assert!(metadata_vocabulary_definition(&unknown).is_none());
+    }
+
+    #[test]
+    fn property_hints_expose_types_cardinality_and_mappings() {
+        let title = property(IPTC_VMH_JSON_VOCABULARY, "title");
+        let definition = metadata_property_definition(&title).expect("known property");
+        assert_eq!(definition.label(), "Title");
+        assert!(!definition.description().is_empty());
+        assert_eq!(definition.cardinality(), MetadataCardinality::Single);
+        assert_eq!(
+            definition.accepted_kinds(),
+            &[MetadataValueKind::String, MetadataValueKind::LangString]
+        );
+        assert!(
+            definition
+                .aliases()
+                .iter()
+                .any(|alias| alias.profile() == "XMP" && alias.property() == "dc:title")
+        );
+
+        assert!(
+            metadata_property_definition(&property(IPTC_VMH_JSON_VOCABULARY, "unknown")).is_none()
+        );
+    }
+
+    #[test]
+    fn validation_is_opt_in_and_checks_the_complete_value_set() {
+        let title = metadata_property_definition(&property(IPTC_VMH_JSON_VOCABULARY, "title"))
+            .expect("known title");
+        let plain = MetadataValue::string("Interview").unwrap();
+        let localized = MetadataValue::language_string("Interview", "en-US").unwrap();
+        assert!(title.validate_values(std::slice::from_ref(&plain)).is_ok());
+        assert!(
+            title
+                .validate_values(std::slice::from_ref(&localized))
+                .is_ok()
+        );
+        assert!(title.validate_values(&[plain, localized]).is_err());
+        assert!(title.validate_values(&[MetadataValue::u64(42)]).is_err());
+
+        let keywords =
+            metadata_property_definition(&property(IPTC_VMH_JSON_VOCABULARY, "keywords"))
+                .expect("known keywords");
+        assert!(
+            keywords
+                .validate_values(&[
+                    MetadataValue::string("interview").unwrap(),
+                    MetadataValue::string("studio").unwrap(),
+                ])
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn built_in_validation_callbacks_can_add_property_rules() {
+        let definition = MetadataPropertyDefinition {
+            property: "example",
+            label: "Example",
+            description: "Test-only callback coverage.",
+            accepted_kinds: &[MetadataValueKind::String],
+            cardinality: MetadataCardinality::Single,
+            aliases: &[],
+            validator: Some(|value| value.as_string() == Some("accepted")),
+        };
+        assert!(
+            definition
+                .validate_values(&[MetadataValue::string("accepted").unwrap()])
+                .is_ok()
+        );
+        assert!(
+            definition
+                .validate_values(&[MetadataValue::string("rejected").unwrap()])
+                .is_err()
+        );
+    }
+}
