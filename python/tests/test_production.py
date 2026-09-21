@@ -17,6 +17,7 @@ from postproject import (
     ActivitySpec,
     AgentIdentity,
     AssetImportedEvent,
+    AvailabilityIssueKind,
     EvidenceKind,
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
@@ -274,6 +275,53 @@ class ProductionTests(unittest.TestCase):
             self.assertEqual(
                 tuple(item.kind for item in candidate.evidence),
                 (EvidenceKind.KNOWN_LOCATOR_AVAILABLE,),
+            )
+
+    def test_ambiguous_resolution_requires_explicit_confirmation(self) -> None:
+        candidates = self.root / "candidates"
+        candidates.mkdir()
+        (candidates / "a.mov").write_bytes(b"Python binding media fixture")
+        (candidates / "b.mov").write_bytes(b"Python binding media fixture")
+
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+                transaction.add_media_root(candidates, "Relocated")
+            self.media_path.unlink()
+
+            resolution = production.resolutions[asset_id][0]
+            self.assertEqual(
+                resolution.availability, RepresentationAvailability.AMBIGUOUS
+            )
+            self.assertEqual(len(resolution.resources), 1)
+            resource = resolution.resources[0]
+            self.assertEqual(resource.state, ResourceResolutionState.AMBIGUOUS)
+            self.assertEqual(len(resource.candidates), 2)
+            self.assertEqual(
+                tuple(candidate.uri for candidate in resource.candidates),
+                tuple(
+                    path.resolve().as_uri()
+                    for path in (candidates / "a.mov", candidates / "b.mov")
+                ),
+            )
+            self.assertEqual(len(resolution.issues), 1)
+            self.assertEqual(
+                resolution.issues[0].kind,
+                AvailabilityIssueKind.AMBIGUOUS_RESOURCE,
+            )
+
+            with production.transaction() as transaction:
+                transaction.confirm_locator(
+                    resource.resource_id, resource.candidates[0].uri
+                )
+
+            confirmed = production.resolutions[asset_id][0]
+            self.assertEqual(confirmed.availability, RepresentationAvailability.ONLINE)
+            self.assertEqual(
+                confirmed.resources[0].state,
+                ResourceResolutionState.ONLINE_AT_KNOWN_LOCATOR,
             )
 
     def test_external_identifier_nul_is_rejected_before_native_call(self) -> None:
