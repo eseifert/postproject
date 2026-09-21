@@ -31,10 +31,32 @@ let reopened = HostObjectBinding::from_str(&stored).expect("valid stored binding
 assert_eq!(reopened, binding);
 ```
 
+The public C ABI exposes `pp_host_binding_format` and
+`pp_host_binding_parse`. A formatted string is caller-owned and must be
+released exactly once with `pp_host_binding_release`; parsed UUID and object
+reference values are copied into caller-owned output structs.
+
+C++ exposes the same operations as a copied value:
+
+```cpp
+postproject::HostObjectBinding binding{production.id(), asset_ref};
+const std::string stored = binding.toString();
+const auto reopened = postproject::HostObjectBinding::fromString(stored);
+```
+
+Python uses keyed formatting, consistent with its other collection-like reads:
+
+```python
+stored = production.host_bindings[asset_id]
+binding = production.host_bindings.parse(stored)
+assert binding.production_id == production.id
+assert binding.object == asset_id
+```
+
 Parsing is deliberately strict: versions and object kinds must be known, UUIDs
 must use lowercase hyphenated canonical text, and extra fields are rejected. A
 future format can therefore be introduced without interpreting ambiguous old
-text.
+text. The former development-only private-scheme spelling is not accepted.
 
 ## Fallback information
 
