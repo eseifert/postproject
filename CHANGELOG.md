@@ -21,6 +21,8 @@ All notable changes to PostProject will be documented here. The project uses
   representation availability, resource results, and availability issues.
 - Added ABI version 6 activity creation, inspection, direct provenance queries,
   and ancestry/descendant traversal with C++17 value wrappers.
+- Added ABI version 9 representation structure and ordered membership
+  inspection as the first compound-media native surface.
 
 ### Added
 

@@ -6,6 +6,7 @@
 
 mod metadata;
 mod provenance;
+mod representations;
 mod revision_events;
 mod revisions;
 
@@ -37,6 +38,7 @@ use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
 use provenance::AbiActivityEdge;
 pub use provenance::PpActivitySet;
+pub use representations::PpRepresentationSet;
 pub use revision_events::PpRevisionEventSet;
 pub use revisions::PpRevisionSet;
 
@@ -103,7 +105,7 @@ const PP_REVISION_ACTIVITY_INPUT_ADDED: u32 = 12;
 const PP_REVISION_ACTIVITY_OUTPUT_ADDED: u32 = 13;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 8;
+pub const ABI_VERSION: u32 = 9;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]

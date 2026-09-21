@@ -13,6 +13,10 @@ class Transaction(ctypes.Structure):
     pass
 
 
+class RepresentationSet(ctypes.Structure):
+    pass
+
+
 class ResolutionSet(ctypes.Structure):
     pass
 
@@ -66,6 +70,8 @@ class ActivityEdge(ctypes.Structure):
 
 
 ObjectKind = ctypes.c_uint32
+RepresentationKind = ctypes.c_uint32
+ContentStructureKind = ctypes.c_uint32
 RevisionEventKind = ctypes.c_uint32
 MetadataValueKind = ctypes.c_uint32
 ErrorCode = ctypes.c_uint32
@@ -80,6 +86,14 @@ PP_OBJECT_ASSET = 2
 PP_OBJECT_REPRESENTATION = 3
 PP_OBJECT_RESOURCE = 4
 PP_OBJECT_ACTIVITY = 5
+PP_REPRESENTATION_ORIGINAL = 1
+PP_REPRESENTATION_PROXY = 2
+PP_REPRESENTATION_OPTIMIZED = 3
+PP_REPRESENTATION_DERIVED = 4
+PP_CONTENT_SINGLE_RESOURCE = 1
+PP_CONTENT_IMAGE_SEQUENCE = 2
+PP_CONTENT_ORDERED_PARTS = 3
+PP_CONTENT_PACKAGE = 4
 PP_REVISION_ASSET_IMPORTED = 1
 PP_REVISION_REPRESENTATION_ADDED = 2
 PP_REVISION_RESOURCE_ADDED = 3
@@ -241,8 +255,13 @@ EXPORTED_SYMBOLS = (
     "pp_production_provenance_ancestors",
     "pp_production_provenance_descendants",
     "pp_production_release",
+    "pp_production_representations",
     "pp_production_resolve_asset",
     "pp_production_revision_events",
+    "pp_representation_set_count",
+    "pp_representation_set_get",
+    "pp_representation_set_get_member",
+    "pp_representation_set_release",
     "pp_resolution_set_get_candidate",
     "pp_resolution_set_get_candidate_evidence",
     "pp_resolution_set_get_issue",
@@ -286,6 +305,16 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_production_id.restype = ErrorCode
     lib.pp_production_asset_exists.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_production_asset_exists.restype = ErrorCode
+    lib.pp_production_representations.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(RepresentationSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_representations.restype = ErrorCode
+    lib.pp_representation_set_count.argtypes = [ctypes.POINTER(RepresentationSet)]
+    lib.pp_representation_set_count.restype = ctypes.c_uint64
+    lib.pp_representation_set_get.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(Uuid), ctypes.POINTER(RepresentationKind), ctypes.POINTER(ContentStructureKind), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_representation_set_get.restype = ErrorCode
+    lib.pp_representation_set_get_member.argtypes = [ctypes.POINTER(RepresentationSet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_representation_set_get_member.restype = ErrorCode
+    lib.pp_representation_set_release.argtypes = [ctypes.POINTER(RepresentationSet)]
+    lib.pp_representation_set_release.restype = None
     lib.pp_production_external_identifiers.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.POINTER(ExternalIdentifierSet)), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_production_external_identifiers.restype = ErrorCode
     lib.pp_production_find_by_external_identifier.argtypes = [ctypes.POINTER(Production), ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(ObjectRefSet)), ctypes.POINTER(ctypes.POINTER(Error))]

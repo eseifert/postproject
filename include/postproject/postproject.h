@@ -21,6 +21,7 @@ extern "C" {
 
 typedef struct pp_production pp_production_t;
 typedef struct pp_transaction pp_transaction_t;
+typedef struct pp_representation_set pp_representation_set_t;
 typedef struct pp_resolution_set pp_resolution_set_t;
 typedef struct pp_external_identifier_set pp_external_identifier_set_t;
 typedef struct pp_object_ref_set pp_object_ref_set_t;
@@ -42,6 +43,20 @@ typedef uint32_t pp_object_kind_t;
 #define PP_OBJECT_REPRESENTATION UINT32_C(3)
 #define PP_OBJECT_RESOURCE UINT32_C(4)
 #define PP_OBJECT_ACTIVITY UINT32_C(5)
+
+typedef uint32_t pp_representation_kind_t;
+
+#define PP_REPRESENTATION_ORIGINAL UINT32_C(1)
+#define PP_REPRESENTATION_PROXY UINT32_C(2)
+#define PP_REPRESENTATION_OPTIMIZED UINT32_C(3)
+#define PP_REPRESENTATION_DERIVED UINT32_C(4)
+
+typedef uint32_t pp_content_structure_kind_t;
+
+#define PP_CONTENT_SINGLE_RESOURCE UINT32_C(1)
+#define PP_CONTENT_IMAGE_SEQUENCE UINT32_C(2)
+#define PP_CONTENT_ORDERED_PARTS UINT32_C(3)
+#define PP_CONTENT_PACKAGE UINT32_C(4)
 
 typedef uint32_t pp_revision_event_kind_t;
 
@@ -177,6 +192,26 @@ PP_API pp_error_code_t pp_production_asset_exists(const pp_production_t *product
                                                const pp_uuid_t *asset_id,
                                                uint8_t *out_exists,
                                                pp_error_t **out_error);
+/* Representation strings borrow the owning result set. Members are returned in
+ * structural order. Single-resource and image-sequence members have no role. */
+PP_API pp_error_code_t pp_production_representations(
+    const pp_production_t *production, const pp_uuid_t *asset_id,
+    pp_representation_set_t **out_representations, pp_error_t **out_error);
+PP_API uint64_t pp_representation_set_count(
+    const pp_representation_set_t *representations);
+PP_API pp_error_code_t pp_representation_set_get(
+    const pp_representation_set_t *representations, uint64_t index,
+    pp_uuid_t *out_id, pp_uuid_t *out_asset_id,
+    pp_representation_kind_t *out_kind,
+    pp_content_structure_kind_t *out_structure_kind,
+    uint64_t *out_member_count, pp_error_t **out_error);
+PP_API pp_error_code_t pp_representation_set_get_member(
+    const pp_representation_set_t *representations,
+    uint64_t representation_index, uint64_t member_index,
+    pp_uuid_t *out_resource_id, const char **out_role, uint8_t *out_required,
+    pp_error_t **out_error);
+PP_API void pp_representation_set_release(
+    pp_representation_set_t *representations);
 /* Result strings are borrowed until the owning result set is released. */
 PP_API pp_error_code_t pp_production_external_identifiers(
     const pp_production_t *production, const pp_object_ref_t *target,
