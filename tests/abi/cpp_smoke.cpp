@@ -74,6 +74,34 @@ int main(int argc, char **argv) {
     if (!production.containsAsset(asset_id)) {
       return 8;
     }
+    const auto representations = production.representations(asset_id);
+    if (representations.size() != 1 ||
+        representations[0].asset_id != asset_id ||
+        representations[0].kind != postproject::RepresentationKind::original ||
+        representations[0].structure_kind !=
+            postproject::ContentStructureKind::single_resource ||
+        representations[0].members.size() != 1 ||
+        !representations[0].members[0].required ||
+        representations[0].members[0].role.has_value() ||
+        representations[0].image_sequence.has_value() ||
+        !representations[0].fingerprints.empty() ||
+        representations[0].resources.size() != 1 ||
+        representations[0].resources[0].id !=
+            representations[0].members[0].resource_id ||
+        representations[0].resources[0].file_size != UINT64_C(21) ||
+        !representations[0].resources[0].modified_at_unix_micros.has_value() ||
+        representations[0].resources[0].fingerprints.size() != 1 ||
+        representations[0].resources[0].fingerprints[0].version != 1 ||
+        representations[0].resources[0].fingerprints[0].value.empty() ||
+        representations[0].resources[0].locators.size() != 1 ||
+        representations[0].resources[0].locators[0].availability !=
+            postproject::LocatorAvailability::online ||
+        !representations[0]
+             .resources[0]
+             .locators[0]
+             .last_seen_unix_micros.has_value()) {
+      return 17;
+    }
     const auto identifiers = production.externalIdentifiers(asset_ref);
     const auto found =
         production.findByExternalIdentifier("com.example.asset", "asset-42");
