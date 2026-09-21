@@ -39,6 +39,13 @@ int main(int argc, char **argv) {
     const auto asset_id = transaction.importMedia(media_path, "C++ asset");
     const postproject::ObjectRef asset_ref{postproject::ObjectKind::asset,
                                            asset_id};
+    const postproject::HostObjectBinding host_binding{created_id, asset_ref};
+    const auto host_binding_text = host_binding.toString();
+    if (host_binding_text.rfind("https://postproject.org/ref/v1/", 0) != 0 ||
+        !(postproject::HostObjectBinding::fromString(host_binding_text) ==
+          host_binding)) {
+      return 21;
+    }
     const postproject::ExternalIdentifier external_id{
         "com.example.asset", "asset-42", std::string("primary")};
     transaction.addExternalIdentifier(asset_ref, external_id);

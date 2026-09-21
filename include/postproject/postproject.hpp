@@ -87,6 +87,20 @@ struct ObjectRef final {
   }
 };
 
+struct HostObjectBinding final {
+  Uuid production_id;
+  ObjectRef object;
+
+  [[nodiscard]] std::string toString() const;
+  [[nodiscard]] static HostObjectBinding fromString(std::string_view value);
+
+  friend constexpr bool operator==(const HostObjectBinding &left,
+                                   const HostObjectBinding &right) noexcept {
+    return left.production_id == right.production_id &&
+           left.object == right.object;
+  }
+};
+
 struct ExternalIdentifier final {
   std::string scheme;
   std::string value;
@@ -441,6 +455,14 @@ struct RevisionEventSetDeleter final {
 
 using RevisionEventSetHandle =
     std::unique_ptr<pp_revision_event_set_t, RevisionEventSetDeleter>;
+
+struct HostBindingDeleter final {
+  void operator()(char *binding) const noexcept {
+    pp_host_binding_release(binding);
+  }
+};
+
+using HostBindingHandle = std::unique_ptr<char, HostBindingDeleter>;
 
 inline void throw_if_error(pp_error_code_t status, pp_error_t *raw_error) {
   ErrorHandle error(raw_error);
@@ -921,6 +943,30 @@ inline Evidence candidate_evidence(const pp_resolution_set_t *resolutions,
 }
 
 } // namespace detail
+
+inline std::string HostObjectBinding::toString() const {
+  const pp_uuid_t native_production_id = detail::native_uuid(production_id);
+  const pp_object_ref_t native_object = detail::native_object_ref(object);
+  char *binding = nullptr;
+  pp_error_t *error = nullptr;
+  const pp_error_code_t status = pp_host_binding_format(
+      &native_production_id, &native_object, &binding, &error);
+  detail::throw_if_error(status, error);
+  detail::HostBindingHandle owned(binding);
+  return owned != nullptr ? std::string(owned.get()) : std::string();
+}
+
+inline HostObjectBinding
+HostObjectBinding::fromString(std::string_view value) {
+  const std::string checked = detail::checked_string(value, "host binding");
+  pp_uuid_t production_id{};
+  pp_object_ref_t object{};
+  pp_error_t *error = nullptr;
+  const pp_error_code_t status = pp_host_binding_parse(
+      checked.c_str(), &production_id, &object, &error);
+  detail::throw_if_error(status, error);
+  return {detail::uuid(production_id), detail::object_ref(object)};
+}
 
 class Transaction final {
 public:
