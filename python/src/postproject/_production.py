@@ -526,6 +526,46 @@ class Transaction:
 
         self._mutate_external_identifier(True, target, identifier)
 
+    def add_metadata(
+        self,
+        target: ObjectReference,
+        property: MetadataProperty,
+        value: MetadataString | MetadataLanguageString,
+    ) -> None:
+        """Stage one plain or language-qualified text assertion."""
+
+        self._require_open()
+        native_target = _native_object_reference(target)
+        language = value.language if isinstance(value, MetadataLanguageString) else None
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_add_metadata_text(
+            self._handle,
+            ctypes.byref(native_target),
+            _utf8(property.vocabulary, "metadata vocabulary"),
+            _utf8(property.property, "metadata property"),
+            _utf8(value.value, "metadata text"),
+            None if language is None else _utf8(language, "metadata language"),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
+    def remove_metadata_property(
+        self, target: ObjectReference, property: MetadataProperty
+    ) -> None:
+        """Stage removal of every assertion for one target and property."""
+
+        self._require_open()
+        native_target = _native_object_reference(target)
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_remove_metadata_property(
+            self._handle,
+            ctypes.byref(native_target),
+            _utf8(property.vocabulary, "metadata vocabulary"),
+            _utf8(property.property, "metadata property"),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
     def commit(self) -> None:
         """Atomically persist every staged mutation."""
 
