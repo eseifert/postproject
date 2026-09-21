@@ -22,6 +22,7 @@ from ._abi import (
     ExternalIdentifierSet,
     MetadataSet,
     ObjectRefSet,
+    RepresentationSet,
     ResolutionSet,
     RevisionEventSet,
     RevisionSet,
@@ -52,11 +53,16 @@ from ._model import (
     AssetImportedEvent,
     AvailabilityIssue,
     AvailabilityIssueKind,
+    ContentStructureKind,
     EvidenceKind,
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
+    Fingerprint,
+    ImageSequenceDescriptor,
+    Locator,
     LocatorAddedEvent,
+    LocatorAvailability,
     LocatorId,
     MediaRootAddedEvent,
     MediaRootId,
@@ -82,13 +88,17 @@ from ._model import (
     ObjectReference,
     OriginIdentity,
     ProductionId,
+    Representation,
     RepresentationAddedEvent,
     RepresentationAvailability,
     RepresentationId,
+    RepresentationKind,
+    RepresentationMember,
     RepresentationResolution,
     RepresentationResourceAddedEvent,
     ResolutionCandidate,
     ResolutionEvidence,
+    Resource,
     ResourceAddedEvent,
     ResourceId,
     ResourceResolution,
@@ -182,6 +192,14 @@ class _Resolutions:
 
     def __getitem__(self, asset_id: AssetId) -> tuple[RepresentationResolution, ...]:
         return self._production._resolve_asset(asset_id)
+
+
+class _Representations:
+    def __init__(self, production: Production) -> None:
+        self._production = production
+
+    def __getitem__(self, asset_id: AssetId) -> tuple[Representation, ...]:
+        return self._production._representations(asset_id)
 
 
 class Production:
@@ -341,6 +359,13 @@ class Production:
         self._require_open()
         return _Resolutions(self)
 
+    @property
+    def representations(self) -> _Representations:
+        """Return immutable representation snapshots keyed by asset identity."""
+
+        self._require_open()
+        return _Representations(self)
+
     def _contains_asset(self, asset_id: AssetId) -> bool:
         """Return whether an asset identity belongs to this production."""
 
@@ -356,6 +381,29 @@ class Production:
         )
         self._native.check(status, error)
         return bool(exists.value)
+
+    def _representations(self, asset_id: AssetId) -> tuple[Representation, ...]:
+        self._require_open()
+        native_id = _native_uuid(asset_id.value)
+        handle = ctypes.POINTER(RepresentationSet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_representations(
+            self._handle,
+            ctypes.byref(native_id),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native representation query returned no result set")
+        try:
+            count = self._native.lib.pp_representation_set_count(handle)
+            return tuple(
+                _representation_at(self._native, handle, index)
+                for index in range(int(count))
+            )
+        finally:
+            self._native.lib.pp_representation_set_release(handle)
 
     def _activities_for(
         self, direction: str, representation_id: RepresentationId
@@ -1123,6 +1171,306 @@ def _activity_edge(
     )
 
 
+def _representation_at(
+    native: NativeLibrary,
+    representations: _Pointer[RepresentationSet],
+    index: int,
+) -> Representation:
+    representation_id = Uuid()
+    asset_id = Uuid()
+    kind = _abi.RepresentationKind()
+    structure_kind = _abi.ContentStructureKind()
+    member_count = ctypes.c_uint64()
+    resource_count = ctypes.c_uint64()
+    fingerprint_count = ctypes.c_uint64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_representation_set_get(
+        representations,
+        index,
+        ctypes.byref(representation_id),
+        ctypes.byref(asset_id),
+        ctypes.byref(kind),
+        ctypes.byref(structure_kind),
+        ctypes.byref(member_count),
+        ctypes.byref(resource_count),
+        ctypes.byref(fingerprint_count),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    structure = _content_structure_kind(int(structure_kind.value))
+    return Representation(
+        RepresentationId(_uuid(representation_id)),
+        AssetId(_uuid(asset_id)),
+        _representation_kind(int(kind.value)),
+        structure,
+        tuple(
+            _representation_member_at(native, representations, index, member_index)
+            for member_index in range(int(member_count.value))
+        ),
+        _image_sequence_at(native, representations, index)
+        if structure is ContentStructureKind.IMAGE_SEQUENCE
+        else None,
+        tuple(
+            _representation_fingerprint_at(
+                native, representations, index, fingerprint_index
+            )
+            for fingerprint_index in range(int(fingerprint_count.value))
+        ),
+        tuple(
+            _resource_at(native, representations, index, resource_index)
+            for resource_index in range(int(resource_count.value))
+        ),
+    )
+
+
+def _representation_member_at(
+    native: NativeLibrary,
+    representations: _Pointer[RepresentationSet],
+    representation_index: int,
+    member_index: int,
+) -> RepresentationMember:
+    resource_id = Uuid()
+    role = ctypes.c_char_p()
+    required = ctypes.c_uint8()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_representation_set_get_member(
+        representations,
+        representation_index,
+        member_index,
+        ctypes.byref(resource_id),
+        ctypes.byref(role),
+        ctypes.byref(required),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return RepresentationMember(
+        ResourceId(_uuid(resource_id)),
+        _decode_optional(role.value),
+        bool(required.value),
+    )
+
+
+def _image_sequence_at(
+    native: NativeLibrary,
+    representations: _Pointer[RepresentationSet],
+    representation_index: int,
+) -> ImageSequenceDescriptor:
+    prefix = ctypes.c_char_p()
+    suffix = ctypes.c_char_p()
+    padding = ctypes.c_uint8()
+    start = ctypes.c_int64()
+    end = ctypes.c_int64()
+    step = ctypes.c_uint32()
+    rate_numerator = ctypes.c_uint32()
+    rate_denominator = ctypes.c_uint32()
+    missing_count = ctypes.c_uint64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_representation_set_get_sequence(
+        representations,
+        representation_index,
+        ctypes.byref(prefix),
+        ctypes.byref(suffix),
+        ctypes.byref(padding),
+        ctypes.byref(start),
+        ctypes.byref(end),
+        ctypes.byref(step),
+        ctypes.byref(rate_numerator),
+        ctypes.byref(rate_denominator),
+        ctypes.byref(missing_count),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return ImageSequenceDescriptor(
+        _decode_required(prefix.value, "image-sequence prefix"),
+        _decode_required(suffix.value, "image-sequence suffix"),
+        int(padding.value),
+        int(start.value),
+        int(end.value),
+        int(step.value),
+        int(rate_numerator.value),
+        int(rate_denominator.value),
+        tuple(
+            _sequence_missing_frame_at(
+                native, representations, representation_index, index
+            )
+            for index in range(int(missing_count.value))
+        ),
+    )
+
+
+def _sequence_missing_frame_at(
+    native: NativeLibrary,
+    representations: _Pointer[RepresentationSet],
+    representation_index: int,
+    frame_index: int,
+) -> int:
+    frame = ctypes.c_int64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_representation_set_get_sequence_missing_frame(
+        representations,
+        representation_index,
+        frame_index,
+        ctypes.byref(frame),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return int(frame.value)
+
+
+def _representation_fingerprint_at(
+    native: NativeLibrary,
+    representations: _Pointer[RepresentationSet],
+    representation_index: int,
+    fingerprint_index: int,
+) -> Fingerprint:
+    algorithm = ctypes.c_char_p()
+    version = ctypes.c_uint16()
+    value = ctypes.POINTER(ctypes.c_uint8)()
+    value_length = ctypes.c_uint64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_representation_set_get_fingerprint(
+        representations,
+        representation_index,
+        fingerprint_index,
+        ctypes.byref(algorithm),
+        ctypes.byref(version),
+        ctypes.byref(value),
+        ctypes.byref(value_length),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return _fingerprint(algorithm, version, value, value_length)
+
+
+def _resource_at(
+    native: NativeLibrary,
+    representations: _Pointer[RepresentationSet],
+    representation_index: int,
+    resource_index: int,
+) -> Resource:
+    resource_id = Uuid()
+    has_file_facts = ctypes.c_uint8()
+    file_size = ctypes.c_uint64()
+    has_modified_at = ctypes.c_uint8()
+    modified_at = ctypes.c_int64()
+    locator_count = ctypes.c_uint64()
+    fingerprint_count = ctypes.c_uint64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_representation_set_get_resource(
+        representations,
+        representation_index,
+        resource_index,
+        ctypes.byref(resource_id),
+        ctypes.byref(has_file_facts),
+        ctypes.byref(file_size),
+        ctypes.byref(has_modified_at),
+        ctypes.byref(modified_at),
+        ctypes.byref(locator_count),
+        ctypes.byref(fingerprint_count),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return Resource(
+        ResourceId(_uuid(resource_id)),
+        int(file_size.value) if has_file_facts.value else None,
+        int(modified_at.value) if has_modified_at.value else None,
+        tuple(
+            _resource_fingerprint_at(
+                native,
+                representations,
+                representation_index,
+                resource_index,
+                fingerprint_index,
+            )
+            for fingerprint_index in range(int(fingerprint_count.value))
+        ),
+        tuple(
+            _locator_at(
+                native,
+                representations,
+                representation_index,
+                resource_index,
+                locator_index,
+            )
+            for locator_index in range(int(locator_count.value))
+        ),
+    )
+
+
+def _resource_fingerprint_at(
+    native: NativeLibrary,
+    representations: _Pointer[RepresentationSet],
+    representation_index: int,
+    resource_index: int,
+    fingerprint_index: int,
+) -> Fingerprint:
+    algorithm = ctypes.c_char_p()
+    version = ctypes.c_uint16()
+    value = ctypes.POINTER(ctypes.c_uint8)()
+    value_length = ctypes.c_uint64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_representation_set_get_resource_fingerprint(
+        representations,
+        representation_index,
+        resource_index,
+        fingerprint_index,
+        ctypes.byref(algorithm),
+        ctypes.byref(version),
+        ctypes.byref(value),
+        ctypes.byref(value_length),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return _fingerprint(algorithm, version, value, value_length)
+
+
+def _fingerprint(
+    algorithm: ctypes.c_char_p,
+    version: ctypes.c_uint16,
+    value: _Pointer[ctypes.c_uint8],
+    value_length: ctypes.c_uint64,
+) -> Fingerprint:
+    return Fingerprint(
+        _decode_required(algorithm.value, "fingerprint algorithm"),
+        int(version.value),
+        ctypes.string_at(value, int(value_length.value)),
+    )
+
+
+def _locator_at(
+    native: NativeLibrary,
+    representations: _Pointer[RepresentationSet],
+    representation_index: int,
+    resource_index: int,
+    locator_index: int,
+) -> Locator:
+    locator_id = Uuid()
+    uri = ctypes.c_char_p()
+    availability = _abi.LocatorAvailability()
+    has_last_seen = ctypes.c_uint8()
+    last_seen = ctypes.c_int64()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_representation_set_get_locator(
+        representations,
+        representation_index,
+        resource_index,
+        locator_index,
+        ctypes.byref(locator_id),
+        ctypes.byref(uri),
+        ctypes.byref(availability),
+        ctypes.byref(has_last_seen),
+        ctypes.byref(last_seen),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return Locator(
+        LocatorId(_uuid(locator_id)),
+        _decode_required(uri.value, "locator URI"),
+        _locator_availability(int(availability.value)),
+        int(last_seen.value) if has_last_seen.value else None,
+    )
+
+
 def _representation_resolution_at(
     native: NativeLibrary,
     resolutions: _Pointer[ResolutionSet],
@@ -1689,6 +2037,41 @@ def _object_reference(value: _abi.ObjectRef) -> ObjectReference:
     if kind == _abi.PP_OBJECT_ACTIVITY:
         return ActivityId(object_id)
     raise RuntimeError("revision event has an unknown object-reference kind")
+
+
+def _representation_kind(value: int) -> RepresentationKind:
+    result = {
+        _abi.PP_REPRESENTATION_ORIGINAL: RepresentationKind.ORIGINAL,
+        _abi.PP_REPRESENTATION_PROXY: RepresentationKind.PROXY,
+        _abi.PP_REPRESENTATION_OPTIMIZED: RepresentationKind.OPTIMIZED,
+        _abi.PP_REPRESENTATION_DERIVED: RepresentationKind.DERIVED,
+    }.get(value)
+    if result is None:
+        raise RuntimeError("representation has an unknown kind")
+    return result
+
+
+def _content_structure_kind(value: int) -> ContentStructureKind:
+    result = {
+        _abi.PP_CONTENT_SINGLE_RESOURCE: ContentStructureKind.SINGLE_RESOURCE,
+        _abi.PP_CONTENT_IMAGE_SEQUENCE: ContentStructureKind.IMAGE_SEQUENCE,
+        _abi.PP_CONTENT_ORDERED_PARTS: ContentStructureKind.ORDERED_PARTS,
+        _abi.PP_CONTENT_PACKAGE: ContentStructureKind.PACKAGE,
+    }.get(value)
+    if result is None:
+        raise RuntimeError("representation has an unknown content structure")
+    return result
+
+
+def _locator_availability(value: int) -> LocatorAvailability:
+    result = {
+        _abi.PP_LOCATOR_UNKNOWN: LocatorAvailability.UNKNOWN,
+        _abi.PP_LOCATOR_ONLINE: LocatorAvailability.ONLINE,
+        _abi.PP_LOCATOR_OFFLINE: LocatorAvailability.OFFLINE,
+    }.get(value)
+    if result is None:
+        raise RuntimeError("locator has an unknown availability")
+    return result
 
 
 def _representation_availability(value: int) -> RepresentationAvailability:
