@@ -1,7 +1,14 @@
 //! Optional hints for a small set of externally defined metadata properties.
 
+mod catalog;
+
 use crate::{
     Error, ErrorKind, MetadataProperty, MetadataValue, MetadataValueKind, Result, VocabularyId,
+};
+
+pub use catalog::{
+    DUBLIN_CORE_ELEMENTS_VOCABULARY, EBUCORE_VOCABULARY, IPTC_VMH_JSON_VOCABULARY,
+    METADATA_VOCABULARIES, POSTPROJECT_METADATA_VOCABULARY, XMP_BASIC_VOCABULARY,
 };
 
 /// Whether a property accepts at most one assertion or repeated assertions.
@@ -151,9 +158,6 @@ impl MetadataVocabularyDefinition {
         self.properties
     }
 }
-
-/// Small built-in registry. Unknown vocabularies and properties remain valid.
-pub const METADATA_VOCABULARIES: &[MetadataVocabularyDefinition] = &[];
 
 /// Finds a built-in vocabulary definition by exact identifier spelling.
 #[must_use]

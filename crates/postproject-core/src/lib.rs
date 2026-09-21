@@ -49,8 +49,10 @@ pub use metadata::{
     MetadataValue, MetadataValueKind, PropertyId, RationalValue, VocabularyId,
 };
 pub use metadata_registry::{
+    DUBLIN_CORE_ELEMENTS_VOCABULARY, EBUCORE_VOCABULARY, IPTC_VMH_JSON_VOCABULARY,
     METADATA_VOCABULARIES, MetadataCardinality, MetadataPropertyAlias, MetadataPropertyDefinition,
-    MetadataVocabularyDefinition, metadata_property_definition, metadata_vocabulary_definition,
+    MetadataVocabularyDefinition, POSTPROJECT_METADATA_VOCABULARY, XMP_BASIC_VOCABULARY,
+    metadata_property_definition, metadata_vocabulary_definition,
 };
 pub use model::{
     Asset, MediaRoot, OriginalMediaImport, Production, Representation, RepresentationKind,
