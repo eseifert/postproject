@@ -2,25 +2,26 @@
 
 #![forbid(unsafe_code)]
 
-use std::{path::PathBuf, process::ExitCode, str::FromStr};
+use std::{fs, path::PathBuf, process::ExitCode, str::FromStr};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
-    Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, EvidenceKind, ExternalIdentifier,
-    IdentifierScheme, Locator, LocatorAvailability, MetadataAssertion, MetadataField,
-    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity, ProductionId,
-    ProductionStoreTransaction, PropertyId, Representation, RepresentationAvailability,
-    RepresentationId, RepresentationKind, RepresentationResolution, ResolutionEvidence, Resource,
-    ResourceId, ResourceResolution, ResourceResolutionState, Revision, RevisionContext,
-    RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity, VocabularyId,
+    Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, DecimalValue, EvidenceKind,
+    ExternalIdentifier, IdentifierScheme, Locator, LocatorAvailability, MetadataAssertion,
+    MetadataField, MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity,
+    ProductionId, ProductionStoreTransaction, PropertyId, RationalValue, Representation,
+    RepresentationAvailability, RepresentationId, RepresentationKind, RepresentationResolution,
+    ResolutionEvidence, Resource, ResourceId, ResourceResolution, ResourceResolutionState,
+    Revision, RevisionContext, RevisionEvent, RevisionEventKind, RevisionId, Timestamp,
+    ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
 };
 use postproject_storage_sqlite::SqliteProduction;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Parser)]
 #[command(name = "postproject", version, about)]
@@ -188,6 +189,8 @@ struct MetadataArgs {
 
 #[derive(Debug, Subcommand)]
 enum MetadataCommand {
+    /// Append a typed value read from a JSON file.
+    Add(MetadataAddArgs),
     /// Append a plain or language-tagged text value.
     AddText(MetadataAddTextArgs),
     /// List all metadata assertions attached to an object.
@@ -198,7 +201,8 @@ enum MetadataCommand {
     Find(MetadataFindArgs),
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug, Deserialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
 enum MetadataTargetKind {
     Production,
     Asset,
@@ -233,6 +237,16 @@ struct MetadataAddTextArgs {
     /// Optional BCP 47-shaped language tag.
     #[arg(long)]
     language: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct MetadataAddArgs {
+    #[command(flatten)]
+    target: MetadataTargetArgs,
+    vocabulary: String,
+    property: String,
+    /// JSON file containing one tagged metadata value.
+    value_file: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -532,6 +546,36 @@ enum MetadataValueView {
     Reference { target: ObjectRefView },
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum MetadataValueInput {
+    String { value: String },
+    LangString { value: String, language: String },
+    I64 { value: i64 },
+    U64 { value: u64 },
+    Decimal { coefficient: String, scale: u32 },
+    Bool { value: bool },
+    Timestamp { unix_micros: i64 },
+    Uri { value: String },
+    Bytes { hex: String },
+    Rational { numerator: i64, denominator: u64 },
+    List { values: Vec<MetadataValueInput> },
+    Struct { fields: Vec<MetadataFieldInput> },
+    Reference { target: MetadataReferenceInput },
+}
+
+#[derive(Debug, Deserialize)]
+struct MetadataFieldInput {
+    name: String,
+    value: MetadataValueInput,
+}
+
+#[derive(Debug, Deserialize)]
+struct MetadataReferenceInput {
+    target_kind: MetadataTargetKind,
+    target_id: String,
+}
+
 #[derive(Debug, Serialize)]
 struct MetadataFieldView {
     name: String,
@@ -713,6 +757,7 @@ fn execute(cli: Cli) -> Result<()> {
             IdentifierCommand::Find(args) => identifier_find(args, cli.json),
         },
         Command::Metadata(args) => match args.command {
+            MetadataCommand::Add(args) => metadata_add(args, cli.json),
             MetadataCommand::AddText(args) => metadata_add_text(args, cli.json),
             MetadataCommand::List(args) => metadata_list(&args, cli.json),
             MetadataCommand::Remove(args) => metadata_remove(args, cli.json),
@@ -979,6 +1024,38 @@ fn metadata_add_text(args: MetadataAddTextArgs, json: bool) -> Result<()> {
         None => MetadataValue::string(args.value),
     }
     .context("validate metadata text")?;
+    let assertion = MetadataAssertion::new(property.clone(), value.clone());
+    let view = metadata_assertion_view(target, &assertion)?;
+    let mut production =
+        SqliteProduction::open(&args.target.production).context("open production")?;
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin metadata transaction")?;
+    set_cli_revision_context(&mut transaction, "Add metadata")?;
+    transaction
+        .add_metadata_value(target, &property, &value)
+        .context("stage metadata value")?;
+    transaction.commit().context("commit metadata value")?;
+
+    if json {
+        print_json(&view)
+    } else {
+        println!(
+            "added {}:{} to {} {}",
+            view.vocabulary, view.property, view.target_kind, view.target_id
+        );
+        Ok(())
+    }
+}
+
+fn metadata_add(args: MetadataAddArgs, json: bool) -> Result<()> {
+    let target = parse_metadata_target(args.target.target_kind, &args.target.target_id)?;
+    let property = parse_metadata_property(args.vocabulary, args.property)?;
+    let encoded = fs::read_to_string(&args.value_file)
+        .with_context(|| format!("read metadata value {}", args.value_file.display()))?;
+    let input: MetadataValueInput =
+        serde_json::from_str(&encoded).context("parse typed metadata JSON")?;
+    let value = input.into_value()?;
     let assertion = MetadataAssertion::new(property.clone(), value.clone());
     let view = metadata_assertion_view(target, &assertion)?;
     let mut production =
@@ -1584,6 +1661,69 @@ fn parse_metadata_property(vocabulary: String, property: String) -> Result<Metad
         VocabularyId::new(vocabulary).context("validate metadata vocabulary")?,
         PropertyId::new(property).context("validate metadata property")?,
     ))
+}
+
+impl MetadataValueInput {
+    fn into_value(self) -> Result<MetadataValue> {
+        match self {
+            Self::String { value } => MetadataValue::string(value).context("validate string"),
+            Self::LangString { value, language } => {
+                MetadataValue::language_string(value, language).context("validate language string")
+            }
+            Self::I64 { value } => Ok(MetadataValue::i64(value)),
+            Self::U64 { value } => Ok(MetadataValue::u64(value)),
+            Self::Decimal { coefficient, scale } => {
+                let coefficient = coefficient
+                    .parse::<i128>()
+                    .context("parse decimal coefficient")?;
+                Ok(MetadataValue::decimal(
+                    DecimalValue::new(coefficient, scale).context("validate decimal")?,
+                ))
+            }
+            Self::Bool { value } => Ok(MetadataValue::boolean(value)),
+            Self::Timestamp { unix_micros } => Ok(MetadataValue::timestamp(
+                Timestamp::from_unix_micros(unix_micros),
+            )),
+            Self::Uri { value } => MetadataValue::uri(value).context("validate URI"),
+            Self::Bytes { hex } => {
+                MetadataValue::bytes(hex::decode(hex).context("decode hexadecimal metadata bytes")?)
+                    .context("validate bytes")
+            }
+            Self::Rational {
+                numerator,
+                denominator,
+            } => Ok(MetadataValue::rational(
+                RationalValue::new(numerator, denominator).context("validate rational")?,
+            )),
+            Self::List { values } => MetadataValue::list(
+                values
+                    .into_iter()
+                    .map(Self::into_value)
+                    .collect::<Result<Vec<_>>>()?,
+            )
+            .context("validate list"),
+            Self::Struct { fields } => MetadataValue::structure(
+                fields
+                    .into_iter()
+                    .map(MetadataFieldInput::into_field)
+                    .collect::<Result<Vec<_>>>()?,
+            )
+            .context("validate structure"),
+            Self::Reference { target } => Ok(MetadataValue::reference(parse_metadata_target(
+                target.target_kind,
+                &target.target_id,
+            )?)),
+        }
+    }
+}
+
+impl MetadataFieldInput {
+    fn into_field(self) -> Result<MetadataField> {
+        Ok(MetadataField::new(
+            PropertyId::new(self.name).context("validate metadata field name")?,
+            self.value.into_value()?,
+        ))
+    }
 }
 
 fn external_identifier_view(
