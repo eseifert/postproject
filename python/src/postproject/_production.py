@@ -60,6 +60,41 @@ from ._native import NativeLibrary
 _ProductionT = TypeVar("_ProductionT", bound="Production")
 
 
+class _Assets:
+    def __init__(self, production: Production) -> None:
+        self._production = production
+
+    def __contains__(self, asset_id: object) -> bool:
+        if not isinstance(asset_id, AssetId):
+            return False
+        return self._production._contains_asset(asset_id)
+
+
+class _ExternalIdentifiers:
+    def __init__(self, production: Production) -> None:
+        self._production = production
+
+    def __getitem__(self, target: ObjectReference) -> tuple[ExternalIdentifier, ...]:
+        return self._production._external_identifiers(target)
+
+
+class _ObjectsByExternalIdentifier:
+    def __init__(self, production: Production) -> None:
+        self._production = production
+
+    def __getitem__(self, key: tuple[str, str]) -> tuple[ObjectReference, ...]:
+        scheme, value = key
+        return self._production._find_by_external_identifier(scheme, value)
+
+
+class _RevisionEvents:
+    def __init__(self, production: Production) -> None:
+        self._production = production
+
+    def __getitem__(self, revision_id: RevisionId) -> tuple[RevisionEvent, ...]:
+        return self._production._revision_events(revision_id)
+
+
 class Production:
     """An owned native production handle."""
 
@@ -131,7 +166,35 @@ class Production:
         self._native.check(status, error)
         return ProductionId(_uuid(value))
 
-    def contains_asset(self, asset_id: AssetId) -> bool:
+    @property
+    def assets(self) -> _Assets:
+        """Return an asset collection supporting ``asset_id in production.assets``."""
+
+        self._require_open()
+        return _Assets(self)
+
+    @property
+    def external_identifiers(self) -> _ExternalIdentifiers:
+        """Return external identifiers keyed by their target object."""
+
+        self._require_open()
+        return _ExternalIdentifiers(self)
+
+    @property
+    def objects_by_external_identifier(self) -> _ObjectsByExternalIdentifier:
+        """Return object matches keyed by ``(scheme, value)``."""
+
+        self._require_open()
+        return _ObjectsByExternalIdentifier(self)
+
+    @property
+    def revision_events(self) -> _RevisionEvents:
+        """Return semantic event lists keyed by revision identity."""
+
+        self._require_open()
+        return _RevisionEvents(self)
+
+    def _contains_asset(self, asset_id: AssetId) -> bool:
         """Return whether an asset identity belongs to this production."""
 
         self._require_open()
@@ -147,7 +210,7 @@ class Production:
         self._native.check(status, error)
         return bool(exists.value)
 
-    def external_identifiers(
+    def _external_identifiers(
         self, target: ObjectReference
     ) -> tuple[ExternalIdentifier, ...]:
         """Return every external identifier attached to ``target``."""
@@ -174,7 +237,7 @@ class Production:
         finally:
             self._native.lib.pp_external_identifier_set_release(handle)
 
-    def find_by_external_identifier(
+    def _find_by_external_identifier(
         self, scheme: str, value: str
     ) -> tuple[ObjectReference, ...]:
         """Find objects carrying an exact external scheme and value."""
@@ -201,6 +264,7 @@ class Production:
         finally:
             self._native.lib.pp_object_ref_set_release(handle)
 
+    @property
     def latest_revision(self) -> Revision | None:
         """Return the newest committed revision, if one exists."""
 
@@ -223,7 +287,7 @@ class Production:
             limit,
         )
 
-    def revision_events(self, revision_id: RevisionId) -> tuple[RevisionEvent, ...]:
+    def _revision_events(self, revision_id: RevisionId) -> tuple[RevisionEvent, ...]:
         """Return the ordered semantic events for one revision."""
 
         self._require_open()

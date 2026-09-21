@@ -59,13 +59,13 @@ class ProductionTests(unittest.TestCase):
                 message="Import original",
             ) as transaction:
                 asset_id = transaction.import_media(self.media_path, "Camera A")
-            self.assertTrue(production.contains_asset(asset_id))
+            self.assertIn(asset_id, production.assets)
 
         with Production.open(
             self.production_path, library_path=LIBRARY_PATH
         ) as reopened:
             self.assertEqual(reopened.id, production_id)
-            self.assertTrue(reopened.contains_asset(asset_id))
+            self.assertIn(asset_id, reopened.assets)
 
     def test_context_exception_and_explicit_rollback_discard_imports(self) -> None:
         with Production.create(
@@ -75,12 +75,12 @@ class ProductionTests(unittest.TestCase):
                 with production.transaction() as transaction:
                     exception_asset = transaction.import_media(self.media_path)
                     raise RuntimeError("abort")
-            self.assertFalse(production.contains_asset(exception_asset))
+            self.assertNotIn(exception_asset, production.assets)
 
             with production.transaction() as transaction:
                 explicit_asset = transaction.import_media(self.media_path)
                 transaction.rollback()
-            self.assertFalse(production.contains_asset(explicit_asset))
+            self.assertNotIn(explicit_asset, production.assets)
 
     def test_close_is_idempotent_and_closed_handles_are_rejected(self) -> None:
         production = Production.create(
@@ -118,14 +118,14 @@ class ProductionTests(unittest.TestCase):
         with Production.create(
             self.production_path, library_path=LIBRARY_PATH
         ) as production:
-            self.assertIsNone(production.latest_revision())
+            self.assertIsNone(production.latest_revision)
             with production.transaction(
                 origin=OriginIdentity("python-test", "1.0"),
                 message="First import",
             ) as transaction:
                 transaction.import_media(self.media_path)
 
-            first = production.latest_revision()
+            first = production.latest_revision
             self.assertIsNotNone(first)
             assert first is not None
             self.assertEqual(first.sequence, 1)
@@ -153,9 +153,9 @@ class ProductionTests(unittest.TestCase):
             with production.transaction() as transaction:
                 asset_id = transaction.import_media(self.media_path)
 
-            revision = production.latest_revision()
+            revision = production.latest_revision
             assert revision is not None
-            events = production.revision_events(revision.id)
+            events = production.revision_events[revision.id]
 
             self.assertEqual([event.position for event in events], list(range(5)))
             imported, representation, resource, membership, locator = (
@@ -175,7 +175,7 @@ class ProductionTests(unittest.TestCase):
 
             missing = RevisionId(UUID("00000000-0000-0000-0000-000000000001"))
             with self.assertRaises(NotFoundError):
-                production.revision_events(missing)
+                _ = production.revision_events[missing]
 
     def test_external_identifiers_roundtrip_lookup_and_remove(self) -> None:
         camera_id = ExternalIdentifier(
@@ -195,17 +195,17 @@ class ProductionTests(unittest.TestCase):
                 transaction.add_external_identifier(asset_id, umid)
 
             self.assertEqual(
-                set(production.external_identifiers(asset_id)), {camera_id, umid}
+                set(production.external_identifiers[asset_id]), {camera_id, umid}
             )
             self.assertEqual(
-                production.find_by_external_identifier(
+                production.objects_by_external_identifier[
                     camera_id.scheme, camera_id.value
-                ),
+                ],
                 (asset_id,),
             )
-            revision = production.latest_revision()
+            revision = production.latest_revision
             assert revision is not None
-            added = production.revision_events(revision.id)
+            added = production.revision_events[revision.id]
             self.assertTrue(
                 all(
                     isinstance(event.payload, ExternalIdentifierAddedEvent)
@@ -216,16 +216,16 @@ class ProductionTests(unittest.TestCase):
             with production.transaction() as transaction:
                 transaction.remove_external_identifier(asset_id, camera_id)
 
-            self.assertEqual(production.external_identifiers(asset_id), (umid,))
+            self.assertEqual(production.external_identifiers[asset_id], (umid,))
             self.assertEqual(
-                production.find_by_external_identifier(
+                production.objects_by_external_identifier[
                     camera_id.scheme, camera_id.value
-                ),
+                ],
                 (),
             )
-            revision = production.latest_revision()
+            revision = production.latest_revision
             assert revision is not None
-            removed = production.revision_events(revision.id)
+            removed = production.revision_events[revision.id]
             self.assertEqual(len(removed), 1)
             payload = removed[0].payload
             assert isinstance(payload, ExternalIdentifierRemovedEvent)
