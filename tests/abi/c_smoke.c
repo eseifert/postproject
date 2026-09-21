@@ -292,6 +292,42 @@ int main(int argc, char **argv) {
     pp_error_release(error);
     return 44;
   }
+  pp_uuid_t inspected_resource_id = {{0}};
+  uint8_t has_file_facts = 0;
+  uint64_t file_size = 0;
+  uint8_t has_modified_at = 0;
+  int64_t modified_at = 0;
+  uint64_t locator_count = 0;
+  status = pp_representation_set_get_resource(
+      representations, 0, 0, &inspected_resource_id, &has_file_facts,
+      &file_size, &has_modified_at, &modified_at, &locator_count, &error);
+  if (status != PP_OK ||
+      memcmp(inspected_resource_id.bytes, resource_id.bytes,
+             sizeof(resource_id.bytes)) != 0 ||
+      has_file_facts != UINT8_C(1) || file_size != UINT64_C(11) ||
+      has_modified_at != UINT8_C(1) || modified_at == 0 ||
+      locator_count != UINT64_C(1)) {
+    pp_representation_set_release(representations);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 45;
+  }
+  pp_uuid_t locator_id = {{0}};
+  const char *locator_uri = NULL;
+  pp_locator_availability_t locator_availability = 0;
+  uint8_t has_last_seen = 0;
+  int64_t last_seen = 0;
+  status = pp_representation_set_get_locator(
+      representations, 0, 0, 0, &locator_id, &locator_uri,
+      &locator_availability, &has_last_seen, &last_seen, &error);
+  if (status != PP_OK || uuid_is_zero(&locator_id) || locator_uri == NULL ||
+      locator_availability != PP_LOCATOR_ONLINE ||
+      has_last_seen != UINT8_C(1) || last_seen == 0) {
+    pp_representation_set_release(representations);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 46;
+  }
   pp_representation_set_release(representations);
   pp_external_identifier_set_t *identifiers = NULL;
   status = pp_production_external_identifiers(production, &asset_ref, &identifiers,
