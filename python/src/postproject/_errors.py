@@ -25,6 +25,14 @@ class StorageError(PostProjectError):
     """Persistent production data could not be read or written safely."""
 
 
+class IoError(PostProjectError, OSError):
+    """A filesystem or operating-system operation failed."""
+
+
+class MigrationError(PostProjectError):
+    """A production schema could not be migrated safely."""
+
+
 class ConflictError(PostProjectError):
     """An operation conflicts with current transaction or production state."""
 
@@ -33,11 +41,28 @@ class UnsupportedError(PostProjectError):
     """The requested operation is not supported by the current ABI."""
 
 
+class AmbiguousResolutionError(PostProjectError):
+    """A mutation requires an explicit choice between resolution candidates."""
+
+
+class FingerprintError(PostProjectError):
+    """Media fingerprinting failed."""
+
+
+class InternalError(PostProjectError):
+    """The native library reported an internal invariant failure."""
+
+
 ERROR_TYPES: dict[int, type[PostProjectError]] = {
     1: InvalidArgumentError,
     2: NotFoundError,
     3: AlreadyExistsError,
+    4: IoError,
     5: StorageError,
+    6: MigrationError,
     7: ConflictError,
+    8: AmbiguousResolutionError,
+    9: FingerprintError,
     10: UnsupportedError,
+    255: InternalError,
 }
