@@ -21,6 +21,13 @@ schemes round-trip unchanged, and identifier storage never initiates a network
 lookup. Persistence must not impose global uniqueness unless a scheme's
 semantics and the product use case justify it.
 
+The built-in registry is informational and deliberately small. It defines exact
+scheme strings, labels, specification references, and optional lexical checks.
+Validation checks syntax only: it does not normalize values, verify assignment,
+resolve an identifier, or prove registry membership. A known invalid value may
+be rejected by an application that opts into validation; persistence itself
+continues to preserve identifiers under unknown schemes.
+
 ## Consequences
 
 Applications can find objects by external identifiers without conflating those

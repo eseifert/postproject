@@ -25,6 +25,8 @@ All notable changes to PostProject will be documented here. The project uses
   image-sequence, concrete resource, locator, and typed fingerprint inspection.
 - Added a strict, versioned host-object binding format for portable
   production-scoped references.
+- Added an opt-in registry for UMID, ISAN, EIDR, and application identifier
+  schemes with local syntax checks and no network behavior.
 
 ### Added
 

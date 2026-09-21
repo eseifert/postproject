@@ -11,6 +11,19 @@ Applications may opt into a scheme-specific validator when they need to verify
 syntax; storing an identifier never triggers a registry or network lookup.
 
 Scheme identifiers are strings rather than a closed enum so new standards and
-application namespaces do not require an ABI redesign. Canonical constants for
-known schemes are added only after their authoritative specifications have been
-checked.
+application namespaces do not require an ABI redesign. The small built-in
+registry currently describes:
+
+| Scheme | Stored value | Local check |
+| --- | --- | --- |
+| `urn:smpte:umid` | the UMID namespace-specific hex value | SMPTE ST 2029 lexical form |
+| `urn:isan` | the ISAN namespace-specific value | RFC 4246 lexical form |
+| `urn:eidr` | the EIDR prefix and suffix, such as `10.5240:…` | RFC 7972 lexical form |
+| `org.postproject.application` | application-owned opaque text | generic limits only |
+
+These are opt-in syntax hints, not a closed allow-list. Checks do not normalize
+case, validate registry assignment, verify every standard checksum, or contact a
+network service. See [SMPTE ST 2029](https://pub.smpte.org/doc/st2029/20090310-pub/st2029-2009.pdf),
+[RFC 4246](https://www.rfc-editor.org/rfc/rfc4246.html), and
+[RFC 7972](https://www.rfc-editor.org/rfc/rfc7972.html) for the authoritative
+formats.
