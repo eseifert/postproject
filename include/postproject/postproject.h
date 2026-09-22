@@ -381,6 +381,12 @@ PP_API pp_error_code_t pp_metadata_input_create_rational(
 PP_API pp_error_code_t pp_metadata_input_create_reference(
     const pp_object_ref_t *target, pp_metadata_input_t **out_input,
     pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_input_create_list(
+    const pp_metadata_input_t **items, uint64_t count,
+    pp_metadata_input_t **out_input, pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_input_create_struct(
+    const char **names, const pp_metadata_input_t **values, uint64_t count,
+    pp_metadata_input_t **out_input, pp_error_t **out_error);
 PP_API void pp_metadata_input_release(pp_metadata_input_t *input);
 /* Activity strings are borrowed until pp_activity_set_release(). Optional
  * timestamps use explicit presence flags and zero values when absent. */

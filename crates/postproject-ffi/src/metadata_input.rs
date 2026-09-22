@@ -2,7 +2,10 @@
 
 use std::ffi::c_char;
 
-use postproject_core::{DecimalValue, Error, MetadataValue, RationalValue, Timestamp};
+use postproject_core::{
+    DecimalValue, Error, MAX_METADATA_COLLECTION_ITEMS, MetadataField, MetadataValue, PropertyId,
+    RationalValue, Timestamp,
+};
 
 use crate::{
     PpError, PpObjectRef, ffi_call, initialize_output, invalid_argument, object_ref_from_abi,
@@ -255,6 +258,107 @@ pub unsafe extern "C" fn pp_metadata_input_create_reference(
     }
 }
 
+/// Creates an owned ordered-list input by copying borrowed child inputs.
+///
+/// # Safety
+///
+/// `items` must address `count` readable live input pointers when `count` is
+/// nonzero. Output pointers follow [`pp_metadata_input_create_i64`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_input_create_list(
+    items: *const *const PpMetadataInput,
+    count: u64,
+    out_input: *mut *mut PpMetadataInput,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The pointer array is validated before its elements are borrowed.
+    unsafe {
+        create_input(out_input, out_error, || {
+            MetadataValue::list(input_values(items, count)?)
+        })
+    }
+}
+
+/// Creates an owned structured input by copying names and child inputs.
+///
+/// # Safety
+///
+/// `names` and `values` must each address `count` readable pointers when
+/// `count` is nonzero. Names are NUL-terminated UTF-8 and values are live input
+/// handles. Output pointers follow [`pp_metadata_input_create_i64`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_input_create_struct(
+    names: *const *const c_char,
+    values: *const *const PpMetadataInput,
+    count: u64,
+    out_input: *mut *mut PpMetadataInput,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Both arrays are validated before their elements are borrowed.
+    unsafe {
+        create_input(out_input, out_error, || {
+            let count = input_count(count)?;
+            if count == 0 {
+                return MetadataValue::structure(Vec::new());
+            }
+            if names.is_null() || values.is_null() {
+                return Err(invalid_argument(
+                    "names and values must not be null when count is nonzero",
+                ));
+            }
+            let names = std::slice::from_raw_parts(names, count);
+            let values = std::slice::from_raw_parts(values, count);
+            let fields = names
+                .iter()
+                .zip(values)
+                .map(|(name, value)| {
+                    let name = PropertyId::new(required_utf8(*name, "field name")?)?;
+                    let value = value
+                        .as_ref()
+                        .ok_or_else(|| invalid_argument("field value must not be null"))?;
+                    Ok(MetadataField::new(name, value.value.clone()))
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            MetadataValue::structure(fields)
+        })
+    }
+}
+
+unsafe fn input_values(
+    inputs: *const *const PpMetadataInput,
+    count: u64,
+) -> Result<Vec<MetadataValue>, Error> {
+    let count = input_count(count)?;
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if inputs.is_null() {
+        return Err(invalid_argument(
+            "items must not be null when count is nonzero",
+        ));
+    }
+    // SAFETY: The caller guarantees `count` readable contiguous pointers.
+    unsafe { std::slice::from_raw_parts(inputs, count) }
+        .iter()
+        .map(|input| {
+            // SAFETY: Each array element must be a live borrowed input handle.
+            unsafe { input.as_ref() }
+                .map(|input| input.value.clone())
+                .ok_or_else(|| invalid_argument("list item must not be null"))
+        })
+        .collect()
+}
+
+fn input_count(count: u64) -> Result<usize, Error> {
+    let count = usize::try_from(count).map_err(|_| invalid_argument("input count is too large"))?;
+    if count > MAX_METADATA_COLLECTION_ITEMS {
+        return Err(invalid_argument(format!(
+            "input count must not exceed {MAX_METADATA_COLLECTION_ITEMS}"
+        )));
+    }
+    Ok(count)
+}
+
 /// Releases an owned metadata input. Null is a no-op.
 ///
 /// # Safety
@@ -322,5 +426,60 @@ mod tests {
         assert!(!error.is_null());
         // SAFETY: The failed call returned one owned error.
         unsafe { pp_error_release(error) };
+    }
+
+    #[test]
+    fn collection_constructors_deep_copy_children() {
+        let mut child = ptr::null_mut();
+        let mut list = ptr::null_mut();
+        let mut structure = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        // SAFETY: Outputs are writable and remain live for each call.
+        assert_eq!(
+            unsafe { pp_metadata_input_create_i64(42, &raw mut child, &raw mut error) },
+            PP_OK
+        );
+        let children = [child.cast_const()];
+        // SAFETY: The pointer array and output remain live for the call.
+        assert_eq!(
+            unsafe {
+                pp_metadata_input_create_list(children.as_ptr(), 1, &raw mut list, &raw mut error)
+            },
+            PP_OK
+        );
+        let field_name = CString::new("numbers").expect("valid C string");
+        let names = [field_name.as_ptr()];
+        let values = [list.cast_const()];
+        // SAFETY: Both pointer arrays and the output remain live for the call.
+        assert_eq!(
+            unsafe {
+                pp_metadata_input_create_struct(
+                    names.as_ptr(),
+                    values.as_ptr(),
+                    1,
+                    &raw mut structure,
+                    &raw mut error,
+                )
+            },
+            PP_OK
+        );
+        // SAFETY: Children can be released because collection constructors copy.
+        unsafe {
+            pp_metadata_input_release(child);
+            pp_metadata_input_release(list);
+        }
+        // SAFETY: The successful call returned a live structure handle.
+        let fields = unsafe { structure.as_ref() }
+            .expect("structure")
+            .value
+            .as_structure()
+            .expect("structured value");
+        assert_eq!(fields[0].name().as_str(), "numbers");
+        assert_eq!(
+            fields[0].value().as_list().expect("list")[0].as_i64(),
+            Some(42)
+        );
+        // SAFETY: The remaining handle is released exactly once.
+        unsafe { pp_metadata_input_release(structure) };
     }
 }
