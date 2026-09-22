@@ -566,11 +566,23 @@ int main(int argc, char **argv) {
       "https://example.com/tools/ingest", "C operator", "com.example.agent",
       "operator-1", "primary", &activity_id, &error);
   pp_object_ref_t activity_ref = {PP_OBJECT_ACTIVITY, activity_id};
-  if (status != PP_OK || uuid_is_zero(&activity_id) ||
-      pp_transaction_add_metadata_text(
-          transaction, &activity_ref, "com.example.ingest", "preset",
-          "camera-master", NULL, &error) != PP_OK ||
-      pp_transaction_commit(transaction, &error) != PP_OK) {
+  if (status != PP_OK || uuid_is_zero(&activity_id)) {
+    pp_transaction_release(transaction);
+    pp_resolution_set_release(resolutions);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 30;
+  }
+  pp_metadata_input_t *rate_input = NULL;
+  status = pp_metadata_input_create_rational(INT64_C(24000), UINT64_C(1001),
+                                             &rate_input, &error);
+  if (status == PP_OK) {
+    status = pp_transaction_add_metadata_value(
+        transaction, &activity_ref, "com.example.ingest", "rate", rate_input,
+        &error);
+  }
+  pp_metadata_input_release(rate_input);
+  if (status != PP_OK || pp_transaction_commit(transaction, &error) != PP_OK) {
     pp_transaction_release(transaction);
     pp_resolution_set_release(resolutions);
     pp_production_release(production);
@@ -579,6 +591,27 @@ int main(int argc, char **argv) {
   }
   pp_transaction_release(transaction);
   transaction = NULL;
+
+  metadata = NULL;
+  status = pp_production_metadata(production, &activity_ref, &metadata, &error);
+  int64_t rate_numerator = 0;
+  uint64_t rate_denominator = 0;
+  if (status != PP_OK || metadata == NULL ||
+      pp_metadata_set_count(metadata) != UINT64_C(1) ||
+      pp_metadata_set_get(metadata, 0, &metadata_target, &vocabulary, &property,
+                          &metadata_value, &error) != PP_OK ||
+      strcmp(vocabulary, "com.example.ingest") != 0 ||
+      strcmp(property, "rate") != 0 ||
+      pp_metadata_value_get_rational(metadata_value, &rate_numerator,
+                                     &rate_denominator, &error) != PP_OK ||
+      rate_numerator != INT64_C(24000) || rate_denominator != UINT64_C(1001)) {
+    pp_metadata_set_release(metadata);
+    pp_resolution_set_release(resolutions);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 30;
+  }
+  pp_metadata_set_release(metadata);
 
   pp_activity_set_t *activities = NULL;
   status = pp_production_activities(production, &activities, &error);
