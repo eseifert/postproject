@@ -40,8 +40,9 @@ Open the production again when reads should use a separate native handle during
 a commit.
 
 The current high-level surface covers production lifecycle, transactions,
-original-media import, revision context, asset existence, and the paginated
-revision feed with typed semantic events. External identifiers can be added,
+original-media import, revision context, iterable asset summaries with identity
+membership checks, and the paginated revision feed with typed semantic events.
+External identifiers can be added,
 removed, enumerated, and found by exact scheme and value. Metadata reads and
 writes preserve every typed value kind; scalar, repeated, structured, and
 reference values use `transaction.add_metadata()`. Provenance activities can be
