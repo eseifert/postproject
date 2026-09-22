@@ -6,7 +6,7 @@ import ctypes
 import os
 import weakref
 from _ctypes import _Pointer
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -18,6 +18,7 @@ from ._abi import (
 )
 from ._abi import (
     ActivitySet,
+    AssetSet,
     Error,
     ExternalIdentifierSet,
     MetadataSet,
@@ -55,6 +56,7 @@ from ._model import (
     ActivityOutputAddedEvent,
     ActivitySpec,
     AgentIdentity,
+    Asset,
     AssetId,
     AssetImportedEvent,
     AvailabilityIssue,
@@ -130,6 +132,12 @@ class _Assets:
         if not isinstance(asset_id, AssetId):
             return False
         return self._production._contains_asset(asset_id)
+
+    def __iter__(self) -> Iterator[Asset]:
+        return iter(self._production._assets())
+
+    def __len__(self) -> int:
+        return len(self._production._assets())
 
 
 class _ActivitiesByRepresentation:
@@ -324,7 +332,7 @@ class Production:
 
     @property
     def assets(self) -> _Assets:
-        """Return an asset collection supporting ``asset_id in production.assets``."""
+        """Return an iterable asset collection with identity membership checks."""
 
         self._require_open()
         return _Assets(self)
@@ -437,6 +445,24 @@ class Production:
         )
         self._native.check(status, error)
         return bool(exists.value)
+
+    def _assets(self) -> tuple[Asset, ...]:
+        self._require_open()
+        handle = ctypes.POINTER(AssetSet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_assets(
+            self._handle, ctypes.byref(handle), ctypes.byref(error)
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native asset query returned no result set")
+        try:
+            count = self._native.lib.pp_asset_set_count(handle)
+            return tuple(
+                _asset_at(self._native, handle, index) for index in range(int(count))
+            )
+        finally:
+            self._native.lib.pp_asset_set_release(handle)
 
     def _representations(self, asset_id: AssetId) -> tuple[Representation, ...]:
         self._require_open()
@@ -1189,6 +1215,30 @@ def _native_representation_kind(value: RepresentationKind) -> int:
         RepresentationKind.OPTIMIZED: _abi.PP_REPRESENTATION_OPTIMIZED,
         RepresentationKind.DERIVED: _abi.PP_REPRESENTATION_DERIVED,
     }[value]
+
+
+def _asset_at(native: NativeLibrary, assets: _Pointer[AssetSet], index: int) -> Asset:
+    asset_id = Uuid()
+    created_at = ctypes.c_int64()
+    display_name = ctypes.c_char_p()
+    import_source = ctypes.c_char_p()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_asset_set_get(
+        assets,
+        index,
+        ctypes.byref(asset_id),
+        ctypes.byref(created_at),
+        ctypes.byref(display_name),
+        ctypes.byref(import_source),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return Asset(
+        AssetId(_uuid(asset_id)),
+        int(created_at.value),
+        _decode_optional(display_name.value),
+        _decode_optional(import_source.value),
+    )
 
 
 def _create_metadata_input(
