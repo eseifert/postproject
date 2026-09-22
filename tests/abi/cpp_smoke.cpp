@@ -50,8 +50,8 @@ int main(int argc, char **argv) {
     const postproject::ExternalIdentifier external_id{
         "com.example.asset", "asset-42", std::string("primary")};
     transaction.addExternalIdentifier(asset_ref, external_id);
-    static_cast<void>(transaction.addMediaRoot(
-        std::filesystem::path(path).parent_path().string(), "fixtures"));
+    const auto root_id = transaction.addMediaRoot(
+        std::filesystem::path(path).parent_path().string(), "fixtures");
     transaction.commit();
     const auto latest_revision = production.latestRevision();
     const auto revision_page = production.changesSince(0, 1);
@@ -88,6 +88,12 @@ int main(int argc, char **argv) {
         assets[0].display_name != std::string("C++ asset") ||
         assets[0].import_source.has_value()) {
       return 24;
+    }
+    const auto roots = production.mediaRoots();
+    if (roots.size() != 1 || roots[0].id != root_id ||
+        roots[0].label != std::string("fixtures") || roots[0].priority != 0 ||
+        !roots[0].enabled) {
+      return 25;
     }
     const auto representations = production.representations(asset_id);
     if (representations.size() != 1 ||
@@ -209,7 +215,20 @@ int main(int argc, char **argv) {
     confirmation.confirmLocator(
         resolutions[0].resources[0].resource_id,
         resolutions[0].resources[0].candidates[0].uri);
+    confirmation.setMediaRootEnabled(root_id, false);
+    confirmation.retireLocator(
+        representations[0].resources[0].locators[0].id);
     confirmation.commit();
+    const auto disabled_roots = production.mediaRoots();
+    if (disabled_roots.size() != 1 || disabled_roots[0].enabled) {
+      return 26;
+    }
+    auto root_removal = production.beginTransaction();
+    root_removal.removeMediaRoot(root_id);
+    root_removal.commit();
+    if (!production.mediaRoots().empty()) {
+      return 27;
+    }
 
     auto moved = std::move(production);
     if (production || !moved) {
