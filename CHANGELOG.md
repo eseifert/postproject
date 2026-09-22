@@ -50,6 +50,10 @@ All notable changes to PostProject will be documented here. The project uses
 
 ### Added
 
+- A tag-triggered GitHub release workflow publishing checksummed source,
+  Linux, macOS, and Windows native archives plus a tested Python wheel.
+- Installed, cross-platform-tested C, C++, and Python quickstarts with a small
+  deterministic media fixture.
 - An mdBook documentation foundation split across application-user,
   integrator, contributor, concept, and reference sections.
 - Architecture decisions for naming, identity, metadata, provenance, rational
