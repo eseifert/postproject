@@ -218,6 +218,28 @@ jobs:
           if [[ -n "$RUNTIME_LIBRARY" ]]; then
             test -f "target/install/bin/$RUNTIME_LIBRARY"
           fi
+      - name: Configure installed C quickstart
+        shell: bash
+        run: >-
+          cmake -S target/install/share/doc/postproject/examples/c
+          -B target/c-quickstart
+          -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/target/install"
+          -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build target/c-quickstart --config Release --parallel
+      - run: >-
+          ctest --test-dir target/c-quickstart --build-config Release
+          --output-on-failure
+      - name: Configure installed C++ quickstart
+        shell: bash
+        run: >-
+          cmake -S target/install/share/doc/postproject/examples/cpp
+          -B target/cpp-quickstart
+          -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/target/install"
+          -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build target/cpp-quickstart --config Release --parallel
+      - run: >-
+          ctest --test-dir target/cpp-quickstart --build-config Release
+          --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: postproject-${{ matrix.artifact }}
