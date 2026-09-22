@@ -29,6 +29,9 @@ from postproject import (
     InvalidArgumentError,
     LocatorAddedEvent,
     LocatorAvailability,
+    LocatorRetiredEvent,
+    MediaRootEnabledChangedEvent,
+    MediaRootRemovedEvent,
     MetadataAddedOrReplacedEvent,
     MetadataAssertion,
     MetadataBool,
@@ -147,6 +150,50 @@ class ProductionTests(unittest.TestCase):
         self.assertEqual(len(resource.locators), 1)
         self.assertEqual(resource.locators[0].availability, LocatorAvailability.ONLINE)
         self.assertIsNotNone(resource.locators[0].last_seen_unix_micros)
+
+    def test_media_roots_and_locators_have_a_complete_lifecycle(self) -> None:
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+                root_id = transaction.add_media_root(self.root, "Media", 4)
+
+            roots = production.media_roots
+            self.assertEqual(len(roots), 1)
+            self.assertEqual(roots[0].id, root_id)
+            self.assertEqual(roots[0].label, "Media")
+            self.assertEqual(roots[0].priority, 4)
+            self.assertTrue(roots[0].enabled)
+            locator_id = (
+                production.representations[asset_id][0].resources[0].locators[0].id
+            )
+
+            with production.transaction() as transaction:
+                transaction.set_media_root_enabled(root_id, False)
+                transaction.retire_locator(locator_id)
+
+            self.assertFalse(production.media_roots[0].enabled)
+            self.assertEqual(
+                production.representations[asset_id][0].resources[0].locators, ()
+            )
+            revision = production.latest_revision
+            self.assertIsNotNone(revision)
+            assert revision is not None
+            events = production.revision_events[revision.id]
+            self.assertIsInstance(events[0].payload, MediaRootEnabledChangedEvent)
+            self.assertIsInstance(events[1].payload, LocatorRetiredEvent)
+
+            with production.transaction() as transaction:
+                transaction.remove_media_root(root_id)
+
+            self.assertEqual(production.media_roots, ())
+            revision = production.latest_revision
+            self.assertIsNotNone(revision)
+            assert revision is not None
+            events = production.revision_events[revision.id]
+            self.assertEqual(len(events), 1)
+            self.assertIsInstance(events[0].payload, MediaRootRemovedEvent)
 
     def test_additional_and_compound_representations_roundtrip(self) -> None:
         sequence_frame = self.root / "frame0001.exr"
