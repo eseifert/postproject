@@ -4,14 +4,14 @@ use std::{fs, path::Path};
 
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ExternalIdentifier,
-    FrameRange, IdentifierScheme, ImageSequencePattern, MetadataField, MetadataProperty,
+    FrameRange, IdentifierScheme, ImageSequencePattern, MediaRoot, MetadataField, MetadataProperty,
     MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, PropertyId, RationalRate,
     RepresentationAvailability, RepresentationImport, RepresentationResolution, Resource,
     ResourceRole, RevisionContext, RevisionEventKind, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, prepare_image_sequence_representation,
-    prepare_ordered_parts_representation, prepare_original_media,
+    prepare_media_root, prepare_ordered_parts_representation, prepare_original_media,
     prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
@@ -22,6 +22,7 @@ struct Fixture {
     ordered: RepresentationImport,
     proxy: RepresentationImport,
     activity: Activity,
+    media_root: MediaRoot,
 }
 
 fn iptc_property(name: &str) -> MetadataProperty {
@@ -87,6 +88,8 @@ fn prepare_fixture(root: &Path) -> Fixture {
         Some("camera ingest".to_owned()),
     )
     .expect("prepare original");
+    let media_root = prepare_media_root(&original_directory, Some("Originals".to_owned()), 0)
+        .expect("prepare original media root");
     let asset_id = original.asset().id();
     let original_id = original.representation().id();
 
@@ -161,6 +164,7 @@ fn prepare_fixture(root: &Path) -> Fixture {
         ordered,
         proxy,
         activity,
+        media_root,
     }
 }
 
@@ -183,6 +187,9 @@ fn persist_fixture(production_path: &Path, fixture: &Fixture) {
     transaction
         .import_original(&fixture.original)
         .expect("stage original");
+    transaction
+        .add_media_root(fixture.media_root.clone())
+        .expect("stage original media root");
     {
         transaction
             .add_representation(&fixture.sequence)
@@ -337,7 +344,7 @@ fn assert_revision_feed(production: &SqliteProduction, fixture: &Fixture) {
     let events = production
         .events_for_revision(changes[0].id())
         .expect("load workflow events");
-    assert_eq!(events.len(), 29);
+    assert_eq!(events.len(), 30);
     assert!(events.iter().any(|event| matches!(
         event.kind(),
         RevisionEventKind::ActivityCreated { activity_id, .. }
