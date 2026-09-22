@@ -163,6 +163,18 @@ int main(int argc, char **argv) {
           std::string("org.postproject:output.master")}}};
     auto provenance = production.beginTransaction();
     const auto activity_id = provenance.createActivity(activity_spec);
+    std::vector<postproject::MetadataInput> metadata_items;
+    metadata_items.push_back(postproject::MetadataInput::rational(24000, 1001));
+    metadata_items.push_back(
+        postproject::MetadataInput::languageString("Interview", "en-US"));
+    std::vector<postproject::MetadataFieldInput> metadata_fields;
+    metadata_fields.push_back(
+        {"values", postproject::MetadataInput::list(metadata_items)});
+    const auto metadata =
+        postproject::MetadataInput::structure(metadata_fields);
+    provenance.addMetadataValue(
+        {postproject::ObjectKind::activity, activity_id},
+        "com.example.ingest", "details", metadata);
     provenance.commit();
 
     const auto activities = production.activities();
