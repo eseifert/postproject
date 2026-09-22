@@ -795,6 +795,26 @@ fn stored_event(event: &RevisionEventKind) -> Result<StoredEvent<'_>> {
             stored.kind = 6;
             stored.primary_id = Some(media_root_id.into_bytes().to_vec());
         }
+        RevisionEventKind::LocatorRetired {
+            resource_id,
+            locator_id,
+        } => {
+            stored.kind = 14;
+            stored.primary_id = Some(locator_id.into_bytes().to_vec());
+            stored.secondary_id = Some(resource_id.into_bytes().to_vec());
+        }
+        RevisionEventKind::MediaRootEnabledChanged {
+            media_root_id,
+            enabled,
+        } => {
+            stored.kind = 15;
+            stored.primary_id = Some(media_root_id.into_bytes().to_vec());
+            stored.structural_position = Some(i64::from(*enabled));
+        }
+        RevisionEventKind::MediaRootRemoved { media_root_id } => {
+            stored.kind = 16;
+            stored.primary_id = Some(media_root_id.into_bytes().to_vec());
+        }
         RevisionEventKind::ExternalIdentifierAdded { target, identifier }
         | RevisionEventKind::ExternalIdentifierRemoved { target, identifier } => {
             stored.kind = i64::from(matches!(

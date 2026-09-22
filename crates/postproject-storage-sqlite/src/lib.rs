@@ -1551,6 +1551,29 @@ fn decode_revision_event(
         6 => RevisionEventKind::MediaRootAdded {
             media_root_id: MediaRootId::from_bytes(primary_id("media root")?),
         },
+        14 => RevisionEventKind::LocatorRetired {
+            resource_id: ResourceId::from_bytes(secondary_id("resource")?),
+            locator_id: LocatorId::from_bytes(primary_id("locator")?),
+        },
+        15 => RevisionEventKind::MediaRootEnabledChanged {
+            media_root_id: MediaRootId::from_bytes(primary_id("media root")?),
+            enabled: match required_stored(
+                stored.structural_position,
+                "revision event enabled state",
+            )? {
+                0 => false,
+                1 => true,
+                value => {
+                    return Err(Error::new(
+                        ErrorKind::Storage,
+                        format!("stored media-root enabled state {value} is invalid"),
+                    ));
+                }
+            },
+        },
+        16 => RevisionEventKind::MediaRootRemoved {
+            media_root_id: MediaRootId::from_bytes(primary_id("media root")?),
+        },
         7 => RevisionEventKind::ExternalIdentifierAdded {
             target: target()?,
             identifier: identifier()?,

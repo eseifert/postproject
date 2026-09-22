@@ -129,9 +129,28 @@ pub enum RevisionEventKind {
         /// Added locator.
         locator_id: LocatorId,
     },
+    /// A superseded resource locator was retired.
+    LocatorRetired {
+        /// Resource that owned the retired locator.
+        resource_id: ResourceId,
+        /// Retired locator.
+        locator_id: LocatorId,
+    },
     /// A resolver media root was added.
     MediaRootAdded {
         /// Added media root.
+        media_root_id: MediaRootId,
+    },
+    /// A resolver media root was enabled or disabled.
+    MediaRootEnabledChanged {
+        /// Updated media root.
+        media_root_id: MediaRootId,
+        /// New resolver participation state.
+        enabled: bool,
+    },
+    /// A resolver media root was removed.
+    MediaRootRemoved {
+        /// Removed media root.
         media_root_id: MediaRootId,
     },
     /// An exact external identifier attachment was added.
