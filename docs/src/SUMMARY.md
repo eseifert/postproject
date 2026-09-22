@@ -34,6 +34,7 @@
 # For contributors
 
 - [Contributor guide](contributors/README.md)
+- [Content-structure invariants](contributors/content-structure-invariants.md)
 - [Standards policy](contributors/standards-policy.md)
 - [Metadata model](contributors/metadata-model.md)
 - [Provenance model](contributors/provenance-model.md)
