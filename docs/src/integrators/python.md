@@ -52,8 +52,11 @@ resource candidates, evidence, diagnostics, and missing-frame details.
 `production.representations[asset_id]` returns the
 stored structure, ordered membership, compact sequence descriptor, resources,
 locators, and distinct resource and representation fingerprints as immutable
-values. Media roots and explicit candidate confirmation are transactional
-through `add_media_root()` and `confirm_locator()`. Transactions can add
+values. `production.media_roots` lists immutable root summaries in resolver
+order. Root creation, enablement, removal, locator retirement, and explicit
+candidate confirmation are transactional through `add_media_root()`,
+`set_media_root_enabled()`, `remove_media_root()`, `retire_locator()`, and
+`confirm_locator()`. Transactions can add
 single-file, compact image-sequence, ordered-parts, and package representations
 to an existing asset. The generated low-level declaration table covers every
 function and struct in the current ABI.

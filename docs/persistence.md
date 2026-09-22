@@ -50,8 +50,9 @@ becoming part of the public contract.
 
 Media imports insert the asset, representation, content structure, resources,
 typed fingerprints, memberships, and initial locators inside one explicit
-deferred SQLite transaction. Media roots, metadata assertions, and
-external-identifier attachments/removals participate in the same transaction
-boundary. Commit and rollback close the transaction; repeated close attempts
-return a conflict. Dropping an open transaction uses SQLite rollback semantics,
-so partially staged changes never become visible.
+deferred SQLite transaction. Media-root creation, enablement and removal;
+locator retirement; metadata assertions; and external-identifier
+attachments/removals participate in the same transaction boundary. Commit and
+rollback close the transaction; repeated close attempts return a conflict.
+Dropping an open transaction uses SQLite rollback semantics, so partially staged
+changes never become visible.
