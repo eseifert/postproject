@@ -370,6 +370,17 @@ PP_API pp_error_code_t pp_metadata_input_create_bool(
 PP_API pp_error_code_t pp_metadata_input_create_timestamp(
     int64_t unix_micros, pp_metadata_input_t **out_input,
     pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_input_create_uri(
+    const char *uri, pp_metadata_input_t **out_input, pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_input_create_bytes(
+    const uint8_t *bytes, uint64_t length, pp_metadata_input_t **out_input,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_input_create_rational(
+    int64_t numerator, uint64_t denominator, pp_metadata_input_t **out_input,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_input_create_reference(
+    const pp_object_ref_t *target, pp_metadata_input_t **out_input,
+    pp_error_t **out_error);
 PP_API void pp_metadata_input_release(pp_metadata_input_t *input);
 /* Activity strings are borrowed until pp_activity_set_release(). Optional
  * timestamps use explicit presence flags and zero values when absent. */

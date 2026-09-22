@@ -2,11 +2,11 @@
 
 use std::ffi::c_char;
 
-use postproject_core::{DecimalValue, Error, MetadataValue, Timestamp};
+use postproject_core::{DecimalValue, Error, MetadataValue, RationalValue, Timestamp};
 
 use crate::{
-    PpError, ffi_call, initialize_output, invalid_argument, optional_utf8, require_output,
-    required_utf8,
+    PpError, PpObjectRef, ffi_call, initialize_output, invalid_argument, object_ref_from_abi,
+    optional_utf8, require_output, required_utf8,
 };
 
 /// Opaque owned metadata input handle.
@@ -152,6 +152,105 @@ pub unsafe extern "C" fn pp_metadata_input_create_timestamp(
             Ok(MetadataValue::timestamp(Timestamp::from_unix_micros(
                 unix_micros,
             )))
+        })
+    }
+}
+
+/// Creates an owned absolute-URI input.
+///
+/// # Safety
+///
+/// `uri` must be readable NUL-terminated UTF-8. Output pointers follow
+/// [`pp_metadata_input_create_i64`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_input_create_uri(
+    uri: *const c_char,
+    out_input: *mut *mut PpMetadataInput,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Pointer contracts are forwarded to the checked conversion helpers.
+    unsafe {
+        create_input(out_input, out_error, || {
+            MetadataValue::uri(required_utf8(uri, "uri")?)
+        })
+    }
+}
+
+/// Creates an owned byte-string input.
+///
+/// # Safety
+///
+/// `bytes` must address `length` readable bytes when `length` is nonzero.
+/// Output pointers follow [`pp_metadata_input_create_i64`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_input_create_bytes(
+    bytes: *const u8,
+    length: u64,
+    out_input: *mut *mut PpMetadataInput,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Pointer contracts are checked before constructing the borrowed slice.
+    unsafe {
+        create_input(out_input, out_error, || {
+            let length = usize::try_from(length)
+                .map_err(|_| invalid_argument("byte length is too large"))?;
+            let value = if length == 0 {
+                Vec::new()
+            } else {
+                if bytes.is_null() {
+                    return Err(invalid_argument(
+                        "bytes must not be null when length is nonzero",
+                    ));
+                }
+                std::slice::from_raw_parts(bytes, length).to_vec()
+            };
+            MetadataValue::bytes(value)
+        })
+    }
+}
+
+/// Creates an owned exact rational input.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_metadata_input_create_i64`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_input_create_rational(
+    numerator: i64,
+    denominator: u64,
+    out_input: *mut *mut PpMetadataInput,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The caller upholds the output-pointer contract.
+    unsafe {
+        create_input(out_input, out_error, || {
+            Ok(MetadataValue::rational(RationalValue::new(
+                numerator,
+                denominator,
+            )?))
+        })
+    }
+}
+
+/// Creates an owned object-reference input.
+///
+/// # Safety
+///
+/// `target` must be readable. Output pointers follow
+/// [`pp_metadata_input_create_i64`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_input_create_reference(
+    target: *const PpObjectRef,
+    out_input: *mut *mut PpMetadataInput,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The pointer is checked before it is read.
+    unsafe {
+        create_input(out_input, out_error, || {
+            let target = target
+                .as_ref()
+                .ok_or_else(|| invalid_argument("target must not be null"))?;
+            Ok(MetadataValue::reference(object_ref_from_abi(*target)?))
         })
     }
 }
