@@ -29,6 +29,9 @@ from ._abi import (
     Uuid,
 )
 from ._abi import (
+    MetadataInput as NativeMetadataInput,
+)
+from ._abi import (
     MetadataValue as NativeMetadataValue,
 )
 from ._abi import (
@@ -843,24 +846,26 @@ class Transaction:
         self,
         target: ObjectReference,
         property: MetadataProperty,
-        value: MetadataString | MetadataLanguageString,
+        value: MetadataValue,
     ) -> None:
-        """Stage one plain or language-qualified text assertion."""
+        """Stage one typed metadata assertion."""
 
         self._require_open()
         native_target = _native_object_reference(target)
-        language = value.language if isinstance(value, MetadataLanguageString) else None
-        error = ctypes.POINTER(Error)()
-        status = self._native.lib.pp_transaction_add_metadata_text(
-            self._handle,
-            ctypes.byref(native_target),
-            _utf8(property.vocabulary, "metadata vocabulary"),
-            _utf8(property.property, "metadata property"),
-            _utf8(value.value, "metadata text"),
-            None if language is None else _utf8(language, "metadata language"),
-            ctypes.byref(error),
-        )
-        self._native.check(status, error)
+        native_value = _metadata_input(self._native, value)
+        try:
+            error = ctypes.POINTER(Error)()
+            status = self._native.lib.pp_transaction_add_metadata_value(
+                self._handle,
+                ctypes.byref(native_target),
+                _utf8(property.vocabulary, "metadata vocabulary"),
+                _utf8(property.property, "metadata property"),
+                native_value,
+                ctypes.byref(error),
+            )
+            self._native.check(status, error)
+        finally:
+            self._native.lib.pp_metadata_input_release(native_value)
 
     def create_activity(self, spec: ActivitySpec) -> ActivityId:
         """Stage one complete provenance activity."""
@@ -1048,6 +1053,131 @@ def _native_object_reference(value: ObjectReference) -> _abi.ObjectRef:
         raise TypeError("unsupported object reference")
     native.id = _native_uuid(value.value)
     return native
+
+
+def _create_metadata_input(
+    native: NativeLibrary, function: Callable[..., int], *arguments: object
+) -> _Pointer[NativeMetadataInput]:
+    handle = ctypes.POINTER(NativeMetadataInput)()
+    error = ctypes.POINTER(Error)()
+    status = function(*arguments, ctypes.byref(handle), ctypes.byref(error))
+    native.check(status, error)
+    if not handle:
+        raise RuntimeError("native metadata input creation returned no handle")
+    return handle
+
+
+def _metadata_input(
+    native: NativeLibrary, value: MetadataValue
+) -> _Pointer[NativeMetadataInput]:
+    if isinstance(value, MetadataString):
+        return _create_metadata_input(
+            native,
+            native.lib.pp_metadata_input_create_string,
+            _utf8(value.value, "metadata text"),
+            None,
+        )
+    if isinstance(value, MetadataLanguageString):
+        return _create_metadata_input(
+            native,
+            native.lib.pp_metadata_input_create_string,
+            _utf8(value.value, "metadata text"),
+            _utf8(value.language, "metadata language"),
+        )
+    if isinstance(value, MetadataI64):
+        return _create_metadata_input(
+            native, native.lib.pp_metadata_input_create_i64, value.value
+        )
+    if isinstance(value, MetadataU64):
+        return _create_metadata_input(
+            native, native.lib.pp_metadata_input_create_u64, value.value
+        )
+    if isinstance(value, MetadataDecimal):
+        return _create_metadata_input(
+            native,
+            native.lib.pp_metadata_input_create_decimal,
+            _utf8(str(value.coefficient), "metadata decimal coefficient"),
+            value.scale,
+        )
+    if isinstance(value, MetadataBool):
+        return _create_metadata_input(
+            native, native.lib.pp_metadata_input_create_bool, int(value.value)
+        )
+    if isinstance(value, MetadataTimestamp):
+        return _create_metadata_input(
+            native,
+            native.lib.pp_metadata_input_create_timestamp,
+            value.unix_micros,
+        )
+    if isinstance(value, MetadataUri):
+        return _create_metadata_input(
+            native,
+            native.lib.pp_metadata_input_create_uri,
+            _utf8(value.value, "metadata URI"),
+        )
+    if isinstance(value, MetadataBytes):
+        buffer = (ctypes.c_uint8 * len(value.value)).from_buffer_copy(value.value)
+        return _create_metadata_input(
+            native,
+            native.lib.pp_metadata_input_create_bytes,
+            buffer,
+            len(value.value),
+        )
+    if isinstance(value, MetadataRational):
+        return _create_metadata_input(
+            native,
+            native.lib.pp_metadata_input_create_rational,
+            value.numerator,
+            value.denominator,
+        )
+    if isinstance(value, MetadataReference):
+        target = _native_object_reference(value.target)
+        return _create_metadata_input(
+            native,
+            native.lib.pp_metadata_input_create_reference,
+            ctypes.byref(target),
+        )
+    if isinstance(value, MetadataList):
+        children: list[_Pointer[NativeMetadataInput]] = []
+        try:
+            children.extend(_metadata_input(native, item) for item in value.values)
+            array_type = ctypes.POINTER(NativeMetadataInput) * len(children)
+            items = array_type(*children)
+            return _create_metadata_input(
+                native,
+                native.lib.pp_metadata_input_create_list,
+                items,
+                len(items),
+            )
+        finally:
+            for child in children:
+                native.lib.pp_metadata_input_release(child)
+    if isinstance(value, MetadataStruct):
+        children = []
+        try:
+            children.extend(
+                _metadata_input(native, field.value) for field in value.fields
+            )
+            names_type = ctypes.c_char_p * len(value.fields)
+            names = names_type(
+                *(
+                    _utf8(field.name, "metadata structure field name")
+                    for field in value.fields
+                )
+            )
+            values_type = ctypes.POINTER(NativeMetadataInput) * len(children)
+            values = values_type(*children)
+            return _create_metadata_input(
+                native,
+                native.lib.pp_metadata_input_create_struct,
+                names,
+                values,
+                len(values),
+            )
+        finally:
+            for child in children:
+                native.lib.pp_metadata_input_release(child)
+    raise TypeError("unsupported metadata value")
 
 
 def _external_identifier_at(
