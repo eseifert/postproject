@@ -37,6 +37,10 @@ class MetadataValue(ctypes.Structure):
     pass
 
 
+class MetadataInput(ctypes.Structure):
+    pass
+
+
 class ActivitySet(ctypes.Structure):
     pass
 
@@ -224,6 +228,19 @@ EXPORTED_SYMBOLS = (
     "pp_host_binding_format",
     "pp_host_binding_parse",
     "pp_host_binding_release",
+    "pp_metadata_input_create_bool",
+    "pp_metadata_input_create_bytes",
+    "pp_metadata_input_create_decimal",
+    "pp_metadata_input_create_i64",
+    "pp_metadata_input_create_list",
+    "pp_metadata_input_create_rational",
+    "pp_metadata_input_create_reference",
+    "pp_metadata_input_create_string",
+    "pp_metadata_input_create_struct",
+    "pp_metadata_input_create_timestamp",
+    "pp_metadata_input_create_u64",
+    "pp_metadata_input_create_uri",
+    "pp_metadata_input_release",
     "pp_metadata_set_count",
     "pp_metadata_set_get",
     "pp_metadata_set_release",
@@ -293,6 +310,7 @@ EXPORTED_SYMBOLS = (
     "pp_transaction_add_external_identifier",
     "pp_transaction_add_media_root",
     "pp_transaction_add_metadata_text",
+    "pp_transaction_add_metadata_value",
     "pp_transaction_commit",
     "pp_transaction_confirm_locator",
     "pp_transaction_create_activity",
@@ -402,6 +420,32 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_metadata_value_struct_get.restype = ErrorCode
     lib.pp_metadata_value_get_reference.argtypes = [ctypes.POINTER(MetadataValue), ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_metadata_value_get_reference.restype = ErrorCode
+    lib.pp_metadata_input_create_string.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_metadata_input_create_string.restype = ErrorCode
+    lib.pp_metadata_input_create_i64.argtypes = [ctypes.c_int64, ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_metadata_input_create_i64.restype = ErrorCode
+    lib.pp_metadata_input_create_u64.argtypes = [ctypes.c_uint64, ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_metadata_input_create_u64.restype = ErrorCode
+    lib.pp_metadata_input_create_decimal.argtypes = [ctypes.c_char_p, ctypes.c_uint32, ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_metadata_input_create_decimal.restype = ErrorCode
+    lib.pp_metadata_input_create_bool.argtypes = [ctypes.c_uint8, ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_metadata_input_create_bool.restype = ErrorCode
+    lib.pp_metadata_input_create_timestamp.argtypes = [ctypes.c_int64, ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_metadata_input_create_timestamp.restype = ErrorCode
+    lib.pp_metadata_input_create_uri.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_metadata_input_create_uri.restype = ErrorCode
+    lib.pp_metadata_input_create_bytes.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint64, ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_metadata_input_create_bytes.restype = ErrorCode
+    lib.pp_metadata_input_create_rational.argtypes = [ctypes.c_int64, ctypes.c_uint64, ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_metadata_input_create_rational.restype = ErrorCode
+    lib.pp_metadata_input_create_reference.argtypes = [ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_metadata_input_create_reference.restype = ErrorCode
+    lib.pp_metadata_input_create_list.argtypes = [ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.c_uint64, ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_metadata_input_create_list.restype = ErrorCode
+    lib.pp_metadata_input_create_struct.argtypes = [ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.c_uint64, ctypes.POINTER(ctypes.POINTER(MetadataInput)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_metadata_input_create_struct.restype = ErrorCode
+    lib.pp_metadata_input_release.argtypes = [ctypes.POINTER(MetadataInput)]
+    lib.pp_metadata_input_release.restype = None
     lib.pp_production_activities.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ctypes.POINTER(ActivitySet)), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_production_activities.restype = ErrorCode
     lib.pp_production_activities_producing.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ActivitySet)), ctypes.POINTER(ctypes.POINTER(Error))]
@@ -482,6 +526,8 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_transaction_remove_external_identifier.restype = ErrorCode
     lib.pp_transaction_add_metadata_text.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(ObjectRef), ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_add_metadata_text.restype = ErrorCode
+    lib.pp_transaction_add_metadata_value.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(ObjectRef), ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(MetadataInput), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_transaction_add_metadata_value.restype = ErrorCode
     lib.pp_transaction_remove_metadata_property.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(ObjectRef), ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_remove_metadata_property.restype = ErrorCode
     lib.pp_transaction_create_activity.argtypes = [ctypes.POINTER(Transaction), ctypes.c_char_p, ctypes.POINTER(ActivityEdge), ctypes.c_uint64, ctypes.POINTER(ActivityEdge), ctypes.c_uint64, ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.c_int64), ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
