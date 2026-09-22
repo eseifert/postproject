@@ -29,6 +29,8 @@ All notable changes to PostProject will be documented here. The project uses
   and structures, and removed the superseded text-only write function.
 - Added ABI version 12 creation of single-file, image-sequence, ordered-parts,
   and package representations, with matching C++, Python, and CLI surfaces.
+- Added ABI version 13 asset enumeration with immutable summaries in C, C++,
+  and Python.
 - Added a strict, versioned HTTPS host-object binding format under
   `postproject.org` for portable production-scoped references.
 - Added an opt-in registry for UMID, ISAN, EIDR, and application identifier
