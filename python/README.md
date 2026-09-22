@@ -5,20 +5,29 @@ This package wraps the installed PostProject C ABI with standard-library
 an explicit library path when opening a production. Python 3.11 or newer is
 required.
 
+Tagged GitHub releases include a pure-Python wheel and separate native archives
+for Linux, macOS, and Windows. Install the wheel, unpack the matching native
+archive, and point `POSTPROJECT_LIBRARY` at its shared library. The wheel does
+not search loader paths or bundle a platform binary.
+
 The package is pre-1.0 and tracks the current PostProject ABI without backward
 compatibility guarantees.
 
 ```python
-from postproject import Production
+from pathlib import Path
+
+from postproject import OriginIdentity, Production
+
+media = Path(
+    "/opt/postproject/share/doc/postproject/examples/fixtures/sample-media.dat"
+)
 
 with Production.create("production.pproj", "Documentary") as production:
     with production.transaction(
-        origin="example.importer", message="Import camera original"
+        origin=OriginIdentity("com.example.importer"),
+        message="Import camera original",
     ) as transaction:
-        transaction.add_media_root("rushes", "Camera originals")
-        asset_id = transaction.import_media(
-            "rushes/A001.mov", display_name="Camera A"
-        )
+        asset_id = transaction.import_media(media, display_name="Camera A")
 
     assert asset_id in production.assets
 
