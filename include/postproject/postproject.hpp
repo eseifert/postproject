@@ -188,7 +188,21 @@ struct LocatorAddedEvent final {
   Uuid locator_id;
 };
 
+struct LocatorRetiredEvent final {
+  Uuid resource_id;
+  Uuid locator_id;
+};
+
 struct MediaRootAddedEvent final {
+  Uuid media_root_id;
+};
+
+struct MediaRootEnabledChangedEvent final {
+  Uuid media_root_id;
+  bool enabled;
+};
+
+struct MediaRootRemovedEvent final {
   Uuid media_root_id;
 };
 
@@ -234,7 +248,8 @@ struct ActivityOutputAddedEvent final {
 using RevisionEventPayload =
     std::variant<AssetImportedEvent, RepresentationAddedEvent,
                  ResourceAddedEvent, RepresentationResourceAddedEvent,
-                 LocatorAddedEvent, MediaRootAddedEvent,
+                 LocatorAddedEvent, LocatorRetiredEvent, MediaRootAddedEvent,
+                 MediaRootEnabledChangedEvent, MediaRootRemovedEvent,
                  ExternalIdentifierAddedEvent,
                  ExternalIdentifierRemovedEvent,
                  MetadataAddedOrReplacedEvent, MetadataRemovedEvent,
@@ -251,6 +266,14 @@ struct Asset final {
   std::int64_t created_at_unix_micros;
   std::optional<std::string> display_name;
   std::optional<std::string> import_source;
+};
+
+struct MediaRoot final {
+  Uuid id;
+  std::string uri;
+  std::optional<std::string> label;
+  std::int32_t priority;
+  bool enabled;
 };
 
 enum class RepresentationKind : std::uint32_t {
@@ -426,6 +449,15 @@ struct AssetSetDeleter final {
 };
 
 using AssetSetHandle = std::unique_ptr<pp_asset_set_t, AssetSetDeleter>;
+
+struct MediaRootSetDeleter final {
+  void operator()(pp_media_root_set_t *roots) const noexcept {
+    pp_media_root_set_release(roots);
+  }
+};
+
+using MediaRootSetHandle =
+    std::unique_ptr<pp_media_root_set_t, MediaRootSetDeleter>;
 
 struct ResolutionSetDeleter final {
   void operator()(pp_resolution_set_t *resolutions) const noexcept {
@@ -890,6 +922,17 @@ inline RevisionEvent revision_event(const pp_revision_event_set_t *events,
   case PP_REVISION_MEDIA_ROOT_ADDED:
     return {event.position,
             MediaRootAddedEvent{uuid(event.media_root_id)}};
+  case PP_REVISION_LOCATOR_RETIRED:
+    return {event.position,
+            LocatorRetiredEvent{uuid(event.resource_id),
+                                uuid(event.locator_id)}};
+  case PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED:
+    return {event.position,
+            MediaRootEnabledChangedEvent{uuid(event.media_root_id),
+                                         event.enabled != 0}};
+  case PP_REVISION_MEDIA_ROOT_REMOVED:
+    return {event.position,
+            MediaRootRemovedEvent{uuid(event.media_root_id)}};
   case PP_REVISION_EXTERNAL_IDENTIFIER_ADDED:
     return {event.position,
             ExternalIdentifierAddedEvent{
@@ -1287,12 +1330,36 @@ public:
     return add_media_root_impl(path, native_label.c_str(), priority);
   }
 
+  void setMediaRootEnabled(const Uuid &root_id, bool enabled) {
+    const pp_uuid_t id = detail::native_uuid(root_id);
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_set_media_root_enabled(
+        transaction_, &id, enabled ? UINT8_C(1) : UINT8_C(0), &error);
+    detail::throw_if_error(status, error);
+  }
+
+  void removeMediaRoot(const Uuid &root_id) {
+    const pp_uuid_t id = detail::native_uuid(root_id);
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_transaction_remove_media_root(transaction_, &id, &error);
+    detail::throw_if_error(status, error);
+  }
+
   void confirmLocator(const Uuid &resource_id, std::string_view uri) {
     const pp_uuid_t id = detail::native_uuid(resource_id);
     const std::string native_uri = detail::checked_string(uri, "uri");
     pp_error_t *error = nullptr;
     const pp_error_code_t status = pp_transaction_confirm_locator(
         transaction_, &id, native_uri.c_str(), &error);
+    detail::throw_if_error(status, error);
+  }
+
+  void retireLocator(const Uuid &locator_id) {
+    const pp_uuid_t id = detail::native_uuid(locator_id);
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_transaction_retire_locator(transaction_, &id, &error);
     detail::throw_if_error(status, error);
   }
 
@@ -1627,6 +1694,40 @@ public:
            import_source != nullptr
                ? std::optional<std::string>(std::string(import_source))
                : std::nullopt});
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::vector<MediaRoot> mediaRoots() const {
+    pp_media_root_set_t *raw_roots = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_production_media_roots(production_, &raw_roots, &error);
+    detail::throw_if_error(status, error);
+    detail::MediaRootSetHandle roots(raw_roots);
+
+    std::vector<MediaRoot> result;
+    const std::uint64_t count = pp_media_root_set_count(roots.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      pp_uuid_t id{};
+      const char *uri = nullptr;
+      const char *label = nullptr;
+      std::int32_t priority = 0;
+      std::uint8_t enabled = 0;
+      pp_error_t *item_error = nullptr;
+      const pp_error_code_t item_status = pp_media_root_set_get(
+          roots.get(), index, &id, &uri, &label, &priority, &enabled,
+          &item_error);
+      detail::throw_if_error(item_status, item_error);
+      if (uri == nullptr) {
+        throw Error(ErrorCode::internal, "media root has no URI");
+      }
+      result.push_back(
+          {detail::uuid(id), std::string(uri),
+           label != nullptr ? std::optional<std::string>(std::string(label))
+                            : std::nullopt,
+           priority, enabled != 0});
     }
     return result;
   }
