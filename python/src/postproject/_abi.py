@@ -13,6 +13,10 @@ class Transaction(ctypes.Structure):
     pass
 
 
+class AssetSet(ctypes.Structure):
+    pass
+
+
 class RepresentationSet(ctypes.Structure):
     pass
 
@@ -230,6 +234,9 @@ EXPORTED_SYMBOLS = (
     "pp_activity_set_get_output",
     "pp_activity_set_get_tool",
     "pp_activity_set_release",
+    "pp_asset_set_count",
+    "pp_asset_set_get",
+    "pp_asset_set_release",
     "pp_error_code",
     "pp_error_message",
     "pp_error_release",
@@ -277,6 +284,7 @@ EXPORTED_SYMBOLS = (
     "pp_production_activities_consuming",
     "pp_production_activities_producing",
     "pp_production_asset_exists",
+    "pp_production_assets",
     "pp_production_begin_transaction",
     "pp_production_changes_since",
     "pp_production_create",
@@ -356,6 +364,14 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_production_id.restype = ErrorCode
     lib.pp_production_asset_exists.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_production_asset_exists.restype = ErrorCode
+    lib.pp_production_assets.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ctypes.POINTER(AssetSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_assets.restype = ErrorCode
+    lib.pp_asset_set_count.argtypes = [ctypes.POINTER(AssetSet)]
+    lib.pp_asset_set_count.restype = ctypes.c_uint64
+    lib.pp_asset_set_get.argtypes = [ctypes.POINTER(AssetSet), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_asset_set_get.restype = ErrorCode
+    lib.pp_asset_set_release.argtypes = [ctypes.POINTER(AssetSet)]
+    lib.pp_asset_set_release.restype = None
     lib.pp_production_representations.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(RepresentationSet)), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_production_representations.restype = ErrorCode
     lib.pp_representation_set_count.argtypes = [ctypes.POINTER(RepresentationSet)]

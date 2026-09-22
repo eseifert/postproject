@@ -26,7 +26,7 @@ use std::{
 
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
-    AssetId, AvailabilityIssue, AvailabilityIssueKind, Error, ErrorKind, EvidenceKind,
+    Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, Error, ErrorKind, EvidenceKind,
     ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern,
     Locator, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS, MAX_SEQUENCE_EXCEPTIONS, MediaRoot,
     MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId,
@@ -218,6 +218,37 @@ pub struct PpTransaction {
     lifecycle: TransactionLifecycle,
     revision_context: RevisionContext,
     mutations: Vec<StagedMutation>,
+}
+
+/// Opaque immutable asset result set owned by the C caller.
+pub struct PpAssetSet {
+    assets: Vec<AbiAsset>,
+}
+
+struct AbiAsset {
+    id: AssetId,
+    created_at_unix_micros: i64,
+    display_name: Option<CString>,
+    import_source: Option<CString>,
+}
+
+impl TryFrom<&Asset> for AbiAsset {
+    type Error = Error;
+
+    fn try_from(asset: &Asset) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: asset.id(),
+            created_at_unix_micros: asset.created_at().as_unix_micros(),
+            display_name: asset
+                .display_name()
+                .map(|value| exact_cstring(value, "asset display name"))
+                .transpose()?,
+            import_source: asset
+                .import_source()
+                .map(|value| exact_cstring(value, "asset import source"))
+                .transpose()?,
+        })
+    }
 }
 
 enum StagedMutation {
@@ -507,6 +538,129 @@ pub unsafe extern "C" fn pp_production_asset_exists(
             out_exists.write(u8::from(exists));
             Ok(())
         })
+    }
+}
+
+/// Returns every asset in deterministic storage order.
+///
+/// # Safety
+///
+/// `production` must be live, `out_assets` writable, and `out_error` null or
+/// writable. The returned set is caller-owned.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_assets(
+    production: *const PpProduction,
+    out_assets: *mut *mut PpAssetSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and pointers checked before use.
+    unsafe {
+        initialize_output(out_assets);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            if out_assets.is_null() {
+                return Err(invalid_argument("out_assets must not be null"));
+            }
+            let assets = lock_production(&production.state).assets()?;
+            let assets = assets
+                .iter()
+                .map(AbiAsset::try_from)
+                .collect::<Result<Vec<_>, Error>>()?;
+            out_assets.write(Box::into_raw(Box::new(PpAssetSet { assets })));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the number of assets in a result set. Null returns zero.
+///
+/// # Safety
+///
+/// A non-null pointer must be a live asset set returned by this library.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_asset_set_count(assets: *const PpAssetSet) -> u64 {
+    // SAFETY: A non-null pointer is guaranteed live by the caller.
+    unsafe {
+        assets
+            .as_ref()
+            .and_then(|assets| length_as_u64(assets.assets.len()).ok())
+            .unwrap_or(0)
+    }
+}
+
+/// Copies one asset summary and borrows its optional strings from the set.
+///
+/// # Safety
+///
+/// The set and every output pointer must be live. String outputs remain valid
+/// until the set is released; `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn pp_asset_set_get(
+    assets: *const PpAssetSet,
+    index: u64,
+    out_id: *mut PpUuid,
+    out_created_at_unix_micros: *mut i64,
+    out_display_name: *mut *const c_char,
+    out_import_source: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and validated before writes.
+    unsafe {
+        initialize_uuid(out_id);
+        initialize_value(out_created_at_unix_micros, 0);
+        initialize_const_output(out_display_name);
+        initialize_const_output(out_import_source);
+        ffi_call(out_error, || {
+            let assets = assets
+                .as_ref()
+                .ok_or_else(|| invalid_argument("assets must not be null"))?;
+            let asset = item_at(&assets.assets, index, "asset")?;
+            write_copy(
+                out_id,
+                PpUuid {
+                    bytes: asset.id.into_bytes(),
+                },
+                "out_id",
+            )?;
+            write_copy(
+                out_created_at_unix_micros,
+                asset.created_at_unix_micros,
+                "out_created_at_unix_micros",
+            )?;
+            write_copy(
+                out_display_name,
+                asset
+                    .display_name
+                    .as_ref()
+                    .map_or(ptr::null(), |value| value.as_ptr()),
+                "out_display_name",
+            )?;
+            write_copy(
+                out_import_source,
+                asset
+                    .import_source
+                    .as_ref()
+                    .map_or(ptr::null(), |value| value.as_ptr()),
+                "out_import_source",
+            )
+        })
+    }
+}
+
+/// Releases an asset result set. Null is accepted.
+///
+/// # Safety
+///
+/// A non-null pointer must be an owned asset set returned by this library and
+/// must not be used after this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_asset_set_release(assets: *mut PpAssetSet) {
+    if !assets.is_null() {
+        // SAFETY: Non-null pointers must originate from `pp_production_assets`.
+        unsafe { drop(Box::from_raw(assets)) };
     }
 }
 

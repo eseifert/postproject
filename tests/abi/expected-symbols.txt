@@ -6,6 +6,9 @@ pp_activity_set_get_input
 pp_activity_set_get_output
 pp_activity_set_get_tool
 pp_activity_set_release
+pp_asset_set_count
+pp_asset_set_get
+pp_asset_set_release
 pp_error_code
 pp_error_message
 pp_error_release
@@ -53,6 +56,7 @@ pp_production_activities
 pp_production_activities_consuming
 pp_production_activities_producing
 pp_production_asset_exists
+pp_production_assets
 pp_production_begin_transaction
 pp_production_changes_since
 pp_production_create
