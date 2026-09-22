@@ -31,6 +31,8 @@ All notable changes to PostProject will be documented here. The project uses
   and package representations, with matching C++, Python, and CLI surfaces.
 - Added ABI version 13 asset enumeration with immutable summaries in C, C++,
   and Python.
+- Added ABI version 14 media-root enumeration, root enable/disable/removal,
+  locator retirement, and their semantic revision events across C, C++, and Python.
 - Added a strict, versioned HTTPS host-object binding format under
   `postproject.org` for portable production-scoped references.
 - Added an opt-in registry for UMID, ISAN, EIDR, and application identifier

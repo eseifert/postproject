@@ -123,7 +123,7 @@ const PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED: u32 = 15;
 const PP_REVISION_MEDIA_ROOT_REMOVED: u32 = 16;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 13;
+pub const ABI_VERSION: u32 = 14;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
