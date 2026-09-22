@@ -10,8 +10,8 @@ the ambiguity instead of guessing; the application should show the choices and
 let you confirm one.
 
 Originals, proxies, optimized media, and generated results can all be separate
-representations of a logical asset. Future provenance records explain how a
-result was produced without claiming that the result is cryptographically
+representations of a logical asset. Provenance records explain which inputs and
+tool produced a result without claiming that the result is cryptographically
 trusted.
 
 A production file stores identity, representation structure, resource locators,
