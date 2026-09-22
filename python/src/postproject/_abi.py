@@ -1,4 +1,4 @@
-"""Generated from include/postproject/postproject.h; do not edit manually."""
+"""Generated from /tmp/postproject-header-before-collection.h; do not edit manually."""
 
 from __future__ import annotations
 
@@ -203,10 +203,10 @@ ActivityEdge._fields_ = [
 
 
 PUBLIC_STRUCTS = {
-    "pp_uuid_t": (Uuid, ("bytes",)), 
-    "pp_object_ref_t": (ObjectRef, ("kind", "id")), 
-    "pp_revision_event_t": (RevisionEvent, ("kind", "position", "asset_id", "representation_id", "resource_id", "locator_id", "media_root_id", "activity_id", "target", "structural_position", "identifier_scheme", "identifier_value", "identifier_qualifier", "vocabulary", "property", "activity_kind", "role")), 
-    "pp_activity_edge_t": (ActivityEdge, ("representation_id", "role")), 
+    "pp_uuid_t": (Uuid, ("bytes",)),
+    "pp_object_ref_t": (ObjectRef, ("kind", "id")),
+    "pp_revision_event_t": (RevisionEvent, ("kind", "position", "asset_id", "representation_id", "resource_id", "locator_id", "media_root_id", "activity_id", "target", "structural_position", "identifier_scheme", "identifier_value", "identifier_qualifier", "vocabulary", "property", "activity_kind", "role")),
+    "pp_activity_edge_t": (ActivityEdge, ("representation_id", "role")),
 }
 
 

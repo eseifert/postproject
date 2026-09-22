@@ -269,7 +269,7 @@ def render_python(header: Header, source: str) -> str:
         if len(struct.fields) == 1:
             field_names += ","
         lines.append(
-            f'    "{struct.alias}": ({_python_name(struct.alias)}, ({field_names})), '
+            f'    "{struct.alias}": ({_python_name(struct.alias)}, ({field_names})),'
         )
     lines.extend(
         [
