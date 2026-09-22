@@ -83,8 +83,9 @@ matching = production.metadata_by_property[title]
 
 The decoder preserves all current ABI value kinds, including exact decimals
 and rationals, bytes, ordered lists and structures, and typed object references.
-The current mutation ABI accepts plain and language-tagged strings; broader
-typed C and Python writes remain outstanding.
+The same typed values can be written through C, C++, Python, and the CLI;
+recursive input handles copy their children, so callers can release intermediate
+list and structure values immediately after construction.
 
 ## Optional Rust registry
 

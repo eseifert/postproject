@@ -42,15 +42,17 @@ a commit.
 The current high-level surface covers production lifecycle, transactions,
 original-media import, revision context, asset existence, and the paginated
 revision feed with typed semantic events. External identifiers can be added,
-removed, enumerated, and found by exact scheme and value. Metadata reads preserve
-all typed value kinds; plain and language-tagged text can be written through a
-transaction. Provenance activities can be created and queried through immutable
-value objects and keyed graph views. `production.resolutions[asset_id]` returns
-typed representation availability, resource candidates, evidence, diagnostics,
-and missing-frame details. `production.representations[asset_id]` returns the
+removed, enumerated, and found by exact scheme and value. Metadata reads and
+writes preserve every typed value kind; scalar, repeated, structured, and
+reference values use `transaction.add_metadata()`. Provenance activities can be
+created and queried through immutable value objects and keyed graph views.
+`production.resolutions[asset_id]` returns typed representation availability,
+resource candidates, evidence, diagnostics, and missing-frame details.
+`production.representations[asset_id]` returns the
 stored structure, ordered membership, compact sequence descriptor, resources,
 locators, and distinct resource and representation fingerprints as immutable
 values. Media roots and explicit candidate confirmation are transactional
-through `add_media_root()` and `confirm_locator()`. Compound-media mutation
-wrappers remain under development. The generated low-level declaration table
-already covers every function and struct in the current ABI.
+through `add_media_root()` and `confirm_locator()`. Transactions can add
+single-file, compact image-sequence, ordered-parts, and package representations
+to an existing asset. The generated low-level declaration table covers every
+function and struct in the current ABI.
