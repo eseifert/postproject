@@ -73,8 +73,12 @@ fn one_asset_round_trips_compound_media_and_proxy_provenance() {
 }
 
 fn prepare_fixture(root: &Path) -> Fixture {
-    let source_path = root.join("source.mov");
-    let proxy_path = root.join("proxy.mp4");
+    let original_directory = root.join("originals");
+    let proxy_directory = root.join("proxies");
+    fs::create_dir(&original_directory).expect("create original directory");
+    fs::create_dir(&proxy_directory).expect("create proxy directory");
+    let source_path = original_directory.join("source.mov");
+    let proxy_path = proxy_directory.join("proxy.mp4");
     fs::write(&source_path, b"camera original").expect("write original");
     fs::write(&proxy_path, b"editorial proxy").expect("write proxy");
     let original = prepare_original_media(
@@ -108,7 +112,12 @@ fn prepare_fixture(root: &Path) -> Fixture {
     )
     .expect("prepare sequence");
 
-    let part_paths = [root.join("span-1.mxf"), root.join("span-2.mxf")];
+    let span_directory = root.join("spans");
+    fs::create_dir(&span_directory).expect("create span directory");
+    let part_paths = [
+        span_directory.join("span-1.mxf"),
+        span_directory.join("span-2.mxf"),
+    ];
     fs::write(&part_paths[0], b"span one").expect("write first span");
     fs::write(&part_paths[1], b"span two").expect("write second span");
     let part_role = ResourceRole::new("org.postproject:essence-part").expect("valid role");
