@@ -997,15 +997,17 @@ public:
   [[nodiscard]] static MetadataInput signedInteger(std::int64_t value) {
     pp_metadata_input_t *input = nullptr;
     pp_error_t *error = nullptr;
-    return checked(pp_metadata_input_create_i64(value, &input, &error), input,
-                   error);
+    const pp_error_code_t status =
+        pp_metadata_input_create_i64(value, &input, &error);
+    return checked(status, input, error);
   }
 
   [[nodiscard]] static MetadataInput unsignedInteger(std::uint64_t value) {
     pp_metadata_input_t *input = nullptr;
     pp_error_t *error = nullptr;
-    return checked(pp_metadata_input_create_u64(value, &input, &error), input,
-                   error);
+    const pp_error_code_t status =
+        pp_metadata_input_create_u64(value, &input, &error);
+    return checked(status, input, error);
   }
 
   [[nodiscard]] static MetadataInput decimal(std::string_view coefficient,
@@ -1014,61 +1016,61 @@ public:
         detail::checked_string(coefficient, "decimal coefficient");
     pp_metadata_input_t *input = nullptr;
     pp_error_t *error = nullptr;
-    return checked(pp_metadata_input_create_decimal(
-                       native.c_str(), scale, &input, &error),
-                   input, error);
+    const pp_error_code_t status = pp_metadata_input_create_decimal(
+        native.c_str(), scale, &input, &error);
+    return checked(status, input, error);
   }
 
   [[nodiscard]] static MetadataInput boolean(bool value) {
     pp_metadata_input_t *input = nullptr;
     pp_error_t *error = nullptr;
-    return checked(pp_metadata_input_create_bool(value ? 1 : 0, &input, &error),
-                   input, error);
+    const pp_error_code_t status =
+        pp_metadata_input_create_bool(value ? 1 : 0, &input, &error);
+    return checked(status, input, error);
   }
 
   [[nodiscard]] static MetadataInput timestamp(std::int64_t unix_micros) {
     pp_metadata_input_t *input = nullptr;
     pp_error_t *error = nullptr;
-    return checked(pp_metadata_input_create_timestamp(unix_micros, &input,
-                                                      &error),
-                   input, error);
+    const pp_error_code_t status =
+        pp_metadata_input_create_timestamp(unix_micros, &input, &error);
+    return checked(status, input, error);
   }
 
   [[nodiscard]] static MetadataInput uri(std::string_view value) {
     const std::string native = detail::checked_string(value, "metadata URI");
     pp_metadata_input_t *input = nullptr;
     pp_error_t *error = nullptr;
-    return checked(
-        pp_metadata_input_create_uri(native.c_str(), &input, &error), input,
-        error);
+    const pp_error_code_t status =
+        pp_metadata_input_create_uri(native.c_str(), &input, &error);
+    return checked(status, input, error);
   }
 
   [[nodiscard]] static MetadataInput
   bytes(const std::vector<std::uint8_t> &value) {
     pp_metadata_input_t *input = nullptr;
     pp_error_t *error = nullptr;
-    return checked(pp_metadata_input_create_bytes(
-                       value.data(), static_cast<std::uint64_t>(value.size()),
-                       &input, &error),
-                   input, error);
+    const pp_error_code_t status = pp_metadata_input_create_bytes(
+        value.data(), static_cast<std::uint64_t>(value.size()), &input, &error);
+    return checked(status, input, error);
   }
 
   [[nodiscard]] static MetadataInput rational(std::int64_t numerator,
                                               std::uint64_t denominator) {
     pp_metadata_input_t *input = nullptr;
     pp_error_t *error = nullptr;
-    return checked(pp_metadata_input_create_rational(
-                       numerator, denominator, &input, &error),
-                   input, error);
+    const pp_error_code_t status = pp_metadata_input_create_rational(
+        numerator, denominator, &input, &error);
+    return checked(status, input, error);
   }
 
   [[nodiscard]] static MetadataInput reference(const ObjectRef &target) {
     const pp_object_ref_t native = detail::native_object_ref(target);
     pp_metadata_input_t *input = nullptr;
     pp_error_t *error = nullptr;
-    return checked(
-        pp_metadata_input_create_reference(&native, &input, &error), input,
-        error);
+    const pp_error_code_t status =
+        pp_metadata_input_create_reference(&native, &input, &error);
+    return checked(status, input, error);
   }
 
   [[nodiscard]] static MetadataInput
@@ -1122,11 +1124,10 @@ MetadataInput::list(const std::vector<MetadataInput> &items) {
   }
   pp_metadata_input_t *input = nullptr;
   pp_error_t *error = nullptr;
-  return checked(pp_metadata_input_create_list(
-                     native_items.data(),
-                     static_cast<std::uint64_t>(native_items.size()), &input,
-                     &error),
-                 input, error);
+  const pp_error_code_t status = pp_metadata_input_create_list(
+      native_items.data(), static_cast<std::uint64_t>(native_items.size()),
+      &input, &error);
+  return checked(status, input, error);
 }
 
 inline MetadataInput MetadataInput::structure(
@@ -1146,10 +1147,10 @@ inline MetadataInput MetadataInput::structure(
   }
   pp_metadata_input_t *input = nullptr;
   pp_error_t *error = nullptr;
-  return checked(pp_metadata_input_create_struct(
-                     name_pointers.data(), values.data(),
-                     static_cast<std::uint64_t>(fields.size()), &input, &error),
-                 input, error);
+  const pp_error_code_t status = pp_metadata_input_create_struct(
+      name_pointers.data(), values.data(),
+      static_cast<std::uint64_t>(fields.size()), &input, &error);
+  return checked(status, input, error);
 }
 
 // Move-only and caller-serialized. Do not call one Transaction concurrently.
