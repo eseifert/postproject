@@ -53,15 +53,21 @@ typed codecs preserve domain validation at the storage boundary.
   the same shared library without Cargo. The ABI declarations, exported-symbol
   allowlist, and C/Python public-struct layouts are generated or cross-checked
   from the public header.
+- The installed package ships runnable C, C++, and Python quickstarts plus an
+  opaque media fixture. Package CI builds and runs those installed copies on
+  Linux, macOS, and Windows.
 - CI runs Rust tests and native packages on Linux, macOS, and Windows. It also
   gates Rust 1.85, Python 3.11, Ruff, ty, rustfmt, Clippy, rustdoc, mdBook,
   offline link checking, spelling, dependency/license policy, sanitizers, fuzz
   target builds, migration fixtures, and installed native consumers.
 - The lifecycle and ABI 14 acceptance run is
   [GitHub Actions run 35724881302](https://github.com/eseifert/postproject/actions/runs/35724881302).
-- The end-to-end fixture persists an original, compound media, a derived proxy,
-  structured metadata, activity lineage, and semantic revisions, then reopens
-  and verifies the complete graph.
+- The end-to-end fixture persists an original, sequence, ordered spans, a
+  derived proxy, structured/repeated metadata, a UMID-shaped identifier, tool
+  provenance, and one semantic revision batch. It then moves the source and
+  compound-media directories, relinks them, removes one sequence frame, and
+  verifies online/partial availability, ordered structure, ancestry, metadata,
+  and both revision batches from cursor zero.
 
 ## Compatibility versions
 
