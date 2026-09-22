@@ -23,6 +23,7 @@
 - [Integrator guide](integrators/README.md)
   - [Host-object bindings](integrators/host-object-bindings.md)
 - [C quickstart](integrators/c-quickstart.md)
+- [C++ quickstart](integrators/cpp-quickstart.md)
 - [Python quickstart](integrators/python.md)
 - [Metadata vocabularies](integrators/metadata-vocabularies.md)
 - [Provenance integration](integrators/provenance.md)
