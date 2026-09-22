@@ -4,10 +4,10 @@ use std::{fs, path::Path};
 
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ExternalIdentifier,
-    FrameRange, IdentifierScheme, ImageSequencePattern, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, PropertyId, RationalRate, RepresentationAvailability,
-    RepresentationImport, RepresentationResolution, Resource, ResourceRole, ToolIdentity,
-    VocabularyId,
+    FrameRange, IdentifierScheme, ImageSequencePattern, MetadataField, MetadataProperty,
+    MetadataValue, ObjectRef, OriginalMediaImport, PropertyId, RationalRate,
+    RepresentationAvailability, RepresentationImport, RepresentationResolution, Resource,
+    ResourceRole, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, prepare_image_sequence_representation,
@@ -38,6 +38,27 @@ fn material_umid() -> ExternalIdentifier {
         Some("material".to_owned()),
     )
     .expect("valid UMID fixture")
+}
+
+fn ebucore_property(name: &str) -> MetadataProperty {
+    MetadataProperty::new(
+        VocabularyId::new("urn:ebu:metadata-schema:ebucore").expect("valid vocabulary"),
+        PropertyId::new(name).expect("valid property"),
+    )
+}
+
+fn technical_attributes() -> MetadataValue {
+    MetadataValue::structure(vec![
+        MetadataField::new(
+            PropertyId::new("formatLabel").expect("valid field"),
+            MetadataValue::string("camera original").expect("valid format label"),
+        ),
+        MetadataField::new(
+            PropertyId::new("bitDepth").expect("valid field"),
+            MetadataValue::u64(10),
+        ),
+    ])
+    .expect("valid technical metadata")
 }
 
 #[test]
@@ -172,6 +193,20 @@ fn persist_fixture(production_path: &Path, fixture: &Fixture) {
                 )
                 .expect("stage keyword");
         }
+        transaction
+            .add_metadata_value(
+                ObjectRef::Representation(fixture.original.representation().id()),
+                &ebucore_property("title"),
+                &MetadataValue::language_string("Camera A", "en").expect("valid title"),
+            )
+            .expect("stage representation title");
+        transaction
+            .add_metadata_value(
+                ObjectRef::Resource(fixture.original.resources()[0].id()),
+                &ebucore_property("technicalAttribute"),
+                &technical_attributes(),
+            )
+            .expect("stage resource metadata");
         transaction.commit().expect("commit additions");
     }
 }
@@ -183,7 +218,6 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture) {
     let sequence_id = fixture.sequence.representation().id();
     let ordered_id = fixture.ordered.representation().id();
     let proxy_id = fixture.proxy.representation().id();
-    let asset = ObjectRef::Asset(asset_id);
     let representations = reopened
         .representations(asset_id)
         .expect("load representations");
@@ -203,21 +237,7 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture) {
         fixture.activity.tool().expect("activity tool").version(),
         Some("8.0")
     );
-    assert_eq!(
-        reopened
-            .external_identifiers(asset)
-            .expect("load material identifier"),
-        [material_umid()]
-    );
-    assert_eq!(
-        reopened
-            .metadata_values(asset, &iptc_property("keywords"))
-            .expect("load keywords"),
-        [
-            MetadataValue::string("interview").expect("valid keyword"),
-            MetadataValue::string("night").expect("valid keyword"),
-        ]
-    );
+    assert_identifiers_and_metadata(&reopened, fixture);
 
     let stored_sequence = representations
         .iter()
@@ -263,5 +283,42 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture) {
             .iter()
             .map(Resource::id)
             .collect::<Vec<_>>()
+    );
+}
+
+fn assert_identifiers_and_metadata(production: &SqliteProduction, fixture: &Fixture) {
+    let asset = ObjectRef::Asset(fixture.original.asset().id());
+    assert_eq!(
+        production
+            .external_identifiers(asset)
+            .expect("load material identifier"),
+        [material_umid()]
+    );
+    assert_eq!(
+        production
+            .metadata_values(asset, &iptc_property("keywords"))
+            .expect("load keywords"),
+        [
+            MetadataValue::string("interview").expect("valid keyword"),
+            MetadataValue::string("night").expect("valid keyword"),
+        ]
+    );
+    assert_eq!(
+        production
+            .metadata_values(
+                ObjectRef::Representation(fixture.original.representation().id()),
+                &ebucore_property("title"),
+            )
+            .expect("load representation title"),
+        [MetadataValue::language_string("Camera A", "en").expect("valid title")]
+    );
+    assert_eq!(
+        production
+            .metadata_values(
+                ObjectRef::Resource(fixture.original.resources()[0].id()),
+                &ebucore_property("technicalAttribute"),
+            )
+            .expect("load resource metadata"),
+        [technical_attributes()]
     );
 }
