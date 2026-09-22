@@ -62,6 +62,17 @@ class MediaRootId(_TypedId):
     __slots__ = ()
 
 
+@dataclass(frozen=True, slots=True)
+class MediaRoot:
+    """Immutable configured resolver root."""
+
+    id: MediaRootId
+    uri: str
+    label: str | None
+    priority: int
+    enabled: bool
+
+
 class ActivityId(_TypedId):
     """Stable identity of one provenance activity."""
 
@@ -473,7 +484,24 @@ class LocatorAddedEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class LocatorRetiredEvent:
+    resource_id: ResourceId
+    locator_id: LocatorId
+
+
+@dataclass(frozen=True, slots=True)
 class MediaRootAddedEvent:
+    media_root_id: MediaRootId
+
+
+@dataclass(frozen=True, slots=True)
+class MediaRootEnabledChangedEvent:
+    media_root_id: MediaRootId
+    enabled: bool
+
+
+@dataclass(frozen=True, slots=True)
+class MediaRootRemovedEvent:
     media_root_id: MediaRootId
 
 
@@ -527,7 +555,10 @@ RevisionEventPayload: TypeAlias = (
     | ResourceAddedEvent
     | RepresentationResourceAddedEvent
     | LocatorAddedEvent
+    | LocatorRetiredEvent
     | MediaRootAddedEvent
+    | MediaRootEnabledChangedEvent
+    | MediaRootRemovedEvent
     | ExternalIdentifierAddedEvent
     | ExternalIdentifierRemovedEvent
     | MetadataAddedOrReplacedEvent
