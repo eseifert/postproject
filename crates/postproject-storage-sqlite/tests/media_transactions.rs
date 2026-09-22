@@ -2,7 +2,7 @@
 
 use std::fs;
 
-use postproject_core::{ErrorKind, TransactionState};
+use postproject_core::{ErrorKind, RevisionEventKind, TransactionState};
 use postproject_media::{prepare_media_root, prepare_original_media};
 use postproject_storage_sqlite::SqliteProduction;
 use tempfile::tempdir;
@@ -131,4 +131,93 @@ fn duplicate_media_root_is_explicit_and_can_be_rolled_back() {
     drop(transaction);
 
     assert!(production.production().media_roots().is_empty());
+}
+
+#[test]
+fn roots_and_locators_have_a_complete_lifecycle() {
+    let directory = tempdir().expect("create temporary directory");
+    let production_path = directory.path().join("production.pproj");
+    let media_path = directory.path().join("clip.mov");
+    fs::write(&media_path, b"fixture media bytes").expect("write fixture media");
+    let prepared =
+        prepare_original_media(&media_path, None, None).expect("prepare original import");
+    let resource_id = prepared.resources()[0].id();
+    let locator_id = prepared.locators()[0].id();
+    let root =
+        prepare_media_root(directory.path(), Some("Media".to_owned()), 4).expect("prepare root");
+    let root_id = root.id();
+    let mut production =
+        SqliteProduction::create(&production_path, None).expect("create production");
+
+    {
+        let mut transaction = production.begin_transaction().expect("begin import");
+        transaction
+            .import_original(&prepared)
+            .expect("stage original import");
+        transaction.add_media_root(root).expect("stage root");
+        transaction.commit().expect("commit import");
+    }
+    {
+        let mut transaction = production
+            .begin_transaction()
+            .expect("begin lifecycle change");
+        transaction
+            .set_media_root_enabled(root_id, false)
+            .expect("disable root");
+        transaction
+            .set_media_root_enabled(root_id, false)
+            .expect("repeat disabled state");
+        transaction
+            .retire_locator(locator_id)
+            .expect("retire locator");
+        transaction.commit().expect("commit lifecycle change");
+    }
+
+    assert!(!production.production().media_roots()[0].is_enabled());
+    assert!(
+        production
+            .locators(resource_id)
+            .expect("load locators")
+            .is_empty()
+    );
+    let revision = production
+        .latest_revision()
+        .expect("load revision")
+        .unwrap();
+    let events = production
+        .events_for_revision(revision.id())
+        .expect("load lifecycle events");
+    assert_eq!(events.len(), 2);
+    assert!(matches!(
+        events[0].kind(),
+        RevisionEventKind::MediaRootEnabledChanged { media_root_id, enabled: false }
+            if *media_root_id == root_id
+    ));
+    assert!(matches!(
+        events[1].kind(),
+        RevisionEventKind::LocatorRetired { resource_id: id, locator_id: retired }
+            if *id == resource_id && *retired == locator_id
+    ));
+
+    {
+        let mut transaction = production.begin_transaction().expect("begin root removal");
+        transaction.remove_media_root(root_id).expect("remove root");
+        transaction.commit().expect("commit root removal");
+    }
+    assert!(production.production().media_roots().is_empty());
+    drop(production);
+
+    let reopened = SqliteProduction::open(production_path).expect("reopen production");
+    assert!(reopened.production().media_roots().is_empty());
+    let revision = reopened.latest_revision().expect("load revision").unwrap();
+    let events = reopened
+        .events_for_revision(revision.id())
+        .expect("load root-removal event");
+    assert!(matches!(
+        events.as_slice(),
+        [event] if matches!(
+            event.kind(),
+            RevisionEventKind::MediaRootRemoved { media_root_id } if *media_root_id == root_id
+        )
+    ));
 }
