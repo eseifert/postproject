@@ -60,6 +60,10 @@ install(
     DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/postproject/examples/cpp"
 )
 install(
+    FILES examples/python/quickstart.py
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/postproject/examples/python"
+)
+install(
     FILES examples/fixtures/sample-media.dat
     DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/postproject/examples/fixtures"
 )

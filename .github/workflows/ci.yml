@@ -49,9 +49,9 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: python -m pip install --disable-pip-version-check -e "./python[dev]"
-      - run: ruff check python/src python/tests
-      - run: ruff format --check python/src python/tests
-      - run: ty check --project python python/src python/tests
+      - run: ruff check python/src python/tests examples/python
+      - run: ruff format --check python/src python/tests examples/python
+      - run: ty check --project python python/src python/tests examples/python
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo doc --workspace --all-features --no-deps --locked
@@ -240,6 +240,15 @@ jobs:
       - run: >-
           ctest --test-dir target/cpp-quickstart --build-config Release
           --output-on-failure
+      - name: Run installed Python quickstart
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/python/src
+          POSTPROJECT_LIBRARY: ${{ github.workspace }}/target/release/${{ matrix.python_library }}
+        run: >-
+          python target/install/share/doc/postproject/examples/python/quickstart.py
+          target/python-quickstart.pproj
+          target/install/share/doc/postproject/examples/fixtures/sample-media.dat
       - uses: actions/upload-artifact@v4
         with:
           name: postproject-${{ matrix.artifact }}
