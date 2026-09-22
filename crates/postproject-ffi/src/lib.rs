@@ -29,11 +29,11 @@ use postproject_core::{
     Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, Error, ErrorKind, EvidenceKind,
     ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern,
     Locator, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS, MAX_SEQUENCE_EXCEPTIONS, MediaRoot,
-    MediaRootId, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity,
-    OriginalMediaImport, ProductionId, PropertyId, RationalRate, RepresentationAvailability,
-    RepresentationId, RepresentationImport, RepresentationKind, RepresentationResolution,
-    ResolutionEvidence, ResourceId, ResourceResolutionState, ResourceRole, RevisionContext,
-    RevisionId, Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
+    MediaRootId, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport,
+    ProductionId, PropertyId, RationalRate, RepresentationAvailability, RepresentationId,
+    RepresentationImport, RepresentationKind, RepresentationResolution, ResolutionEvidence,
+    ResourceId, ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, Timestamp,
+    ToolIdentity, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, prepare_confirmed_locator,
@@ -3189,11 +3189,9 @@ pub unsafe extern "C" fn pp_transaction_retire_locator(
             let locator_id = locator_id
                 .as_ref()
                 .ok_or_else(|| invalid_argument("locator_id must not be null"))?;
-            transaction
-                .mutations
-                .push(StagedMutation::RetireLocator(
-                    postproject_core::LocatorId::from_bytes(locator_id.bytes),
-                ));
+            transaction.mutations.push(StagedMutation::RetireLocator(
+                postproject_core::LocatorId::from_bytes(locator_id.bytes),
+            ));
             Ok(())
         })
     }
