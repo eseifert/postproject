@@ -183,6 +183,26 @@ int main(int argc, char **argv) {
     pp_error_release(error);
     return 4;
   }
+  pp_asset_set_t *assets = NULL;
+  pp_uuid_t read_asset_id = {{0}};
+  int64_t asset_created_at = 0;
+  const char *asset_display_name = NULL;
+  const char *asset_import_source = NULL;
+  status = pp_production_assets(production, &assets, &error);
+  if (status != PP_OK || assets == NULL ||
+      pp_asset_set_count(assets) != UINT64_C(1) ||
+      pp_asset_set_get(assets, 0, &read_asset_id, &asset_created_at,
+                       &asset_display_name, &asset_import_source, &error) !=
+          PP_OK ||
+      memcmp(read_asset_id.bytes, asset_id.bytes, sizeof(asset_id.bytes)) != 0 ||
+      asset_created_at == 0 || asset_display_name == NULL ||
+      strcmp(asset_display_name, "C asset") != 0 || asset_import_source != NULL) {
+    pp_asset_set_release(assets);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 74;
+  }
+  pp_asset_set_release(assets);
   pp_revision_set_t *revisions = NULL;
   uint64_t revision_sequence = 0;
   int64_t revision_committed_at = 0;
