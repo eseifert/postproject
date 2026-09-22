@@ -10,7 +10,8 @@ use std::{fs, hint::black_box, path::PathBuf};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use postproject_core::{
     Asset, AssetId, ContentStructure, Locator, LocatorAvailability, LocatorId, OriginalMediaImport,
-    Representation, RepresentationId, RepresentationKind, Resource, ResourceId, Timestamp,
+    Representation, RepresentationFingerprint, RepresentationId, RepresentationKind, Resource,
+    ResourceFingerprint, ResourceId, Timestamp,
 };
 use postproject_media::{MediaResolver, prepare_media_root, prepare_original_media};
 use postproject_storage_sqlite::SqliteProduction;
@@ -22,7 +23,7 @@ const RESOLVER_ENTRY_COUNT: usize = 3_000;
 
 fn benchmarks(criterion: &mut Criterion) {
     benchmark_bulk_import(criterion);
-    benchmark_large_production_open(criterion);
+    benchmark_large_production_load(criterion);
     benchmark_resolver_scan(criterion);
     benchmark_transaction_commit(criterion);
 }
@@ -62,7 +63,7 @@ fn benchmark_bulk_import(criterion: &mut Criterion) {
     group.finish();
 }
 
-fn benchmark_large_production_open(criterion: &mut Criterion) {
+fn benchmark_large_production_load(criterion: &mut Criterion) {
     let directory = tempfile::tempdir().expect("create large-production fixture");
     let path = directory.path().join("large.pproj");
     let mut production = SqliteProduction::create(&path, None).expect("create large production");
@@ -80,10 +81,30 @@ fn benchmark_large_production_open(criterion: &mut Criterion) {
     drop(transaction);
     drop(production);
 
-    criterion.bench_function("production_open/10000_assets", |bencher| {
-        bencher
-            .iter(|| black_box(SqliteProduction::open(&path).expect("open benchmark production")));
-    });
+    criterion.bench_function(
+        "production_load/10000_assets_with_fingerprints",
+        |bencher| {
+            bencher.iter(|| {
+                let production = SqliteProduction::open(&path).expect("open benchmark production");
+                let assets = production.assets().expect("enumerate benchmark assets");
+                for asset in &assets {
+                    for representation in production
+                        .representations(asset.id())
+                        .expect("load benchmark representations")
+                    {
+                        black_box(representation.fingerprints());
+                        for resource in production
+                            .resources(representation.id())
+                            .expect("load benchmark resources")
+                        {
+                            black_box(resource.fingerprints());
+                        }
+                    }
+                }
+                black_box(assets);
+            });
+        },
+    );
 }
 
 fn benchmark_resolver_scan(criterion: &mut Criterion) {
@@ -97,7 +118,13 @@ fn benchmark_resolver_scan(criterion: &mut Criterion) {
     let root_path = directory.path().join("search-root");
     fs::create_dir(&root_path).expect("create resolver root");
     for index in 0..RESOLVER_ENTRY_COUNT {
-        fs::write(root_path.join(format!("decoy-{index:04}.mov")), [0_u8])
+        let mut decoy = vec![0_u8; matching_bytes.len()];
+        decoy[..8].copy_from_slice(
+            &u64::try_from(index)
+                .expect("resolver fixture index fits u64")
+                .to_le_bytes(),
+        );
+        fs::write(root_path.join(format!("decoy-{index:04}.mov")), decoy)
             .expect("write resolver decoy");
     }
     fs::write(root_path.join("relocated.mov"), matching_bytes).expect("write relocated media");
@@ -161,14 +188,32 @@ fn synthetic_import(index: usize) -> OriginalMediaImport {
         Some("benchmark".to_owned()),
     );
     let resource_id = ResourceId::new();
+    let fingerprint_value = u64::try_from(index)
+        .expect("benchmark index fits u64")
+        .to_le_bytes()
+        .to_vec();
     let representation = Representation::new(
         RepresentationId::new(),
         asset.id(),
         RepresentationKind::Original,
         ContentStructure::single_resource(resource_id),
-        Vec::new(),
+        vec![
+            RepresentationFingerprint::new(
+                "benchmark-representation",
+                1,
+                fingerprint_value.clone(),
+            )
+            .expect("construct benchmark representation fingerprint"),
+        ],
     );
-    let resource = Resource::new(resource_id, Vec::new(), None);
+    let resource = Resource::new(
+        resource_id,
+        vec![
+            ResourceFingerprint::new("benchmark-resource", 1, fingerprint_value)
+                .expect("construct benchmark resource fingerprint"),
+        ],
+        None,
+    );
     let locator = Locator::new(
         LocatorId::new(),
         resource_id,
