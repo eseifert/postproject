@@ -10,6 +10,7 @@ mod import;
 mod path;
 mod representation_fingerprint;
 mod resolver;
+mod sequence_fingerprint;
 
 pub use fingerprint::{
     FULL_FINGERPRINT_ALGORITHM, FULL_HASH_LIMIT_BYTES, FingerprintCoverage, FingerprintReport,
@@ -27,3 +28,7 @@ pub use representation_fingerprint::{
     fingerprint_representation,
 };
 pub use resolver::{MediaResolver, ResolverOptions};
+pub use sequence_fingerprint::{
+    SEQUENCE_FINGERPRINT_ALGORITHM, SEQUENCE_FINGERPRINT_VERSION, SequenceFingerprintReport,
+    fingerprint_image_sequence,
+};
