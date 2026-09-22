@@ -5,6 +5,7 @@
 //! shipped `postproject.h` rather than depending on Rust declarations.
 
 mod metadata;
+mod metadata_input;
 mod provenance;
 mod representations;
 mod revision_events;
@@ -39,6 +40,7 @@ use postproject_storage_sqlite::SqliteProduction;
 
 use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
+pub use metadata_input::PpMetadataInput;
 use provenance::AbiActivityEdge;
 pub use provenance::PpActivitySet;
 pub use representations::PpRepresentationSet;
@@ -2578,6 +2580,49 @@ pub unsafe extern "C" fn pp_transaction_add_metadata_text(
             transaction
                 .mutations
                 .push(StagedMutation::AddMetadataValue(target, property, value));
+            Ok(())
+        })
+    }
+}
+
+/// Stages one typed metadata assertion from an owned metadata input.
+///
+/// The input remains owned by the caller and may be released immediately after
+/// this call. The target is validated at commit.
+///
+/// # Safety
+///
+/// `transaction`, `target`, and `input` must be live; vocabulary/property must
+/// be borrowed NUL-terminated UTF-8; and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_add_metadata_value(
+    transaction: *mut PpTransaction,
+    target: *const PpObjectRef,
+    vocabulary: *const c_char,
+    property: *const c_char,
+    input: *const PpMetadataInput,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are checked before dereference and borrowed only this call.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let target = target
+                .as_ref()
+                .ok_or_else(|| invalid_argument("target must not be null"))?;
+            let input = input
+                .as_ref()
+                .ok_or_else(|| invalid_argument("input must not be null"))?;
+            let target = object_ref_from_abi(*target)?;
+            let property = metadata_property_from_abi(vocabulary, property)?;
+            transaction.mutations.push(StagedMutation::AddMetadataValue(
+                target,
+                property,
+                input.value.clone(),
+            ));
             Ok(())
         })
     }

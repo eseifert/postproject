@@ -27,6 +27,7 @@ typedef struct pp_external_identifier_set pp_external_identifier_set_t;
 typedef struct pp_object_ref_set pp_object_ref_set_t;
 typedef struct pp_metadata_set pp_metadata_set_t;
 typedef struct pp_metadata_value pp_metadata_value_t;
+typedef struct pp_metadata_input pp_metadata_input_t;
 typedef struct pp_activity_set pp_activity_set_t;
 typedef struct pp_revision_set pp_revision_set_t;
 typedef struct pp_revision_event_set pp_revision_event_set_t;
@@ -352,6 +353,24 @@ PP_API pp_error_code_t pp_metadata_value_struct_get(
 PP_API pp_error_code_t pp_metadata_value_get_reference(
     const pp_metadata_value_t *value, pp_object_ref_t *out_reference,
     pp_error_t **out_error);
+/* Metadata inputs are owned immutable values. Collection constructors borrow
+ * children only for the call and copy them. */
+PP_API pp_error_code_t pp_metadata_input_create_string(
+    const char *text, const char *language, pp_metadata_input_t **out_input,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_input_create_i64(
+    int64_t value, pp_metadata_input_t **out_input, pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_input_create_u64(
+    uint64_t value, pp_metadata_input_t **out_input, pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_input_create_decimal(
+    const char *coefficient, uint32_t scale, pp_metadata_input_t **out_input,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_input_create_bool(
+    uint8_t value, pp_metadata_input_t **out_input, pp_error_t **out_error);
+PP_API pp_error_code_t pp_metadata_input_create_timestamp(
+    int64_t unix_micros, pp_metadata_input_t **out_input,
+    pp_error_t **out_error);
+PP_API void pp_metadata_input_release(pp_metadata_input_t *input);
 /* Activity strings are borrowed until pp_activity_set_release(). Optional
  * timestamps use explicit presence flags and zero values when absent. */
 PP_API pp_error_code_t pp_production_activities(
@@ -502,6 +521,10 @@ PP_API pp_error_code_t pp_transaction_add_metadata_text(
     pp_transaction_t *transaction, const pp_object_ref_t *target,
     const char *vocabulary, const char *property, const char *value,
     const char *language, pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_add_metadata_value(
+    pp_transaction_t *transaction, const pp_object_ref_t *target,
+    const char *vocabulary, const char *property,
+    const pp_metadata_input_t *input, pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_remove_metadata_property(
     pp_transaction_t *transaction, const pp_object_ref_t *target,
     const char *vocabulary, const char *property, pp_error_t **out_error);
