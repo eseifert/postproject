@@ -10,13 +10,13 @@ use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, DecimalValue, EvidenceKind,
     ExternalIdentifier, FrameRange, IdentifierScheme, ImageSequencePattern, Locator,
-    LocatorAvailability, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
-    MetadataValueKind, ObjectRef, OriginIdentity, ProductionId, ProductionStoreTransaction,
-    PropertyId, RationalRate, RationalValue, Representation, RepresentationAvailability,
-    RepresentationId, RepresentationKind, RepresentationResolution, ResolutionEvidence, Resource,
-    ResourceId, ResourceResolution, ResourceResolutionState, ResourceRole, Revision,
-    RevisionContext, RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity,
-    VocabularyId,
+    LocatorAvailability, MediaRoot, MediaRootId, MetadataAssertion, MetadataField,
+    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity, ProductionId,
+    ProductionStoreTransaction, PropertyId, RationalRate, RationalValue, Representation,
+    RepresentationAvailability, RepresentationId, RepresentationKind, RepresentationResolution,
+    ResolutionEvidence, Resource, ResourceId, ResourceResolution, ResourceResolutionState,
+    ResourceRole, Revision, RevisionContext, RevisionEvent, RevisionEventKind, RevisionId,
+    Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, prepare_confirmed_locator,
@@ -193,6 +193,14 @@ struct RootArgs {
 enum RootCommand {
     /// Add a directory searched during media resolution.
     Add(RootAddArgs),
+    /// List configured media roots in resolver order.
+    List(ProductionArgs),
+    /// Include a media root in resolution.
+    Enable(RootMutationArgs),
+    /// Exclude a media root from resolution without removing it.
+    Disable(RootMutationArgs),
+    /// Remove a configured media root.
+    Remove(RootMutationArgs),
 }
 
 #[derive(Debug, Args)]
@@ -204,6 +212,12 @@ struct RootAddArgs {
     /// Lower priorities are searched first.
     #[arg(long, default_value_t = 0)]
     priority: i32,
+}
+
+#[derive(Debug, Args)]
+struct RootMutationArgs {
+    production: PathBuf,
+    root_id: String,
 }
 
 #[derive(Debug, Args)]
@@ -827,6 +841,10 @@ fn execute(cli: Cli) -> Result<()> {
         },
         Command::Root(args) => match args.command {
             RootCommand::Add(args) => root_add(args, cli.json),
+            RootCommand::List(args) => root_list(&args, cli.json),
+            RootCommand::Enable(args) => root_set_enabled(&args, true, cli.json),
+            RootCommand::Disable(args) => root_set_enabled(&args, false, cli.json),
+            RootCommand::Remove(args) => root_remove(&args, cli.json),
         },
         Command::Identifier(args) => match args.command {
             IdentifierCommand::Add(args) => identifier_mutate(args, false, cli.json),
@@ -1059,13 +1077,7 @@ fn media_show(args: &MediaAssetArgs, json: bool) -> Result<()> {
 fn root_add(args: RootAddArgs, json: bool) -> Result<()> {
     let root = prepare_media_root(&args.directory, args.label, args.priority)
         .context("prepare media root")?;
-    let view = RootView {
-        id: root.id().to_string(),
-        uri: root.uri().to_owned(),
-        label: root.label().map(str::to_owned),
-        priority: root.priority(),
-        enabled: root.is_enabled(),
-    };
+    let view = root_view(&root);
     let mut production = SqliteProduction::open(&args.production).context("open production")?;
     let mut transaction = production
         .begin_transaction()
@@ -1081,6 +1093,111 @@ fn root_add(args: RootAddArgs, json: bool) -> Result<()> {
     } else {
         println!("added media root {} ({})", view.uri, view.id);
         Ok(())
+    }
+}
+
+fn root_list(args: &ProductionArgs, json: bool) -> Result<()> {
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let roots = production
+        .production()
+        .media_roots()
+        .iter()
+        .map(root_view)
+        .collect::<Vec<_>>();
+    if json {
+        print_json(&roots)
+    } else {
+        for root in roots {
+            println!(
+                "{}\t{}\t{}\t{}\t{}",
+                root.id,
+                if root.enabled { "enabled" } else { "disabled" },
+                root.priority,
+                root.label.as_deref().unwrap_or("-"),
+                root.uri
+            );
+        }
+        Ok(())
+    }
+}
+
+fn root_set_enabled(args: &RootMutationArgs, enabled: bool, json: bool) -> Result<()> {
+    let root_id = MediaRootId::from_str(&args.root_id).context("parse media-root ID")?;
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let root = production
+        .production()
+        .media_roots()
+        .iter()
+        .find(|root| root.id() == root_id)
+        .context("media root does not exist")?;
+    let view = RootView {
+        enabled,
+        ..root_view(root)
+    };
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin root transaction")?;
+    set_cli_revision_context(
+        &mut transaction,
+        if enabled {
+            "Enable media root"
+        } else {
+            "Disable media root"
+        },
+    )?;
+    transaction
+        .set_media_root_enabled(root_id, enabled)
+        .context("stage media-root state change")?;
+    transaction
+        .commit()
+        .context("commit media-root state change")?;
+
+    if json {
+        print_json(&view)
+    } else {
+        println!(
+            "{} media root {}",
+            if enabled { "enabled" } else { "disabled" },
+            view.id
+        );
+        Ok(())
+    }
+}
+
+fn root_remove(args: &RootMutationArgs, json: bool) -> Result<()> {
+    let root_id = MediaRootId::from_str(&args.root_id).context("parse media-root ID")?;
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let root = production
+        .production()
+        .media_roots()
+        .iter()
+        .find(|root| root.id() == root_id)
+        .context("media root does not exist")?;
+    let view = root_view(root);
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin root transaction")?;
+    set_cli_revision_context(&mut transaction, "Remove media root")?;
+    transaction
+        .remove_media_root(root_id)
+        .context("stage media-root removal")?;
+    transaction.commit().context("commit media-root removal")?;
+
+    if json {
+        print_json(&view)
+    } else {
+        println!("removed media root {} ({})", view.uri, view.id);
+        Ok(())
+    }
+}
+
+fn root_view(root: &MediaRoot) -> RootView {
+    RootView {
+        id: root.id().to_string(),
+        uri: root.uri().to_owned(),
+        label: root.label().map(str::to_owned),
+        priority: root.priority(),
+        enabled: root.is_enabled(),
     }
 }
 

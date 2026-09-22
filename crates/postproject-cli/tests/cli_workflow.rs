@@ -362,6 +362,53 @@ fn adds_every_representation_shape() {
 }
 
 #[test]
+fn manages_media_root_lifecycle() {
+    let directory = tempfile::tempdir().expect("create test directory");
+    let production = directory.path().join("roots.pproj");
+    let root_directory = directory.path().join("media");
+    fs::create_dir(&root_directory).expect("create media root");
+    let production = production.to_str().expect("UTF-8 production path");
+    run_json(&["init", production]);
+
+    let added = run_json(&[
+        "root",
+        "add",
+        production,
+        root_directory.to_str().expect("UTF-8 root path"),
+        "--label",
+        "Rushes",
+        "--priority",
+        "7",
+    ]);
+    let root_id = added["id"].as_str().expect("media-root ID");
+
+    let listed = run_json(&["root", "list", production]);
+    assert_eq!(listed.as_array().expect("root array").len(), 1);
+    assert_eq!(listed[0]["id"], root_id);
+    assert_eq!(listed[0]["label"], "Rushes");
+    assert_eq!(listed[0]["priority"], 7);
+    assert_eq!(listed[0]["enabled"], true);
+
+    let disabled = run_json(&["root", "disable", production, root_id]);
+    assert_eq!(disabled["id"], root_id);
+    assert_eq!(disabled["enabled"], false);
+    assert_eq!(run_json(&["root", "list", production])[0]["enabled"], false);
+
+    let enabled = run_json(&["root", "enable", production, root_id]);
+    assert_eq!(enabled["id"], root_id);
+    assert_eq!(enabled["enabled"], true);
+
+    let removed = run_json(&["root", "remove", production, root_id]);
+    assert_eq!(removed["id"], root_id);
+    assert!(
+        run_json(&["root", "list", production])
+            .as_array()
+            .expect("root array")
+            .is_empty()
+    );
+}
+
+#[test]
 fn lifecycle_and_explicit_ambiguous_confirmation() {
     let directory = tempfile::tempdir().expect("create test directory");
     let production = directory.path().join("production.pproj");
