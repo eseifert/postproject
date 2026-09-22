@@ -3,7 +3,8 @@
 use std::cmp::Reverse;
 
 use crate::{
-    ContentStructure, Error, ErrorKind, RepresentationId, ResourceId, Result, uri::normalize_uri,
+    ContentStructure, Error, ErrorKind, MAX_SEQUENCE_EXCEPTIONS, RepresentationId, ResourceId,
+    Result, uri::normalize_uri,
 };
 
 /// A deterministic confidence value in basis points from 0 through 10,000.
@@ -167,6 +168,7 @@ pub struct ResourceResolution {
     state: ResourceResolutionState,
     candidates: Vec<ResolutionCandidate>,
     evidence: Vec<ResolutionEvidence>,
+    missing_frames: Vec<i64>,
 }
 
 impl ResourceResolution {
@@ -206,7 +208,27 @@ impl ResourceResolution {
             state,
             candidates,
             evidence,
+            missing_frames: Vec::new(),
         })
+    }
+
+    /// Adds observed missing image-sequence frames in canonical order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] when the diagnostic exceeds the
+    /// bounded sequence-exception limit.
+    pub fn with_missing_frames(mut self, mut missing_frames: Vec<i64>) -> Result<Self> {
+        if missing_frames.len() > MAX_SEQUENCE_EXCEPTIONS {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                format!("resolution has more than {MAX_SEQUENCE_EXCEPTIONS} missing frames"),
+            ));
+        }
+        missing_frames.sort_unstable();
+        missing_frames.dedup();
+        self.missing_frames = missing_frames;
+        Ok(self)
     }
 
     /// Returns the resolved resource identity.
@@ -231,6 +253,12 @@ impl ResourceResolution {
     #[must_use]
     pub fn evidence(&self) -> &[ResolutionEvidence] {
         &self.evidence
+    }
+
+    /// Returns sorted frames observed absent while resolving this resource.
+    #[must_use]
+    pub fn missing_frames(&self) -> &[i64] {
+        &self.missing_frames
     }
 }
 
@@ -424,13 +452,22 @@ fn inspect_availability(
         inspect_resource(structure, resource, &mut counts, &mut issues);
     }
     if let Some(descriptor) = structure.image_sequence_descriptor() {
-        if !descriptor.known_missing_frames().is_empty() {
+        let mut missing_frames = descriptor.known_missing_frames().to_vec();
+        if let Some(resource) = resources
+            .iter()
+            .find(|resource| resource.resource_id() == descriptor.resource_id())
+        {
+            missing_frames.extend_from_slice(resource.missing_frames());
+        }
+        missing_frames.sort_unstable();
+        missing_frames.dedup();
+        if !missing_frames.is_empty() {
             counts.missing_frames = true;
             issues.push(AvailabilityIssue {
                 resource_id: descriptor.resource_id(),
                 required: true,
                 kind: AvailabilityIssueKind::MissingFrames,
-                frames: descriptor.known_missing_frames().to_vec(),
+                frames: missing_frames,
             });
         }
     }
@@ -658,6 +695,36 @@ mod tests {
             AvailabilityIssueKind::MissingFrames
         );
         assert_eq!(resolution.issues()[0].frames(), [1002, 1003]);
+    }
+
+    #[test]
+    fn observed_sequence_gaps_merge_with_recorded_exceptions() {
+        let resource_id = ResourceId::new();
+        let descriptor = ImageSequenceDescriptor::new(
+            resource_id,
+            ImageSequencePattern::new("shot.", ".exr", 4).expect("valid pattern"),
+            FrameRange::new(1001, 1004, 1).expect("valid frame range"),
+            RationalRate::new(24, 1).expect("valid rate"),
+            vec![1002],
+        )
+        .expect("valid sequence");
+        let structure = ContentStructure::image_sequence(descriptor);
+        let resource = resource_result(resource_id, ResourceResolutionState::OnlineAtKnownLocator)
+            .with_missing_frames(vec![1004, 1003, 1002])
+            .expect("bounded frame diagnostics");
+
+        let resolution = RepresentationResolution::aggregate(
+            RepresentationId::new(),
+            &structure,
+            vec![resource],
+        )
+        .expect("matching results aggregate");
+
+        assert_eq!(
+            resolution.availability(),
+            RepresentationAvailability::Partial
+        );
+        assert_eq!(resolution.issues()[0].frames(), [1002, 1003, 1004]);
     }
 
     #[test]
