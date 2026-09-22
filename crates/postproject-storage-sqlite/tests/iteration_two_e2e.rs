@@ -207,6 +207,17 @@ fn persist_fixture(production_path: &Path, fixture: &Fixture) {
                 &technical_attributes(),
             )
             .expect("stage resource metadata");
+        transaction
+            .add_metadata_value(
+                ObjectRef::Activity(fixture.activity.id()),
+                &ebucore_property("processingParameters"),
+                &MetadataValue::structure(vec![MetadataField::new(
+                    PropertyId::new("preset").expect("valid field"),
+                    MetadataValue::string("editorial-proxy").expect("valid preset"),
+                )])
+                .expect("valid activity parameters"),
+            )
+            .expect("stage activity parameters");
         transaction.commit().expect("commit additions");
     }
 }
@@ -320,5 +331,15 @@ fn assert_identifiers_and_metadata(production: &SqliteProduction, fixture: &Fixt
             )
             .expect("load resource metadata"),
         [technical_attributes()]
+    );
+    assert_eq!(
+        production
+            .metadata_values(
+                ObjectRef::Activity(fixture.activity.id()),
+                &ebucore_property("processingParameters"),
+            )
+            .expect("load activity parameters")
+            .len(),
+        1
     );
 }
