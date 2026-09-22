@@ -68,10 +68,9 @@ and locators so it survives relocation, as ADR 0003 already requires.
 
 **A sequence resource is fingerprinted by sampling members, and the sampling is part of the
 algorithm identity.** Hashing every frame is not affordable and hashing none is not evidence.
-A deterministic subset of frames is hashed, following the precedent already set for large
-single files, where `pp-blake3-sampled-regions` samples fixed regions rather than reading the
-whole file and records that it did so. Coverage is recorded, and a sampled collection
-fingerprint never claims the confidence of a complete one.
+A deterministic subset of frames is hashed, following the large-file fingerprint precedent of
+sampling fixed regions rather than reading the whole file. Coverage is recorded, and a sampled
+collection fingerprint never claims the confidence of a complete one.
 
 Ordering follows ADR 0003 unchanged: preserved for ordered parts, irrelevant for packages.
 
