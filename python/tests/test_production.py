@@ -23,7 +23,9 @@ from postproject import (
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
+    FileResourceInput,
     HostObjectBinding,
+    ImageSequenceInput,
     InvalidArgumentError,
     LocatorAddedEvent,
     LocatorAvailability,
@@ -139,6 +141,81 @@ class ProductionTests(unittest.TestCase):
         self.assertEqual(len(resource.locators), 1)
         self.assertEqual(resource.locators[0].availability, LocatorAvailability.ONLINE)
         self.assertIsNotNone(resource.locators[0].last_seen_unix_micros)
+
+    def test_additional_and_compound_representations_roundtrip(self) -> None:
+        sequence_frame = self.root / "frame0001.exr"
+        sequence_frame.write_bytes(b"sequence frame")
+        sidecar = self.root / "clip.xml"
+        sidecar.write_text("<metadata />")
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+
+            with production.transaction() as transaction:
+                proxy_id = transaction.add_single_file_representation(
+                    asset_id, RepresentationKind.PROXY, self.second_media_path
+                )
+                sequence_id = transaction.add_image_sequence_representation(
+                    asset_id,
+                    RepresentationKind.DERIVED,
+                    ImageSequenceInput(
+                        str(self.root), "frame", ".exr", 4, 1, 1, 1, 24_000, 1_001
+                    ),
+                )
+                ordered_id = transaction.add_ordered_parts_representation(
+                    asset_id,
+                    RepresentationKind.OPTIMIZED,
+                    (
+                        FileResourceInput(
+                            str(self.media_path),
+                            "org.postproject:essence.first",
+                        ),
+                        FileResourceInput(
+                            str(self.second_media_path),
+                            "org.postproject:essence.second",
+                        ),
+                    ),
+                )
+                package_id = transaction.add_package_representation(
+                    asset_id,
+                    RepresentationKind.DERIVED,
+                    (
+                        FileResourceInput(
+                            str(self.media_path), "org.postproject:essence"
+                        ),
+                        FileResourceInput(
+                            str(sidecar), "org.postproject:sidecar", False
+                        ),
+                    ),
+                )
+
+            representations = {
+                representation.id: representation
+                for representation in production.representations[asset_id]
+            }
+            self.assertEqual(len(representations), 5)
+            self.assertEqual(
+                representations[proxy_id].structure_kind,
+                ContentStructureKind.SINGLE_RESOURCE,
+            )
+            sequence = representations[sequence_id]
+            self.assertEqual(
+                sequence.structure_kind, ContentStructureKind.IMAGE_SEQUENCE
+            )
+            assert sequence.image_sequence is not None
+            self.assertEqual(sequence.image_sequence.rate_numerator, 24_000)
+            self.assertEqual(sequence.image_sequence.rate_denominator, 1_001)
+            self.assertEqual(
+                representations[ordered_id].structure_kind,
+                ContentStructureKind.ORDERED_PARTS,
+            )
+            package = representations[package_id]
+            self.assertEqual(package.structure_kind, ContentStructureKind.PACKAGE)
+            self.assertEqual(
+                tuple(member.required for member in package.members), (True, False)
+            )
 
     def test_host_bindings_are_keyed_and_round_trip_through_native_abi(self) -> None:
         with Production.create(
