@@ -5,9 +5,9 @@ use std::{fs, path::Path};
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ExternalIdentifier,
     FrameRange, IdentifierScheme, ImageSequencePattern, MetadataField, MetadataProperty,
-    MetadataValue, ObjectRef, OriginalMediaImport, PropertyId, RationalRate,
+    MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, PropertyId, RationalRate,
     RepresentationAvailability, RepresentationImport, RepresentationResolution, Resource,
-    ResourceRole, ToolIdentity, VocabularyId,
+    ResourceRole, RevisionContext, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, prepare_image_sequence_representation,
@@ -158,15 +158,23 @@ fn prepare_fixture(root: &Path) -> Fixture {
 fn persist_fixture(production_path: &Path, fixture: &Fixture) {
     let mut production =
         SqliteProduction::create(production_path, None).expect("create production");
+    let mut transaction = production.begin_transaction().expect("begin workflow");
+    transaction
+        .set_revision_context(
+            RevisionContext::new(
+                Some(
+                    OriginIdentity::new("Acceptance workflow", Some("1".to_owned()), None)
+                        .expect("valid origin"),
+                ),
+                Some("Import source and derived media".to_owned()),
+            )
+            .expect("valid revision context"),
+        )
+        .expect("stage revision context");
+    transaction
+        .import_original(&fixture.original)
+        .expect("stage original");
     {
-        let mut transaction = production.begin_transaction().expect("begin import");
-        transaction
-            .import_original(&fixture.original)
-            .expect("stage original");
-        transaction.commit().expect("commit original");
-    }
-    {
-        let mut transaction = production.begin_transaction().expect("begin additions");
         transaction
             .add_representation(&fixture.sequence)
             .expect("stage sequence");
@@ -218,8 +226,17 @@ fn persist_fixture(production_path: &Path, fixture: &Fixture) {
                 .expect("valid activity parameters"),
             )
             .expect("stage activity parameters");
-        transaction.commit().expect("commit additions");
     }
+    transaction.commit().expect("commit workflow");
+    drop(transaction);
+    assert_eq!(
+        production
+            .latest_revision()
+            .expect("load workflow revision")
+            .expect("workflow revision")
+            .sequence(),
+        1
+    );
 }
 
 fn assert_reopened(production_path: &Path, fixture: &Fixture) {
