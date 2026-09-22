@@ -1,5 +1,6 @@
 #include <postproject/postproject.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -220,6 +221,58 @@ int main(int argc, char **argv) {
         persisted[0].resources[0].state !=
             postproject::ResourceResolutionState::online_at_known_locator) {
       return 12;
+    }
+
+    const auto sequence_frame_path =
+        std::filesystem::path(path).parent_path() / "frame0001.exr";
+    {
+      std::ofstream frame(sequence_frame_path, std::ios::binary);
+      frame << "sequence frame";
+      if (!frame) {
+        return 22;
+      }
+    }
+    auto additions = reopened.beginTransaction();
+    const auto proxy_id = additions.addSingleFileRepresentation(
+        asset_id, postproject::RepresentationKind::proxy, moved_media_path);
+    const auto sequence_id = additions.addImageSequenceRepresentation(
+        asset_id, postproject::RepresentationKind::derived,
+        {sequence_frame_path.parent_path().string(), "frame", ".exr", 4, 1,
+         1, 1, 24000, 1001, {}});
+    const std::vector<postproject::FileResourceInput> ordered_members{
+        {moved_media_path, "org.postproject:essence.first", true},
+        {sequence_frame_path.string(), "org.postproject:essence.second", true},
+    };
+    const auto ordered_id = additions.addOrderedPartsRepresentation(
+        asset_id, postproject::RepresentationKind::optimized, ordered_members);
+    const std::vector<postproject::FileResourceInput> package_members{
+        {moved_media_path, "org.postproject:essence", true},
+        {sequence_frame_path.string(), "org.postproject:sidecar", false},
+    };
+    const auto package_id = additions.addPackageRepresentation(
+        asset_id, postproject::RepresentationKind::derived, package_members);
+    additions.commit();
+
+    const auto added_representations = reopened.representations(asset_id);
+    const auto has_representation = [&](const postproject::Uuid &id,
+                                        postproject::ContentStructureKind kind) {
+      return std::any_of(
+          added_representations.begin(), added_representations.end(),
+          [&](const postproject::Representation &representation) {
+            return representation.id == id &&
+                   representation.structure_kind == kind;
+          });
+    };
+    if (added_representations.size() != 5 ||
+        !has_representation(
+            proxy_id, postproject::ContentStructureKind::single_resource) ||
+        !has_representation(
+            sequence_id, postproject::ContentStructureKind::image_sequence) ||
+        !has_representation(
+            ordered_id, postproject::ContentStructureKind::ordered_parts) ||
+        !has_representation(package_id,
+                            postproject::ContentStructureKind::package)) {
+      return 23;
     }
 
     try {
