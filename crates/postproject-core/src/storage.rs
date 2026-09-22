@@ -199,6 +199,14 @@ pub trait ProductionStoreTransaction {
     /// rejects the locator.
     fn add_locator(&mut self, locator: &Locator) -> Result<()>;
 
+    /// Stages retirement of one superseded resource locator.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, the locator does
+    /// not exist, or persistence fails.
+    fn retire_locator(&mut self, locator_id: crate::LocatorId) -> Result<()>;
+
     /// Stages a configured resolver search root.
     ///
     /// # Errors
@@ -206,6 +214,24 @@ pub trait ProductionStoreTransaction {
     /// Returns a domain error when the transaction is closed or persistence
     /// rejects the root.
     fn add_media_root(&mut self, root: MediaRoot) -> Result<()>;
+
+    /// Enables or disables a configured resolver search root.
+    ///
+    /// Setting the existing state is an idempotent no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, the root does not
+    /// exist, or persistence fails.
+    fn set_media_root_enabled(&mut self, root_id: crate::MediaRootId, enabled: bool) -> Result<()>;
+
+    /// Stages removal of a configured resolver search root.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, the root does not
+    /// exist, or persistence fails.
+    fn remove_media_root(&mut self, root_id: crate::MediaRootId) -> Result<()>;
 
     /// Stages an external identifier attachment.
     ///

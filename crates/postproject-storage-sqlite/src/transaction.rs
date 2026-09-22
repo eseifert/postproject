@@ -2,12 +2,15 @@
 
 use postproject_core::{
     Activity, ContentStructure, ContentStructureKind, Error, ErrorKind, ExternalIdentifier,
-    Locator, LocatorAvailability, MediaRoot, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, Production, ProductionStoreTransaction, Representation,
-    RepresentationImport, RepresentationKind, Resource, Result, RevisionContext, RevisionEventKind,
-    RevisionId, Timestamp, TransactionId, TransactionLifecycle, TransactionState,
+    Locator, LocatorAvailability, LocatorId, MediaRoot, MediaRootId, MetadataProperty,
+    MetadataValue, ObjectRef, OriginalMediaImport, Production, ProductionStoreTransaction,
+    Representation, RepresentationImport, RepresentationKind, Resource, Result, RevisionContext,
+    RevisionEventKind, RevisionId, Timestamp, TransactionId, TransactionLifecycle,
+    TransactionState,
 };
-use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior, params};
+use rusqlite::{
+    Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
+};
 
 use crate::{encode_identifier_target, encode_metadata_target, metadata_codec, sqlite_error};
 
@@ -33,11 +36,12 @@ impl<'production> SqliteTransaction<'production> {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(sqlite_error("begin domain transaction"))?;
+        let pending_roots = production.media_roots().to_vec();
         Ok(Self {
             transaction: Some(transaction),
             lifecycle: TransactionLifecycle::new(),
             production,
-            pending_roots: Vec::new(),
+            pending_roots,
             revision_context: RevisionContext::default(),
             pending_events: Vec::new(),
         })
@@ -220,6 +224,40 @@ impl<'production> SqliteTransaction<'production> {
         Ok(())
     }
 
+    /// Stages retirement of a superseded locator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when `locator_id` is absent, or a
+    /// transaction/storage error.
+    pub fn retire_locator(&mut self, locator_id: LocatorId) -> Result<()> {
+        let transaction = self.open_transaction()?;
+        let resource_id = transaction
+            .query_row(
+                "SELECT resource_id FROM locators WHERE id = ?1",
+                params![locator_id.as_bytes().as_slice()],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map_err(sqlite_error("load resource locator"))?
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "resource locator does not exist"))?;
+        let resource_id = postproject_core::ResourceId::from_bytes(crate::id_bytes(
+            resource_id,
+            "locator resource",
+        )?);
+        transaction
+            .execute(
+                "DELETE FROM locators WHERE id = ?1",
+                params![locator_id.as_bytes().as_slice()],
+            )
+            .map_err(mutation_error("retire resource locator"))?;
+        self.pending_events.push(RevisionEventKind::LocatorRetired {
+            resource_id,
+            locator_id,
+        });
+        Ok(())
+    }
+
     /// Stages a configured media root.
     ///
     /// # Errors
@@ -244,8 +282,78 @@ impl<'production> SqliteTransaction<'production> {
             )
             .map_err(mutation_error("persist media root"))?;
         self.pending_roots.push(root);
+        self.pending_roots
+            .sort_by_key(|item| (item.priority(), item.id()));
         self.pending_events
             .push(RevisionEventKind::MediaRootAdded { media_root_id });
+        Ok(())
+    }
+
+    /// Enables or disables a configured media root.
+    ///
+    /// Reapplying the current state succeeds without creating a semantic event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when `root_id` is absent, or a
+    /// transaction/storage error.
+    pub fn set_media_root_enabled(&mut self, root_id: MediaRootId, enabled: bool) -> Result<()> {
+        self.lifecycle.ensure_open()?;
+        let Some(index) = self
+            .pending_roots
+            .iter()
+            .position(|root| root.id() == root_id)
+        else {
+            return Err(Error::new(ErrorKind::NotFound, "media root does not exist"));
+        };
+        if self.pending_roots[index].is_enabled() == enabled {
+            return Ok(());
+        }
+        let current = &self.pending_roots[index];
+        let replacement = MediaRoot::new(
+            current.id(),
+            current.uri(),
+            current.label().map(str::to_owned),
+            current.priority(),
+            enabled,
+        )?;
+        self.open_transaction()?
+            .execute(
+                "UPDATE media_roots SET enabled = ?1 WHERE id = ?2",
+                params![enabled, root_id.as_bytes().as_slice()],
+            )
+            .map_err(mutation_error("update media root"))?;
+        self.pending_roots[index] = replacement;
+        self.pending_events
+            .push(RevisionEventKind::MediaRootEnabledChanged {
+                media_root_id: root_id,
+                enabled,
+            });
+        Ok(())
+    }
+
+    /// Removes a configured media root.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when `root_id` is absent, or a
+    /// transaction/storage error.
+    pub fn remove_media_root(&mut self, root_id: MediaRootId) -> Result<()> {
+        self.lifecycle.ensure_open()?;
+        if !self.pending_roots.iter().any(|root| root.id() == root_id) {
+            return Err(Error::new(ErrorKind::NotFound, "media root does not exist"));
+        }
+        self.open_transaction()?
+            .execute(
+                "DELETE FROM media_roots WHERE id = ?1",
+                params![root_id.as_bytes().as_slice()],
+            )
+            .map_err(mutation_error("remove media root"))?;
+        self.pending_roots.retain(|root| root.id() != root_id);
+        self.pending_events
+            .push(RevisionEventKind::MediaRootRemoved {
+                media_root_id: root_id,
+            });
         Ok(())
     }
 
@@ -591,9 +699,8 @@ impl<'production> SqliteTransaction<'production> {
             return Err(sqlite_error("commit domain transaction")(error));
         }
         self.lifecycle.mark_committed()?;
-        let mut roots = self.production.media_roots().to_vec();
-        roots.append(&mut self.pending_roots);
-        self.production.set_media_roots(roots);
+        self.production
+            .set_media_roots(std::mem::take(&mut self.pending_roots));
         self.pending_events.clear();
         Ok(())
     }
@@ -895,8 +1002,20 @@ impl ProductionStoreTransaction for SqliteTransaction<'_> {
         SqliteTransaction::add_locator(self, locator)
     }
 
+    fn retire_locator(&mut self, locator_id: LocatorId) -> Result<()> {
+        SqliteTransaction::retire_locator(self, locator_id)
+    }
+
     fn add_media_root(&mut self, root: MediaRoot) -> Result<()> {
         SqliteTransaction::add_media_root(self, root)
+    }
+
+    fn set_media_root_enabled(&mut self, root_id: MediaRootId, enabled: bool) -> Result<()> {
+        SqliteTransaction::set_media_root_enabled(self, root_id, enabled)
+    }
+
+    fn remove_media_root(&mut self, root_id: MediaRootId) -> Result<()> {
+        SqliteTransaction::remove_media_root(self, root_id)
     }
 
     fn add_external_identifier(
