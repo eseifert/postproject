@@ -192,6 +192,31 @@ class ImageSequenceDescriptor:
 
 
 @dataclass(frozen=True, slots=True)
+class ImageSequenceInput:
+    """Filesystem source and compact descriptor for a new image sequence."""
+
+    directory: str
+    prefix: str
+    suffix: str
+    padding: int
+    start: int
+    end: int
+    step: int
+    rate_numerator: int
+    rate_denominator: int
+    missing_frames: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class FileResourceInput:
+    """Filesystem source and membership semantics for a compound member."""
+
+    path: str
+    role: str
+    required: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class Locator:
     id: LocatorId
     uri: str
