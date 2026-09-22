@@ -97,6 +97,12 @@ class ProductionTests(unittest.TestCase):
             ) as transaction:
                 asset_id = transaction.import_media(self.media_path, "Camera A")
             self.assertIn(asset_id, production.assets)
+            assets = tuple(production.assets)
+            self.assertEqual(len(assets), 1)
+            self.assertEqual(assets[0].id, asset_id)
+            self.assertGreater(assets[0].created_at_unix_micros, 0)
+            self.assertEqual(assets[0].display_name, "Camera A")
+            self.assertIsNone(assets[0].import_source)
 
         with Production.open(
             self.production_path, library_path=LIBRARY_PATH
