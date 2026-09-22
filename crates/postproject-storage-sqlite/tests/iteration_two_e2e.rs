@@ -298,6 +298,7 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture, relocated: &Path) 
     );
     assert_revision_feed(&reopened, fixture);
     relink_moved_media(&mut reopened, fixture, relocated);
+    assert_relink_revision(&reopened);
     assert_original_online(&reopened, fixture);
     assert_identifiers_and_metadata(&reopened, fixture);
 
@@ -345,6 +346,35 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture, relocated: &Path) 
             .iter()
             .map(Resource::id)
             .collect::<Vec<_>>()
+    );
+}
+
+fn assert_relink_revision(production: &SqliteProduction) {
+    let changes = production
+        .changes_since(0, 10)
+        .expect("load all workflow changes");
+    assert_eq!(
+        changes
+            .iter()
+            .map(postproject_core::Revision::sequence)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    let events = production
+        .events_for_revision(changes[1].id())
+        .expect("load relink events");
+    assert_eq!(events.len(), 10);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event.kind(), RevisionEventKind::MediaRootRemoved { .. }))
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event.kind(), RevisionEventKind::LocatorRetired { .. }))
+            .count(),
+        4
     );
 }
 
