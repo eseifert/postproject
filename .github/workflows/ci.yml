@@ -255,6 +255,27 @@ jobs:
           path: target/install
           if-no-files-found: error
 
+  python-wheel:
+    name: Python wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p postproject-ffi
+      - run: python -m pip wheel --no-deps ./python --wheel-dir target/wheel
+      - name: Test installed wheel
+        shell: bash
+        run: |
+          python -m venv target/wheel-venv
+          target/wheel-venv/bin/python -m pip install --no-deps target/wheel/*.whl
+          POSTPROJECT_LIBRARY="$GITHUB_WORKSPACE/target/release/libpostproject.so" \
+            target/wheel-venv/bin/python examples/python/quickstart.py \
+            target/wheel-quickstart.pproj examples/fixtures/sample-media.dat
+
   sanitizers:
     name: Native ASan and UBSan
     runs-on: ubuntu-latest
