@@ -787,6 +787,46 @@ int main(int argc, char **argv) {
     return 71;
   }
   pp_representation_set_release(representations);
+
+  const pp_file_resource_input_t ordered_members[] = {
+      {moved_media_path, "org.postproject:essence.first", UINT8_C(1)},
+      {sequence_frame_path, "org.postproject:essence.second", UINT8_C(1)},
+  };
+  const pp_file_resource_input_t package_members[] = {
+      {moved_media_path, "org.postproject:essence", UINT8_C(1)},
+      {sequence_frame_path, "org.postproject:sidecar", UINT8_C(0)},
+  };
+  pp_uuid_t ordered_representation_id = {{0}};
+  pp_uuid_t package_representation_id = {{0}};
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_add_ordered_parts_representation(
+          transaction, &asset_id, PP_REPRESENTATION_OPTIMIZED, ordered_members,
+          UINT64_C(2), &ordered_representation_id, &error) != PP_OK ||
+      pp_transaction_add_package_representation(
+          transaction, &asset_id, PP_REPRESENTATION_DERIVED, package_members,
+          UINT64_C(2), &package_representation_id, &error) != PP_OK ||
+      uuid_is_zero(&ordered_representation_id) ||
+      uuid_is_zero(&package_representation_id) ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 72;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+  representations = NULL;
+  if (pp_production_representations(production, &asset_id, &representations,
+                                    &error) != PP_OK ||
+      representations == NULL ||
+      pp_representation_set_count(representations) != UINT64_C(5)) {
+    pp_representation_set_release(representations);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 73;
+  }
+  pp_representation_set_release(representations);
   pp_production_release(production);
   production = NULL;
 
