@@ -112,8 +112,9 @@ promises or release gates.
   sourcing, authentication, or distributed merge history.
 - Standards support is conceptual preservation and mapping documentation. Full
   import/export adapters and normative conformance suites are not included.
-- Native build artifacts are unsigned. A tagged release still requires the
-  signing, checksum, publication, and archive steps in the release checklist.
+- Release archives are not code-signed. A maintainer must create the signed
+  version tag; the tag workflow then publishes checksummed source/native
+  archives and the tested Python wheel to GitHub Releases.
 
 ## Deliberate deferrals
 
