@@ -120,7 +120,7 @@ const PP_REVISION_ACTIVITY_INPUT_ADDED: u32 = 12;
 const PP_REVISION_ACTIVITY_OUTPUT_ADDED: u32 = 13;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 11;
+pub const ABI_VERSION: u32 = 12;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]

@@ -27,6 +27,8 @@ All notable changes to PostProject will be documented here. The project uses
   wrappers over the same public C implementation.
 - Added ABI version 11 owned typed-metadata inputs, including recursive lists
   and structures, and removed the superseded text-only write function.
+- Added ABI version 12 creation of single-file, image-sequence, ordered-parts,
+  and package representations, with matching C++, Python, and CLI surfaces.
 - Added a strict, versioned HTTPS host-object binding format under
   `postproject.org` for portable production-scoped references.
 - Added an opt-in registry for UMID, ISAN, EIDR, and application identifier

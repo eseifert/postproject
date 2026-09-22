@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 11 is pre-release and may change during the 0.x series, with every
+ABI version 12 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
