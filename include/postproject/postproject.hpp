@@ -968,6 +968,8 @@ HostObjectBinding::fromString(std::string_view value) {
   return {detail::uuid(production_id), detail::object_ref(object)};
 }
 
+struct MetadataFieldInput;
+
 // Move-only immutable input that can be reused across transaction calls.
 class MetadataInput final {
 public:
@@ -1069,6 +1071,12 @@ public:
         error);
   }
 
+  [[nodiscard]] static MetadataInput
+  list(const std::vector<MetadataInput> &items);
+
+  [[nodiscard]] static MetadataInput
+  structure(const std::vector<MetadataFieldInput> &fields);
+
   MetadataInput(const MetadataInput &) = delete;
   MetadataInput &operator=(const MetadataInput &) = delete;
 
@@ -1099,6 +1107,50 @@ private:
 
   pp_metadata_input_t *input_;
 };
+
+struct MetadataFieldInput final {
+  std::string name;
+  MetadataInput value;
+};
+
+inline MetadataInput
+MetadataInput::list(const std::vector<MetadataInput> &items) {
+  std::vector<const pp_metadata_input_t *> native_items;
+  native_items.reserve(items.size());
+  for (const MetadataInput &item : items) {
+    native_items.push_back(item.input_);
+  }
+  pp_metadata_input_t *input = nullptr;
+  pp_error_t *error = nullptr;
+  return checked(pp_metadata_input_create_list(
+                     native_items.data(),
+                     static_cast<std::uint64_t>(native_items.size()), &input,
+                     &error),
+                 input, error);
+}
+
+inline MetadataInput MetadataInput::structure(
+    const std::vector<MetadataFieldInput> &fields) {
+  std::vector<std::string> names;
+  names.reserve(fields.size());
+  std::vector<const pp_metadata_input_t *> values;
+  values.reserve(fields.size());
+  for (const MetadataFieldInput &field : fields) {
+    names.push_back(detail::checked_string(field.name, "metadata field name"));
+    values.push_back(field.value.input_);
+  }
+  std::vector<const char *> name_pointers;
+  name_pointers.reserve(names.size());
+  for (const std::string &name : names) {
+    name_pointers.push_back(name.c_str());
+  }
+  pp_metadata_input_t *input = nullptr;
+  pp_error_t *error = nullptr;
+  return checked(pp_metadata_input_create_struct(
+                     name_pointers.data(), values.data(),
+                     static_cast<std::uint64_t>(fields.size()), &input, &error),
+                 input, error);
+}
 
 // Move-only and caller-serialized. Do not call one Transaction concurrently.
 class Transaction final {
