@@ -28,6 +28,16 @@ class AssetId(_TypedId):
     __slots__ = ()
 
 
+@dataclass(frozen=True, slots=True)
+class Asset:
+    """Immutable logical asset summary."""
+
+    id: AssetId
+    created_at_unix_micros: int
+    display_name: str | None
+    import_source: str | None
+
+
 class RepresentationId(_TypedId):
     """Stable identity of one usable asset representation."""
 
