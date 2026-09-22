@@ -29,10 +29,22 @@ from postproject import (
     LocatorAvailability,
     MetadataAddedOrReplacedEvent,
     MetadataAssertion,
+    MetadataBool,
+    MetadataBytes,
+    MetadataDecimal,
+    MetadataI64,
     MetadataLanguageString,
+    MetadataList,
     MetadataProperty,
+    MetadataRational,
+    MetadataReference,
     MetadataRemovedEvent,
     MetadataString,
+    MetadataStruct,
+    MetadataStructField,
+    MetadataTimestamp,
+    MetadataU64,
+    MetadataUri,
     NotFoundError,
     OriginIdentity,
     Production,
@@ -437,6 +449,48 @@ class ProductionTests(unittest.TestCase):
             assert isinstance(payload, MetadataRemovedEvent)
             self.assertEqual(payload.target, asset_id)
             self.assertEqual(payload.property, title)
+
+    def test_recursive_typed_metadata_write_roundtrips(self) -> None:
+        property = MetadataProperty("https://example.com/metadata", "technical")
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+
+            value = MetadataStruct(
+                (
+                    MetadataStructField("signed", MetadataI64(-42)),
+                    MetadataStructField("unsigned", MetadataU64(42)),
+                    MetadataStructField("decimal", MetadataDecimal(-12345, 2)),
+                    MetadataStructField("enabled", MetadataBool(True)),
+                    MetadataStructField(
+                        "captured", MetadataTimestamp(1_700_000_000_123_456)
+                    ),
+                    MetadataStructField(
+                        "source", MetadataUri("https://example.com/source")
+                    ),
+                    MetadataStructField("payload", MetadataBytes(b"\x00\xff")),
+                    MetadataStructField("rate", MetadataRational(24_000, 1_001)),
+                    MetadataStructField("asset", MetadataReference(asset_id)),
+                    MetadataStructField(
+                        "labels",
+                        MetadataList(
+                            (
+                                MetadataString("interview"),
+                                MetadataLanguageString("Gespräch", "de"),
+                            )
+                        ),
+                    ),
+                )
+            )
+            with production.transaction() as transaction:
+                transaction.add_metadata(asset_id, property, value)
+
+            self.assertEqual(
+                production.metadata[asset_id],
+                (MetadataAssertion(asset_id, property, value),),
+            )
 
     def test_provenance_activity_roundtrips_and_supports_graph_queries(self) -> None:
         with Production.create(
