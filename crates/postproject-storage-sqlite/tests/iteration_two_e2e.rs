@@ -5,7 +5,7 @@ use std::{fs, path::Path};
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, FrameRange,
     ImageSequencePattern, OriginalMediaImport, RationalRate, RepresentationAvailability,
-    RepresentationImport, RepresentationResolution, Resource, ResourceRole,
+    RepresentationImport, RepresentationResolution, Resource, ResourceRole, ToolIdentity,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, prepare_image_sequence_representation,
@@ -97,7 +97,15 @@ fn prepare_fixture(root: &Path) -> Fixture {
         vec![ActivityInput::new(original_id, None)],
         vec![ActivityOutput::new(proxy_id, None)],
     )
-    .expect("prepare activity");
+    .expect("prepare activity")
+    .with_tool(
+        ToolIdentity::new(
+            "FFmpeg",
+            Some("8.0".to_owned()),
+            Some("https://ffmpeg.org/".to_owned()),
+        )
+        .expect("prepare tool identity"),
+    );
 
     Fixture {
         original,
@@ -157,6 +165,10 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture) {
             .activities_producing(proxy_id)
             .expect("load producing activity"),
         std::slice::from_ref(&fixture.activity)
+    );
+    assert_eq!(
+        fixture.activity.tool().expect("activity tool").version(),
+        Some("8.0")
     );
 
     let stored_sequence = representations
