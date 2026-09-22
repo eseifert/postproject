@@ -29,6 +29,9 @@ from ._abi import (
     Uuid,
 )
 from ._abi import (
+    FileResourceInput as NativeFileResourceInput,
+)
+from ._abi import (
     MetadataInput as NativeMetadataInput,
 )
 from ._abi import (
@@ -61,9 +64,11 @@ from ._model import (
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
+    FileResourceInput,
     Fingerprint,
     HostObjectBinding,
     ImageSequenceDescriptor,
+    ImageSequenceInput,
     Locator,
     LocatorAddedEvent,
     LocatorAvailability,
@@ -792,6 +797,94 @@ class Transaction:
         self._native.check(status, error)
         return AssetId(_uuid(asset_id))
 
+    def add_single_file_representation(
+        self,
+        asset_id: AssetId,
+        kind: RepresentationKind,
+        path: str | os.PathLike[str],
+    ) -> RepresentationId:
+        """Stage one single-file representation for an existing asset."""
+
+        self._require_open()
+        native_asset_id = _native_uuid(asset_id.value)
+        representation_id = Uuid()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_add_single_file_representation(
+            self._handle,
+            ctypes.byref(native_asset_id),
+            _native_representation_kind(kind),
+            _path_bytes(path),
+            ctypes.byref(representation_id),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        return RepresentationId(_uuid(representation_id))
+
+    def add_image_sequence_representation(
+        self,
+        asset_id: AssetId,
+        kind: RepresentationKind,
+        source: ImageSequenceInput,
+    ) -> RepresentationId:
+        """Stage one compact image-sequence representation."""
+
+        self._require_open()
+        native_asset_id = _native_uuid(asset_id.value)
+        missing_type = ctypes.c_int64 * len(source.missing_frames)
+        missing_frames = missing_type(*source.missing_frames)
+        representation_id = Uuid()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_add_image_sequence_representation(
+            self._handle,
+            ctypes.byref(native_asset_id),
+            _native_representation_kind(kind),
+            _path_bytes(source.directory),
+            _utf8(source.prefix, "image-sequence prefix"),
+            _utf8(source.suffix, "image-sequence suffix"),
+            source.padding,
+            source.start,
+            source.end,
+            source.step,
+            source.rate_numerator,
+            source.rate_denominator,
+            missing_frames,
+            len(missing_frames),
+            ctypes.byref(representation_id),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        return RepresentationId(_uuid(representation_id))
+
+    def add_ordered_parts_representation(
+        self,
+        asset_id: AssetId,
+        kind: RepresentationKind,
+        members: tuple[FileResourceInput, ...],
+    ) -> RepresentationId:
+        """Stage an ordered, fully required multi-file representation."""
+
+        return self._add_file_collection_representation(
+            self._native.lib.pp_transaction_add_ordered_parts_representation,
+            asset_id,
+            kind,
+            members,
+        )
+
+    def add_package_representation(
+        self,
+        asset_id: AssetId,
+        kind: RepresentationKind,
+        members: tuple[FileResourceInput, ...],
+    ) -> RepresentationId:
+        """Stage a role-bearing package representation."""
+
+        return self._add_file_collection_representation(
+            self._native.lib.pp_transaction_add_package_representation,
+            asset_id,
+            kind,
+            members,
+        )
+
     def add_media_root(
         self,
         path: str | os.PathLike[str],
@@ -961,6 +1054,40 @@ class Transaction:
         self._native.check(status, error)
         self._finished = True
 
+    def _add_file_collection_representation(
+        self,
+        function: Callable[..., int],
+        asset_id: AssetId,
+        kind: RepresentationKind,
+        members: tuple[FileResourceInput, ...],
+    ) -> RepresentationId:
+        self._require_open()
+        paths = tuple(_path_bytes(member.path) for member in members)
+        roles = tuple(_utf8(member.role, "resource role") for member in members)
+        array_type = NativeFileResourceInput * len(members)
+        native_members = array_type(
+            *(
+                NativeFileResourceInput(
+                    paths[index], roles[index], int(member.required)
+                )
+                for index, member in enumerate(members)
+            )
+        )
+        native_asset_id = _native_uuid(asset_id.value)
+        representation_id = Uuid()
+        error = ctypes.POINTER(Error)()
+        status = function(
+            self._handle,
+            ctypes.byref(native_asset_id),
+            _native_representation_kind(kind),
+            native_members,
+            len(native_members),
+            ctypes.byref(representation_id),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        return RepresentationId(_uuid(representation_id))
+
     def _mutate_external_identifier(
         self,
         remove: bool,
@@ -1053,6 +1180,15 @@ def _native_object_reference(value: ObjectReference) -> _abi.ObjectRef:
         raise TypeError("unsupported object reference")
     native.id = _native_uuid(value.value)
     return native
+
+
+def _native_representation_kind(value: RepresentationKind) -> int:
+    return {
+        RepresentationKind.ORIGINAL: _abi.PP_REPRESENTATION_ORIGINAL,
+        RepresentationKind.PROXY: _abi.PP_REPRESENTATION_PROXY,
+        RepresentationKind.OPTIMIZED: _abi.PP_REPRESENTATION_OPTIMIZED,
+        RepresentationKind.DERIVED: _abi.PP_REPRESENTATION_DERIVED,
+    }[value]
 
 
 def _create_metadata_input(
