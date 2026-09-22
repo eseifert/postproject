@@ -203,6 +203,27 @@ int main(int argc, char **argv) {
     return 74;
   }
   pp_asset_set_release(assets);
+  pp_media_root_set_t *roots = NULL;
+  pp_uuid_t read_root_id = {{0}};
+  const char *root_uri = NULL;
+  const char *root_label = NULL;
+  int32_t root_priority = 0;
+  uint8_t root_enabled = 0;
+  status = pp_production_media_roots(production, &roots, &error);
+  if (status != PP_OK || roots == NULL ||
+      pp_media_root_set_count(roots) != UINT64_C(1) ||
+      pp_media_root_set_get(roots, 0, &read_root_id, &root_uri, &root_label,
+                            &root_priority, &root_enabled, &error) != PP_OK ||
+      memcmp(read_root_id.bytes, root_id.bytes, sizeof(root_id.bytes)) != 0 ||
+      root_uri == NULL || root_label == NULL ||
+      strcmp(root_label, "fixture root") != 0 || root_priority != 0 ||
+      root_enabled != UINT8_C(1)) {
+    pp_media_root_set_release(roots);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 75;
+  }
+  pp_media_root_set_release(roots);
   pp_revision_set_t *revisions = NULL;
   uint64_t revision_sequence = 0;
   int64_t revision_committed_at = 0;
@@ -565,6 +586,9 @@ int main(int argc, char **argv) {
   if (status != PP_OK ||
       pp_transaction_confirm_locator(transaction, &resource_id, candidate_uri,
                                      &error) != PP_OK ||
+      pp_transaction_set_media_root_enabled(transaction, &root_id, 0, &error) !=
+          PP_OK ||
+      pp_transaction_retire_locator(transaction, &locator_id, &error) != PP_OK ||
       pp_transaction_commit(transaction, &error) != PP_OK) {
     pp_transaction_release(transaction);
     pp_resolution_set_release(resolutions);
@@ -574,6 +598,43 @@ int main(int argc, char **argv) {
   }
   pp_transaction_release(transaction);
   transaction = NULL;
+
+  roots = NULL;
+  status = pp_production_media_roots(production, &roots, &error);
+  if (status != PP_OK || roots == NULL ||
+      pp_media_root_set_get(roots, 0, &read_root_id, &root_uri, &root_label,
+                            &root_priority, &root_enabled, &error) != PP_OK ||
+      root_enabled != UINT8_C(0)) {
+    pp_media_root_set_release(roots);
+    pp_resolution_set_release(resolutions);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 76;
+  }
+  pp_media_root_set_release(roots);
+
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_remove_media_root(transaction, &root_id, &error) != PP_OK ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_resolution_set_release(resolutions);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 77;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+  roots = NULL;
+  status = pp_production_media_roots(production, &roots, &error);
+  if (status != PP_OK || roots == NULL || pp_media_root_set_count(roots) != 0) {
+    pp_media_root_set_release(roots);
+    pp_resolution_set_release(resolutions);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 78;
+  }
+  pp_media_root_set_release(roots);
 
   status = pp_production_begin_transaction(production, &transaction, &error);
   if (status != PP_OK || transaction == NULL) {
