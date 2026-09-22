@@ -86,13 +86,16 @@ stability milestone is declared.
 
 ## Benchmark observations
 
-The existing Criterion suite remains an informational scale baseline. A quick
-run on 2026-09-19 at commit `ed56372`, using Rust 1.98.1 on Linux 7.2.5, an AMD
-Ryzen 7 4800H, and Btrfs, measured 70.221–70.524 ms to fingerprint/import 1,000
-small files, 304.48–313.36 µs to open 10,000 assets, 10.313–10.366 ms to resolve
-beneath a root with 3,000 candidates, and 247.74–252.96 µs to commit one
-prepared import. Quick mode and the non-isolated machine make these regression
-reference points, not performance promises or release gates.
+The Criterion suite remains an informational scale baseline. Its resolver
+fixture now sends 3,000 same-size decoys through fingerprint verification, and
+its 10,000-asset fixture enumerates representations, resources, and non-empty
+identity evidence. A quick run on 2026-09-22 at commit `1e92194`, using Rust
+1.98.1 on Linux 7.2.5, an AMD Ryzen 7 4800H, and Btrfs, measured 257.42–271.36
+ms to fingerprint/import 1,000 small files, 1.0835–1.0980 s to load 10,000
+assets with fingerprints, 84.330–86.524 ms to resolve beneath the 3,000-decoy
+root, and 742.71–756.72 µs to commit one prepared import. Quick mode and the
+non-isolated machine make these regression reference points, not performance
+promises or release gates.
 
 ## Known limitations
 
