@@ -3,9 +3,11 @@
 use std::{fs, path::Path};
 
 use postproject_core::{
-    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, FrameRange,
-    ImageSequencePattern, OriginalMediaImport, RationalRate, RepresentationAvailability,
+    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ExternalIdentifier,
+    FrameRange, IdentifierScheme, ImageSequencePattern, MetadataProperty, MetadataValue, ObjectRef,
+    OriginalMediaImport, PropertyId, RationalRate, RepresentationAvailability,
     RepresentationImport, RepresentationResolution, Resource, ResourceRole, ToolIdentity,
+    VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, prepare_image_sequence_representation,
@@ -20,6 +22,22 @@ struct Fixture {
     ordered: RepresentationImport,
     proxy: RepresentationImport,
     activity: Activity,
+}
+
+fn iptc_property(name: &str) -> MetadataProperty {
+    MetadataProperty::new(
+        VocabularyId::new("http://iptc.org/std/videometadatahub/1.0").expect("valid vocabulary"),
+        PropertyId::new(name).expect("valid property"),
+    )
+}
+
+fn material_umid() -> ExternalIdentifier {
+    ExternalIdentifier::new(
+        IdentifierScheme::new("urn:smpte:umid").expect("valid scheme"),
+        "060A2B340101010501010D4313000000A1B2C3D4E5F60718293A4B5C6D7E8F90",
+        Some("material".to_owned()),
+    )
+    .expect("valid UMID fixture")
 }
 
 #[test]
@@ -140,6 +158,20 @@ fn persist_fixture(production_path: &Path, fixture: &Fixture) {
         transaction
             .create_activity(&fixture.activity)
             .expect("stage provenance");
+        let asset = ObjectRef::Asset(fixture.original.asset().id());
+        transaction
+            .add_external_identifier(asset, &material_umid())
+            .expect("stage material identifier");
+        let keywords = iptc_property("keywords");
+        for value in ["interview", "night"] {
+            transaction
+                .add_metadata_value(
+                    asset,
+                    &keywords,
+                    &MetadataValue::string(value).expect("valid keyword"),
+                )
+                .expect("stage keyword");
+        }
         transaction.commit().expect("commit additions");
     }
 }
@@ -151,6 +183,7 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture) {
     let sequence_id = fixture.sequence.representation().id();
     let ordered_id = fixture.ordered.representation().id();
     let proxy_id = fixture.proxy.representation().id();
+    let asset = ObjectRef::Asset(asset_id);
     let representations = reopened
         .representations(asset_id)
         .expect("load representations");
@@ -169,6 +202,21 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture) {
     assert_eq!(
         fixture.activity.tool().expect("activity tool").version(),
         Some("8.0")
+    );
+    assert_eq!(
+        reopened
+            .external_identifiers(asset)
+            .expect("load material identifier"),
+        [material_umid()]
+    );
+    assert_eq!(
+        reopened
+            .metadata_values(asset, &iptc_property("keywords"))
+            .expect("load keywords"),
+        [
+            MetadataValue::string("interview").expect("valid keyword"),
+            MetadataValue::string("night").expect("valid keyword"),
+        ]
     );
 
     let stored_sequence = representations
