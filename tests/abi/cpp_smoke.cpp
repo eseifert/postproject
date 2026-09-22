@@ -82,6 +82,13 @@ int main(int argc, char **argv) {
     if (!production.containsAsset(asset_id)) {
       return 8;
     }
+    const auto assets = production.assets();
+    if (assets.size() != 1 || assets[0].id != asset_id ||
+        assets[0].created_at_unix_micros == 0 ||
+        assets[0].display_name != std::string("C++ asset") ||
+        assets[0].import_source.has_value()) {
+      return 24;
+    }
     const auto representations = production.representations(asset_id);
     if (representations.size() != 1 ||
         representations[0].asset_id != asset_id ||

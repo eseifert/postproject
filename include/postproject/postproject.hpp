@@ -246,6 +246,13 @@ struct RevisionEvent final {
   RevisionEventPayload payload;
 };
 
+struct Asset final {
+  Uuid id;
+  std::int64_t created_at_unix_micros;
+  std::optional<std::string> display_name;
+  std::optional<std::string> import_source;
+};
+
 enum class RepresentationKind : std::uint32_t {
   original = PP_REPRESENTATION_ORIGINAL,
   proxy = PP_REPRESENTATION_PROXY,
@@ -411,6 +418,14 @@ struct ErrorDeleter final {
 };
 
 using ErrorHandle = std::unique_ptr<pp_error_t, ErrorDeleter>;
+
+struct AssetSetDeleter final {
+  void operator()(pp_asset_set_t *assets) const noexcept {
+    pp_asset_set_release(assets);
+  }
+};
+
+using AssetSetHandle = std::unique_ptr<pp_asset_set_t, AssetSetDeleter>;
 
 struct ResolutionSetDeleter final {
   void operator()(pp_resolution_set_t *resolutions) const noexcept {
@@ -1581,6 +1596,39 @@ public:
         pp_production_asset_exists(production_, &value, &exists, &error);
     detail::throw_if_error(status, error);
     return exists != 0;
+  }
+
+  [[nodiscard]] std::vector<Asset> assets() const {
+    pp_asset_set_t *raw_assets = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_production_assets(production_, &raw_assets, &error);
+    detail::throw_if_error(status, error);
+    detail::AssetSetHandle assets(raw_assets);
+
+    std::vector<Asset> result;
+    const std::uint64_t count = pp_asset_set_count(assets.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      pp_uuid_t id{};
+      std::int64_t created_at_unix_micros = 0;
+      const char *display_name = nullptr;
+      const char *import_source = nullptr;
+      pp_error_t *item_error = nullptr;
+      const pp_error_code_t item_status = pp_asset_set_get(
+          assets.get(), index, &id, &created_at_unix_micros, &display_name,
+          &import_source, &item_error);
+      detail::throw_if_error(item_status, item_error);
+      result.push_back(
+          {detail::uuid(id), created_at_unix_micros,
+           display_name != nullptr
+               ? std::optional<std::string>(std::string(display_name))
+               : std::nullopt,
+           import_source != nullptr
+               ? std::optional<std::string>(std::string(import_source))
+               : std::nullopt});
+    }
+    return result;
   }
 
   [[nodiscard]] std::vector<Representation>
