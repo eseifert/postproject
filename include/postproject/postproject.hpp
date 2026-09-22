@@ -968,6 +968,138 @@ HostObjectBinding::fromString(std::string_view value) {
   return {detail::uuid(production_id), detail::object_ref(object)};
 }
 
+// Move-only immutable input that can be reused across transaction calls.
+class MetadataInput final {
+public:
+  [[nodiscard]] static MetadataInput plainString(std::string_view value) {
+    const std::string native = detail::checked_string(value, "metadata string");
+    pp_metadata_input_t *input = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_metadata_input_create_string(
+        native.c_str(), nullptr, &input, &error);
+    return checked(status, input, error);
+  }
+
+  [[nodiscard]] static MetadataInput languageString(
+      std::string_view value, std::string_view language) {
+    const std::string native = detail::checked_string(value, "metadata string");
+    const std::string native_language =
+        detail::checked_string(language, "metadata language");
+    pp_metadata_input_t *input = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_metadata_input_create_string(
+        native.c_str(), native_language.c_str(), &input, &error);
+    return checked(status, input, error);
+  }
+
+  [[nodiscard]] static MetadataInput signedInteger(std::int64_t value) {
+    pp_metadata_input_t *input = nullptr;
+    pp_error_t *error = nullptr;
+    return checked(pp_metadata_input_create_i64(value, &input, &error), input,
+                   error);
+  }
+
+  [[nodiscard]] static MetadataInput unsignedInteger(std::uint64_t value) {
+    pp_metadata_input_t *input = nullptr;
+    pp_error_t *error = nullptr;
+    return checked(pp_metadata_input_create_u64(value, &input, &error), input,
+                   error);
+  }
+
+  [[nodiscard]] static MetadataInput decimal(std::string_view coefficient,
+                                             std::uint32_t scale) {
+    const std::string native =
+        detail::checked_string(coefficient, "decimal coefficient");
+    pp_metadata_input_t *input = nullptr;
+    pp_error_t *error = nullptr;
+    return checked(pp_metadata_input_create_decimal(
+                       native.c_str(), scale, &input, &error),
+                   input, error);
+  }
+
+  [[nodiscard]] static MetadataInput boolean(bool value) {
+    pp_metadata_input_t *input = nullptr;
+    pp_error_t *error = nullptr;
+    return checked(pp_metadata_input_create_bool(value ? 1 : 0, &input, &error),
+                   input, error);
+  }
+
+  [[nodiscard]] static MetadataInput timestamp(std::int64_t unix_micros) {
+    pp_metadata_input_t *input = nullptr;
+    pp_error_t *error = nullptr;
+    return checked(pp_metadata_input_create_timestamp(unix_micros, &input,
+                                                      &error),
+                   input, error);
+  }
+
+  [[nodiscard]] static MetadataInput uri(std::string_view value) {
+    const std::string native = detail::checked_string(value, "metadata URI");
+    pp_metadata_input_t *input = nullptr;
+    pp_error_t *error = nullptr;
+    return checked(
+        pp_metadata_input_create_uri(native.c_str(), &input, &error), input,
+        error);
+  }
+
+  [[nodiscard]] static MetadataInput
+  bytes(const std::vector<std::uint8_t> &value) {
+    pp_metadata_input_t *input = nullptr;
+    pp_error_t *error = nullptr;
+    return checked(pp_metadata_input_create_bytes(
+                       value.data(), static_cast<std::uint64_t>(value.size()),
+                       &input, &error),
+                   input, error);
+  }
+
+  [[nodiscard]] static MetadataInput rational(std::int64_t numerator,
+                                              std::uint64_t denominator) {
+    pp_metadata_input_t *input = nullptr;
+    pp_error_t *error = nullptr;
+    return checked(pp_metadata_input_create_rational(
+                       numerator, denominator, &input, &error),
+                   input, error);
+  }
+
+  [[nodiscard]] static MetadataInput reference(const ObjectRef &target) {
+    const pp_object_ref_t native = detail::native_object_ref(target);
+    pp_metadata_input_t *input = nullptr;
+    pp_error_t *error = nullptr;
+    return checked(
+        pp_metadata_input_create_reference(&native, &input, &error), input,
+        error);
+  }
+
+  MetadataInput(const MetadataInput &) = delete;
+  MetadataInput &operator=(const MetadataInput &) = delete;
+
+  MetadataInput(MetadataInput &&other) noexcept
+      : input_(std::exchange(other.input_, nullptr)) {}
+
+  MetadataInput &operator=(MetadataInput &&other) noexcept {
+    if (this != &other) {
+      pp_metadata_input_release(input_);
+      input_ = std::exchange(other.input_, nullptr);
+    }
+    return *this;
+  }
+
+  ~MetadataInput() { pp_metadata_input_release(input_); }
+
+private:
+  friend class Transaction;
+
+  explicit MetadataInput(pp_metadata_input_t *input) noexcept : input_(input) {}
+
+  [[nodiscard]] static MetadataInput checked(pp_error_code_t status,
+                                             pp_metadata_input_t *input,
+                                             pp_error_t *error) {
+    detail::throw_if_error(status, error);
+    return MetadataInput(input);
+  }
+
+  pp_metadata_input_t *input_;
+};
+
 // Move-only and caller-serialized. Do not call one Transaction concurrently.
 class Transaction final {
 public:
@@ -1034,6 +1166,21 @@ public:
   void removeExternalIdentifier(const ObjectRef &target,
                                 const ExternalIdentifier &identifier) {
     mutate_external_identifier(true, target, identifier);
+  }
+
+  void addMetadataValue(const ObjectRef &target, std::string_view vocabulary,
+                        std::string_view property,
+                        const MetadataInput &input) {
+    const pp_object_ref_t native_target = detail::native_object_ref(target);
+    const std::string native_vocabulary =
+        detail::checked_string(vocabulary, "metadata vocabulary");
+    const std::string native_property =
+        detail::checked_string(property, "metadata property");
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_add_metadata_value(
+        transaction_, &native_target, native_vocabulary.c_str(),
+        native_property.c_str(), input.input_, &error);
+    detail::throw_if_error(status, error);
   }
 
   Uuid createActivity(const ActivitySpec &spec) {
