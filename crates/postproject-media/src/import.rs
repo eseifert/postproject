@@ -12,7 +12,9 @@ use postproject_core::{
     Resource, ResourceId, ResourceMember, ResourceRole, Result, Timestamp,
 };
 
-use crate::{canonical_file_uri, fingerprint_file, fingerprint_representation};
+use crate::{
+    canonical_file_uri, fingerprint_file, fingerprint_image_sequence, fingerprint_representation,
+};
 
 /// Explicit filesystem description of one compact image sequence.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,9 +149,10 @@ fn prepare_single_file_representation_at(
 
 /// Prepares a compact image-sequence representation for an existing asset.
 ///
-/// The source is explicit: this verifies only that its locator is a directory
-/// and records the caller-supplied frame domain and exceptions. Automatic
-/// sequence discovery and filesystem frame inventory are separate operations.
+/// The source is explicit: this validates its directory, fingerprints a
+/// deterministic sample of declared members, and records the caller-supplied
+/// frame domain and exceptions. Automatic sequence discovery and a complete
+/// filesystem frame inventory are separate operations.
 ///
 /// # Errors
 ///
@@ -187,14 +190,20 @@ pub fn prepare_image_sequence_representation(
         source.rate,
         source.known_missing_frames.clone(),
     )?;
+    let sequence_fingerprint = fingerprint_image_sequence(&source.directory, &descriptor)?
+        .into_parts()
+        .0;
+    let structure = ContentStructure::image_sequence(descriptor);
+    let resource = Resource::new(resource_id, vec![sequence_fingerprint], None);
+    let representation_fingerprint =
+        fingerprint_representation(&structure, std::slice::from_ref(&resource))?;
     let representation = Representation::new(
         RepresentationId::new(),
         asset_id,
         kind,
-        ContentStructure::image_sequence(descriptor),
-        Vec::new(),
+        structure,
+        vec![representation_fingerprint],
     );
-    let resource = Resource::new(resource_id, Vec::new(), None);
     let locator = Locator::new(
         LocatorId::new(),
         resource_id,
@@ -394,14 +403,21 @@ mod tests {
     }
 
     #[test]
-    fn prepares_compact_image_sequence_without_scanning_frames() {
+    fn prepares_compact_image_sequence_with_sampled_fingerprints() {
         let directory = tempfile::tempdir().expect("create directory");
+        for frame in [1_001, 1_002, 1_005] {
+            fs::write(
+                directory.path().join(format!("shot.{frame:04}.exr")),
+                format!("frame {frame}"),
+            )
+            .expect("write sampled frame");
+        }
         let source = ImageSequenceSource::new(
             directory.path(),
             ImageSequencePattern::new("shot.", ".exr", 4).expect("valid pattern"),
-            FrameRange::new(1_001, 1_100, 1).expect("valid range"),
+            FrameRange::new(1_001, 1_005, 1).expect("valid range"),
             RationalRate::new(24_000, 1_001).expect("valid rate"),
-            vec![1_027],
+            vec![1_003],
         );
 
         let prepared = prepare_image_sequence_representation(
@@ -416,9 +432,10 @@ mod tests {
             .content_structure()
             .image_sequence_descriptor()
             .expect("sequence descriptor");
-        assert_eq!(descriptor.known_missing_frames(), &[1_027]);
+        assert_eq!(descriptor.known_missing_frames(), &[1_003]);
         assert_eq!(prepared.resources().len(), 1);
-        assert!(prepared.resources()[0].fingerprints().is_empty());
+        assert_eq!(prepared.resources()[0].fingerprints().len(), 1);
+        assert_eq!(prepared.representation().fingerprints().len(), 1);
         assert!(prepared.locators()[0].uri().starts_with("file:"));
     }
 
