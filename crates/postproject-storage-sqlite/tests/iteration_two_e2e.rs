@@ -298,6 +298,7 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture, relocated: &Path) 
     );
     assert_revision_feed(&reopened, fixture);
     relink_moved_media(&mut reopened, fixture, relocated);
+    assert_original_online(&reopened, fixture);
     assert_identifiers_and_metadata(&reopened, fixture);
 
     let stored_sequence = representations
@@ -344,6 +345,28 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture, relocated: &Path) 
             .iter()
             .map(Resource::id)
             .collect::<Vec<_>>()
+    );
+}
+
+fn assert_original_online(production: &SqliteProduction, fixture: &Fixture) {
+    let representation = fixture.original.representation();
+    let resource = production
+        .resources(representation.id())
+        .expect("load original resource")
+        .remove(0);
+    let resolution = MediaResolver::default()
+        .resolve_resource(
+            &resource,
+            representation.content_structure(),
+            &production
+                .locators(resource.id())
+                .expect("load replacement locator"),
+            production.production().media_roots(),
+        )
+        .expect("resolve relinked original");
+    assert_eq!(
+        resolution.state(),
+        ResourceResolutionState::OnlineAtKnownLocator
     );
 }
 
