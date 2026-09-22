@@ -41,7 +41,9 @@ CMake production against each prefix, builds with warnings denied, and runs
 lifecycle, identity, transaction commit/rollback, relocation,
 structured-evidence, confirmation, move-ownership, and error-propagation checks.
 The consumer configuration and build never invokes Cargo. Each platform package
-is uploaded as a CI artifact.
+is uploaded as a CI artifact. The same job builds and runs the C and C++
+quickstarts from their installed locations and runs the installed Python
+quickstart against the packaged media fixture.
 
 The native sanitizer job rebuilds both consumers with AddressSanitizer and
 UndefinedBehaviorSanitizer, enables leak detection, and runs their real lifecycle
@@ -59,3 +61,10 @@ locator is offline, resolves two unique resources, refuses to choose between two
 byte-identical candidates for the third, explicitly confirms all choices in one
 transaction, reopens the production, and resolves from persisted locators with no
 roots supplied.
+
+The iteration-two E2E test creates four representations on one asset, attaches
+typed metadata and an external identifier, records proxy-generation
+provenance, and verifies one atomic semantic revision. It then moves the
+single-file and compound media, discovers and confirms replacement locators,
+retires the old locators and root, removes one sequence frame, and verifies the
+resulting online/partial states and second revision after reopen.
