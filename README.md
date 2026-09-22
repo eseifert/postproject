@@ -15,9 +15,10 @@ industry exchange models without claiming normative compliance.
 Current capabilities include stable logical asset IDs, single-resource and
 compound representations, compact image-sequence descriptors, multiple
 resource locators, typed fingerprints, structured metadata, activity-based
-provenance, deterministic relinking with explicit ambiguity, and a durable
-semantic revision feed. SQLite persistence, the public C ABI, the C++17 RAII
-wrapper, and the demonstrator CLI expose those capabilities.
+provenance, deterministic relinking with explicit ambiguity, media-root and
+locator lifecycle management, and a durable semantic revision feed. SQLite
+persistence, the public C ABI, the C++17 RAII wrapper, the Python 3.11 binding,
+and the demonstrator CLI expose those capabilities.
 
 PostProject deliberately does not provide a timeline editor, decoder/encoder,
 job runner, collaboration server, MAM service, or automatic registry/network
@@ -101,6 +102,7 @@ Standalone installed-package examples live in [`examples/c`](examples/c) and
 - [Standards boundaries](docs/src/concepts/standards-boundaries.md)
 - [Roadmap](docs/roadmap.md)
 - [Iteration-one acceptance report](docs/iteration-one-report.md)
+- [Iteration-two acceptance report](docs/iteration-two-report.md)
 
 Build the documentation book with `mdbook build docs`.
 
