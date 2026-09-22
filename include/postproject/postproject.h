@@ -577,9 +577,18 @@ PP_API pp_error_code_t pp_transaction_add_package_representation(
 PP_API pp_error_code_t pp_transaction_add_media_root(
     pp_transaction_t *transaction, const char *path, const char *label,
     int32_t priority, pp_uuid_t *out_root_id, pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_set_media_root_enabled(
+    pp_transaction_t *transaction, const pp_uuid_t *root_id, uint8_t enabled,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_remove_media_root(
+    pp_transaction_t *transaction, const pp_uuid_t *root_id,
+    pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_confirm_locator(
     pp_transaction_t *transaction, const pp_uuid_t *resource_id,
     const char *uri, pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_retire_locator(
+    pp_transaction_t *transaction, const pp_uuid_t *locator_id,
+    pp_error_t **out_error);
 /* Scheme and value are required borrowed UTF-8 without embedded NUL. Qualifier
  * may be NULL. The complete mutation is validated and persisted at commit. */
 PP_API pp_error_code_t pp_transaction_add_external_identifier(

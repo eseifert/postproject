@@ -290,7 +290,10 @@ enum StagedMutation {
     Import(OriginalMediaImport),
     Representation(RepresentationImport),
     MediaRoot(MediaRoot),
+    SetMediaRootEnabled(MediaRootId, bool),
+    RemoveMediaRoot(MediaRootId),
     Locator(Locator),
+    RetireLocator(postproject_core::LocatorId),
     AddExternalIdentifier(ObjectRef, ExternalIdentifier),
     RemoveExternalIdentifier(ObjectRef, ExternalIdentifier),
     AddMetadataValue(ObjectRef, MetadataProperty, MetadataValue),
@@ -3049,6 +3052,79 @@ pub unsafe extern "C" fn pp_transaction_add_media_root(
     }
 }
 
+/// Stages enabling or disabling one configured media root.
+///
+/// Reapplying the current state is an idempotent no-op at commit.
+///
+/// # Safety
+///
+/// `transaction` must be live, `root_id` readable, `enabled` exactly zero or
+/// one, and `out_error` null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_set_media_root_enabled(
+    transaction: *mut PpTransaction,
+    root_id: *const PpUuid,
+    enabled: u8,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before staging copied values.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let root_id = root_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("root_id must not be null"))?;
+            let enabled = match enabled {
+                0 => false,
+                1 => true,
+                _ => return Err(invalid_argument("enabled must be zero or one")),
+            };
+            transaction
+                .mutations
+                .push(StagedMutation::SetMediaRootEnabled(
+                    MediaRootId::from_bytes(root_id.bytes),
+                    enabled,
+                ));
+            Ok(())
+        })
+    }
+}
+
+/// Stages removal of one configured media root.
+///
+/// # Safety
+///
+/// `transaction` must be live, `root_id` readable, and `out_error` null or
+/// writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_remove_media_root(
+    transaction: *mut PpTransaction,
+    root_id: *const PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before staging copied values.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let root_id = root_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("root_id must not be null"))?;
+            transaction
+                .mutations
+                .push(StagedMutation::RemoveMediaRoot(MediaRootId::from_bytes(
+                    root_id.bytes,
+                )));
+            Ok(())
+        })
+    }
+}
+
 /// Stages an explicitly confirmed URI for a resource.
 ///
 /// The URI is borrowed UTF-8 without embedded NUL and must be absolute.
@@ -3086,6 +3162,38 @@ pub unsafe extern "C" fn pp_transaction_confirm_locator(
                 uri.to_owned(),
             )?;
             transaction.mutations.push(StagedMutation::Locator(locator));
+            Ok(())
+        })
+    }
+}
+
+/// Stages retirement of one superseded resource locator.
+///
+/// # Safety
+///
+/// `transaction` must be live, `locator_id` readable, and `out_error` null or
+/// writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_retire_locator(
+    transaction: *mut PpTransaction,
+    locator_id: *const PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before staging copied values.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let locator_id = locator_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("locator_id must not be null"))?;
+            transaction
+                .mutations
+                .push(StagedMutation::RetireLocator(
+                    postproject_core::LocatorId::from_bytes(locator_id.bytes),
+                ));
             Ok(())
         })
     }
@@ -4096,7 +4204,16 @@ impl PpTransaction {
                         transaction.add_representation(import)?;
                     }
                     StagedMutation::MediaRoot(root) => transaction.add_media_root(root.clone())?,
+                    StagedMutation::SetMediaRootEnabled(root_id, enabled) => {
+                        transaction.set_media_root_enabled(*root_id, *enabled)?;
+                    }
+                    StagedMutation::RemoveMediaRoot(root_id) => {
+                        transaction.remove_media_root(*root_id)?;
+                    }
                     StagedMutation::Locator(locator) => transaction.add_locator(locator)?,
+                    StagedMutation::RetireLocator(locator_id) => {
+                        transaction.retire_locator(*locator_id)?;
+                    }
                     StagedMutation::AddExternalIdentifier(target, identifier) => {
                         transaction.add_external_identifier(*target, identifier)?;
                     }
