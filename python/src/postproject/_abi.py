@@ -308,6 +308,7 @@ EXPORTED_SYMBOLS = (
     "pp_revision_set_get",
     "pp_revision_set_release",
     "pp_transaction_add_external_identifier",
+    "pp_transaction_add_image_sequence_representation",
     "pp_transaction_add_media_root",
     "pp_transaction_add_metadata_value",
     "pp_transaction_add_single_file_representation",
@@ -518,6 +519,8 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_transaction_import_media.restype = ErrorCode
     lib.pp_transaction_add_single_file_representation.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), RepresentationKind, ctypes.c_char_p, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_add_single_file_representation.restype = ErrorCode
+    lib.pp_transaction_add_image_sequence_representation.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), RepresentationKind, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint8, ctypes.c_int64, ctypes.c_int64, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_int64), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_transaction_add_image_sequence_representation.restype = ErrorCode
     lib.pp_transaction_add_media_root.argtypes = [ctypes.POINTER(Transaction), ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int32, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_add_media_root.restype = ErrorCode
     lib.pp_transaction_confirm_locator.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Error))]

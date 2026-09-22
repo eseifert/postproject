@@ -520,6 +520,15 @@ PP_API pp_error_code_t pp_transaction_add_single_file_representation(
     pp_transaction_t *transaction, const pp_uuid_t *asset_id,
     pp_representation_kind_t kind, const char *path,
     pp_uuid_t *out_representation_id, pp_error_t **out_error);
+/* The missing-frame array is borrowed and may be NULL only when its count is
+ * zero. The directory and pattern strings are required borrowed UTF-8. */
+PP_API pp_error_code_t pp_transaction_add_image_sequence_representation(
+    pp_transaction_t *transaction, const pp_uuid_t *asset_id,
+    pp_representation_kind_t kind, const char *directory, const char *prefix,
+    const char *suffix, uint8_t padding, int64_t start, int64_t end,
+    uint32_t step, uint32_t rate_numerator, uint32_t rate_denominator,
+    const int64_t *missing_frames, uint64_t missing_frame_count,
+    pp_uuid_t *out_representation_id, pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_add_media_root(
     pp_transaction_t *transaction, const char *path, const char *label,
     int32_t priority, pp_uuid_t *out_root_id, pp_error_t **out_error);

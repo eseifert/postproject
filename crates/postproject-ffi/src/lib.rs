@@ -27,15 +27,17 @@ use std::{
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     AssetId, AvailabilityIssue, AvailabilityIssueKind, Error, ErrorKind, EvidenceKind,
-    ExternalIdentifier, HostObjectBinding, IdentifierScheme, Locator, MAX_ACTIVITY_EDGES,
-    MediaRoot, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport,
-    ProductionId, PropertyId, RepresentationAvailability, RepresentationId, RepresentationImport,
+    ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern,
+    Locator, MAX_ACTIVITY_EDGES, MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MetadataProperty,
+    MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId, PropertyId,
+    RationalRate, RepresentationAvailability, RepresentationId, RepresentationImport,
     RepresentationKind, RepresentationResolution, ResolutionEvidence, ResourceId,
     ResourceResolutionState, RevisionContext, RevisionId, Timestamp, ToolIdentity,
     TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
-    MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
+    ImageSequenceSource, MediaResolver, prepare_confirmed_locator,
+    prepare_image_sequence_representation, prepare_media_root, prepare_original_media,
     prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
@@ -2429,6 +2431,99 @@ pub unsafe extern "C" fn pp_transaction_add_single_file_representation(
                 AssetId::from_bytes(asset_id.bytes),
                 representation_kind_from_abi(kind)?,
                 Path::new(path),
+            )?;
+            out_representation_id.write(PpUuid {
+                bytes: import.representation().id().into_bytes(),
+            });
+            transaction
+                .mutations
+                .push(StagedMutation::Representation(import));
+            Ok(())
+        })
+    }
+}
+
+/// Stages one compact filesystem-backed image-sequence representation.
+///
+/// The missing-frame array is borrowed only for this call and may be null when
+/// its count is zero.
+///
+/// # Safety
+///
+/// Handle, UUID, string, array, and output pointers must satisfy the public
+/// header contract; `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn pp_transaction_add_image_sequence_representation(
+    transaction: *mut PpTransaction,
+    asset_id: *const PpUuid,
+    kind: u32,
+    directory: *const c_char,
+    prefix: *const c_char,
+    suffix: *const c_char,
+    padding: u8,
+    start: i64,
+    end: i64,
+    step: u32,
+    rate_numerator: u32,
+    rate_denominator: u32,
+    missing_frames: *const i64,
+    missing_frame_count: u64,
+    out_representation_id: *mut PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Null pointers and counts are validated before borrowed values are
+    // read, and no borrow escapes this call.
+    unsafe {
+        initialize_uuid(out_representation_id);
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let asset_id = asset_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("asset_id must not be null"))?;
+            if out_representation_id.is_null() {
+                return Err(invalid_argument("out_representation_id must not be null"));
+            }
+            let directory = required_utf8(directory, "directory")?;
+            if directory.is_empty() {
+                return Err(invalid_argument("directory must not be empty"));
+            }
+            let missing_frame_count = usize::try_from(missing_frame_count)
+                .map_err(|_| invalid_argument("missing frame count is too large"))?;
+            if missing_frame_count > MAX_SEQUENCE_EXCEPTIONS {
+                return Err(invalid_argument(format!(
+                    "missing frame count must not exceed {MAX_SEQUENCE_EXCEPTIONS}"
+                )));
+            }
+            let missing_frames = if missing_frame_count == 0 {
+                Vec::new()
+            } else {
+                if missing_frames.is_null() {
+                    return Err(invalid_argument(
+                        "missing_frames must not be null when count is nonzero",
+                    ));
+                }
+                // SAFETY: The caller guarantees the checked count of readable values.
+                std::slice::from_raw_parts(missing_frames, missing_frame_count).to_vec()
+            };
+            let source = ImageSequenceSource::new(
+                Path::new(directory),
+                ImageSequencePattern::new(
+                    required_utf8(prefix, "prefix")?,
+                    required_utf8(suffix, "suffix")?,
+                    padding,
+                )?,
+                FrameRange::new(start, end, step)?,
+                RationalRate::new(rate_numerator, rate_denominator)?,
+                missing_frames,
+            );
+            let import = prepare_image_sequence_representation(
+                AssetId::from_bytes(asset_id.bytes),
+                representation_kind_from_abi(kind)?,
+                &source,
             )?;
             out_representation_id.write(PpUuid {
                 bytes: import.representation().id().into_bytes(),
