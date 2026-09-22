@@ -1,17 +1,22 @@
 //! End-to-end coverage for compound representations on one logical asset.
 
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ExternalIdentifier,
     FrameRange, IdentifierScheme, ImageSequencePattern, MediaRoot, MetadataField, MetadataProperty,
     MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, PropertyId, RationalRate,
     RepresentationAvailability, RepresentationImport, RepresentationResolution, Resource,
-    ResourceRole, RevisionContext, RevisionEventKind, ToolIdentity, VocabularyId,
+    ResourceResolutionState, ResourceRole, RevisionContext, RevisionEventKind, ToolIdentity,
+    VocabularyId,
 };
 use postproject_media::{
-    FileResourceSource, ImageSequenceSource, MediaResolver, prepare_image_sequence_representation,
-    prepare_media_root, prepare_ordered_parts_representation, prepare_original_media,
+    FileResourceSource, ImageSequenceSource, MediaResolver, prepare_confirmed_locator,
+    prepare_image_sequence_representation, prepare_media_root,
+    prepare_ordered_parts_representation, prepare_original_media,
     prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
@@ -68,9 +73,19 @@ fn one_asset_round_trips_compound_media_and_proxy_provenance() {
     let production_path = directory.path().join("production.pproj");
     let fixture = prepare_fixture(directory.path());
     persist_fixture(&production_path, &fixture);
-    fs::remove_file(directory.path().join("plates/shot010.1003.exr"))
-        .expect("remove a declared frame");
-    assert_reopened(&production_path, &fixture);
+    let relocated = relocate_media(directory.path());
+    fs::remove_file(relocated.join("plates/shot010.1003.exr")).expect("remove a declared frame");
+    assert_reopened(&production_path, &fixture, &relocated);
+}
+
+fn relocate_media(root: &Path) -> PathBuf {
+    let relocated = root.join("relocated");
+    fs::create_dir(&relocated).expect("create relocation directory");
+    for directory in ["originals", "plates", "spans"] {
+        fs::rename(root.join(directory), relocated.join(directory))
+            .expect("relocate media directory");
+    }
+    relocated
 }
 
 fn prepare_fixture(root: &Path) -> Fixture {
@@ -255,8 +270,8 @@ fn persist_fixture(production_path: &Path, fixture: &Fixture) {
     );
 }
 
-fn assert_reopened(production_path: &Path, fixture: &Fixture) {
-    let reopened = SqliteProduction::open(production_path).expect("reopen production");
+fn assert_reopened(production_path: &Path, fixture: &Fixture, relocated: &Path) {
+    let mut reopened = SqliteProduction::open(production_path).expect("reopen production");
     let asset_id = fixture.original.asset().id();
     let original_id = fixture.original.representation().id();
     let sequence_id = fixture.sequence.representation().id();
@@ -282,6 +297,7 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture) {
         Some("8.0")
     );
     assert_revision_feed(&reopened, fixture);
+    relink_moved_media(&mut reopened, fixture, relocated);
     assert_identifiers_and_metadata(&reopened, fixture);
 
     let stored_sequence = representations
@@ -329,6 +345,90 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture) {
             .map(Resource::id)
             .collect::<Vec<_>>()
     );
+}
+
+fn relink_moved_media(production: &mut SqliteProduction, fixture: &Fixture, relocated: &Path) {
+    let original_id = fixture.original.representation().id();
+    let original_resource = production
+        .resources(original_id)
+        .expect("load original resource")
+        .remove(0);
+    let original_locators = production
+        .locators(original_resource.id())
+        .expect("load original locators");
+    let replacement_root = prepare_media_root(
+        relocated.join("originals"),
+        Some("Relocated originals".to_owned()),
+        0,
+    )
+    .expect("prepare replacement root");
+    let discovered = MediaResolver::default()
+        .resolve_resource(
+            &original_resource,
+            fixture.original.representation().content_structure(),
+            &original_locators,
+            std::slice::from_ref(&replacement_root),
+        )
+        .expect("discover relocated original");
+    assert_eq!(discovered.state(), ResourceResolutionState::ResolvedExact);
+
+    let mut replacements = vec![
+        prepare_confirmed_locator(original_resource.id(), discovered.candidates()[0].uri())
+            .expect("prepare original locator"),
+    ];
+    let sequence_resource = fixture.sequence.resources()[0].id();
+    replacements.push(
+        prepare_confirmed_locator(
+            sequence_resource,
+            postproject_media::canonical_file_uri(relocated.join("plates")).expect("sequence URI"),
+        )
+        .expect("prepare sequence locator"),
+    );
+    for (index, resource) in fixture.ordered.resources().iter().enumerate() {
+        replacements.push(
+            prepare_confirmed_locator(
+                resource.id(),
+                postproject_media::canonical_file_uri(
+                    relocated
+                        .join("spans")
+                        .join(format!("span-{}.mxf", index + 1)),
+                )
+                .expect("span URI"),
+            )
+            .expect("prepare span locator"),
+        );
+    }
+
+    let mut retired = original_locators;
+    for representation in [&fixture.sequence, &fixture.ordered] {
+        for resource in representation.resources() {
+            retired.extend(
+                production
+                    .locators(resource.id())
+                    .expect("load compound locators"),
+            );
+        }
+    }
+    let mut transaction = production
+        .begin_transaction()
+        .expect("begin relink transaction");
+    transaction
+        .remove_media_root(fixture.media_root.id())
+        .expect("remove old root");
+    transaction
+        .add_media_root(replacement_root)
+        .expect("add replacement root");
+    for locator in &replacements {
+        transaction
+            .add_locator(locator)
+            .expect("add replacement locator");
+    }
+    for locator in retired {
+        transaction
+            .retire_locator(locator.id())
+            .expect("retire old locator");
+    }
+    transaction.commit().expect("commit relink");
 }
 
 fn assert_revision_feed(production: &SqliteProduction, fixture: &Fixture) {
