@@ -9,16 +9,20 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, DecimalValue, EvidenceKind,
-    ExternalIdentifier, IdentifierScheme, Locator, LocatorAvailability, MetadataAssertion,
-    MetadataField, MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity,
-    ProductionId, ProductionStoreTransaction, PropertyId, RationalValue, Representation,
-    RepresentationAvailability, RepresentationId, RepresentationKind, RepresentationResolution,
-    ResolutionEvidence, Resource, ResourceId, ResourceResolution, ResourceResolutionState,
-    Revision, RevisionContext, RevisionEvent, RevisionEventKind, RevisionId, Timestamp,
-    ToolIdentity, VocabularyId,
+    ExternalIdentifier, FrameRange, IdentifierScheme, ImageSequencePattern, Locator,
+    LocatorAvailability, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
+    MetadataValueKind, ObjectRef, OriginIdentity, ProductionId, ProductionStoreTransaction,
+    PropertyId, RationalRate, RationalValue, Representation, RepresentationAvailability,
+    RepresentationId, RepresentationKind, RepresentationResolution, ResolutionEvidence, Resource,
+    ResourceId, ResourceResolution, ResourceResolutionState, ResourceRole, Revision,
+    RevisionContext, RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity,
+    VocabularyId,
 };
 use postproject_media::{
-    MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
+    FileResourceSource, ImageSequenceSource, MediaResolver, prepare_confirmed_locator,
+    prepare_image_sequence_representation, prepare_media_root,
+    prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
+    prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use serde::{Deserialize, Serialize};
@@ -40,6 +44,8 @@ enum Command {
     Init(InitArgs),
     /// Inspect and manage production media.
     Media(MediaArgs),
+    /// Add representations to existing assets.
+    Representation(RepresentationArgs),
     /// Manage resolver search roots.
     Root(RootArgs),
     /// Manage external industry, vendor, and application identifiers.
@@ -106,6 +112,75 @@ struct MediaResolveArgs {
     /// Confirm one URI returned by this resolution and persist it.
     #[arg(long, value_name = "URI")]
     confirm: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct RepresentationArgs {
+    #[command(subcommand)]
+    command: RepresentationCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum RepresentationCommand {
+    /// Add a representation described by a JSON specification.
+    Add(RepresentationAddArgs),
+}
+
+#[derive(Debug, Args)]
+struct RepresentationAddArgs {
+    production: PathBuf,
+    asset_id: String,
+    #[arg(value_enum)]
+    kind: RepresentationKindArg,
+    /// JSON file containing a tagged representation source.
+    spec_file: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum RepresentationKindArg {
+    Original,
+    Proxy,
+    Optimized,
+    Derived,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "structure", rename_all = "snake_case")]
+enum RepresentationSourceSpec {
+    SingleFile {
+        path: PathBuf,
+    },
+    ImageSequence {
+        directory: PathBuf,
+        prefix: String,
+        suffix: String,
+        padding: u8,
+        start: i64,
+        end: i64,
+        step: u32,
+        rate_numerator: u32,
+        rate_denominator: u32,
+        #[serde(default)]
+        missing_frames: Vec<i64>,
+    },
+    OrderedParts {
+        members: Vec<FileResourceSpec>,
+    },
+    Package {
+        members: Vec<FileResourceSpec>,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+struct FileResourceSpec {
+    path: PathBuf,
+    role: String,
+    #[serde(default = "default_required")]
+    required: bool,
+}
+
+const fn default_required() -> bool {
+    true
 }
 
 #[derive(Debug, Args)]
@@ -747,6 +822,9 @@ fn execute(cli: Cli) -> Result<()> {
             MediaCommand::Show(args) => media_show(&args, cli.json),
             MediaCommand::Resolve(args) => media_resolve(args, cli.json),
         },
+        Command::Representation(args) => match args.command {
+            RepresentationCommand::Add(args) => representation_add(&args, cli.json),
+        },
         Command::Root(args) => match args.command {
             RootCommand::Add(args) => root_add(args, cli.json),
         },
@@ -831,6 +909,88 @@ fn media_add(args: MediaAddArgs, json: bool) -> Result<()> {
         println!("imported asset {} from {}", view.asset_id, view.uri);
         Ok(())
     }
+}
+
+fn representation_add(args: &RepresentationAddArgs, json: bool) -> Result<()> {
+    let asset_id = AssetId::from_str(&args.asset_id).context("parse asset ID")?;
+    let kind = match args.kind {
+        RepresentationKindArg::Original => RepresentationKind::Original,
+        RepresentationKindArg::Proxy => RepresentationKind::Proxy,
+        RepresentationKindArg::Optimized => RepresentationKind::Optimized,
+        RepresentationKindArg::Derived => RepresentationKind::Derived,
+    };
+    let encoded = fs::read(&args.spec_file)
+        .with_context(|| format!("read representation spec {}", args.spec_file.display()))?;
+    let spec: RepresentationSourceSpec =
+        serde_json::from_slice(&encoded).context("parse representation spec")?;
+    let prepared = match spec {
+        RepresentationSourceSpec::SingleFile { path } => {
+            prepare_single_file_representation(asset_id, kind, path)
+        }
+        RepresentationSourceSpec::ImageSequence {
+            directory,
+            prefix,
+            suffix,
+            padding,
+            start,
+            end,
+            step,
+            rate_numerator,
+            rate_denominator,
+            missing_frames,
+        } => prepare_image_sequence_representation(
+            asset_id,
+            kind,
+            &ImageSequenceSource::new(
+                directory,
+                ImageSequencePattern::new(prefix, suffix, padding)?,
+                FrameRange::new(start, end, step)?,
+                RationalRate::new(rate_numerator, rate_denominator)?,
+                missing_frames,
+            ),
+        ),
+        RepresentationSourceSpec::OrderedParts { members } => {
+            let sources = file_resource_sources(members)?;
+            prepare_ordered_parts_representation(asset_id, kind, &sources)
+        }
+        RepresentationSourceSpec::Package { members } => {
+            let sources = file_resource_sources(members)?;
+            prepare_package_representation(asset_id, kind, &sources)
+        }
+    }
+    .context("prepare representation")?;
+    let view = RepresentationRefView {
+        representation_id: prepared.representation().id().to_string(),
+    };
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin representation transaction")?;
+    set_cli_revision_context(&mut transaction, "Add representation")?;
+    transaction
+        .add_representation(&prepared)
+        .context("stage representation")?;
+    transaction.commit().context("commit representation")?;
+
+    if json {
+        print_json(&view)
+    } else {
+        println!("added representation {}", view.representation_id);
+        Ok(())
+    }
+}
+
+fn file_resource_sources(members: Vec<FileResourceSpec>) -> Result<Vec<FileResourceSource>> {
+    members
+        .into_iter()
+        .map(|member| {
+            Ok(FileResourceSource::new(
+                member.path,
+                ResourceRole::new(member.role)?,
+                member.required,
+            ))
+        })
+        .collect()
 }
 
 fn media_list(args: &ProductionArgs, json: bool) -> Result<()> {
