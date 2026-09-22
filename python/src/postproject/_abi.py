@@ -1,4 +1,4 @@
-"""Generated from /tmp/postproject-header-before-collection.h; do not edit manually."""
+"""Generated from include/postproject/postproject.h; do not edit manually."""
 
 from __future__ import annotations
 
@@ -70,6 +70,10 @@ class RevisionEvent(ctypes.Structure):
 
 
 class ActivityEdge(ctypes.Structure):
+    pass
+
+
+class FileResourceInput(ctypes.Structure):
     pass
 
 
@@ -201,12 +205,19 @@ ActivityEdge._fields_ = [
     ("role", ctypes.c_char_p),
 ]
 
+FileResourceInput._fields_ = [
+    ("path", ctypes.c_char_p),
+    ("role", ctypes.c_char_p),
+    ("required", ctypes.c_uint8),
+]
+
 
 PUBLIC_STRUCTS = {
     "pp_uuid_t": (Uuid, ("bytes",)),
     "pp_object_ref_t": (ObjectRef, ("kind", "id")),
     "pp_revision_event_t": (RevisionEvent, ("kind", "position", "asset_id", "representation_id", "resource_id", "locator_id", "media_root_id", "activity_id", "target", "structural_position", "identifier_scheme", "identifier_value", "identifier_qualifier", "vocabulary", "property", "activity_kind", "role")),
     "pp_activity_edge_t": (ActivityEdge, ("representation_id", "role")),
+    "pp_file_resource_input_t": (FileResourceInput, ("path", "role", "required")),
 }
 
 
@@ -311,6 +322,8 @@ EXPORTED_SYMBOLS = (
     "pp_transaction_add_image_sequence_representation",
     "pp_transaction_add_media_root",
     "pp_transaction_add_metadata_value",
+    "pp_transaction_add_ordered_parts_representation",
+    "pp_transaction_add_package_representation",
     "pp_transaction_add_single_file_representation",
     "pp_transaction_commit",
     "pp_transaction_confirm_locator",
@@ -521,6 +534,10 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_transaction_add_single_file_representation.restype = ErrorCode
     lib.pp_transaction_add_image_sequence_representation.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), RepresentationKind, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint8, ctypes.c_int64, ctypes.c_int64, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.c_int64), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_add_image_sequence_representation.restype = ErrorCode
+    lib.pp_transaction_add_ordered_parts_representation.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), RepresentationKind, ctypes.POINTER(FileResourceInput), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_transaction_add_ordered_parts_representation.restype = ErrorCode
+    lib.pp_transaction_add_package_representation.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), RepresentationKind, ctypes.POINTER(FileResourceInput), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_transaction_add_package_representation.restype = ErrorCode
     lib.pp_transaction_add_media_root.argtypes = [ctypes.POINTER(Transaction), ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int32, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_add_media_root.restype = ErrorCode
     lib.pp_transaction_confirm_locator.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Error))]

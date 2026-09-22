@@ -28,16 +28,17 @@ use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     AssetId, AvailabilityIssue, AvailabilityIssueKind, Error, ErrorKind, EvidenceKind,
     ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern,
-    Locator, MAX_ACTIVITY_EDGES, MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MetadataProperty,
-    MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId, PropertyId,
-    RationalRate, RepresentationAvailability, RepresentationId, RepresentationImport,
+    Locator, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS, MAX_SEQUENCE_EXCEPTIONS, MediaRoot,
+    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId,
+    PropertyId, RationalRate, RepresentationAvailability, RepresentationId, RepresentationImport,
     RepresentationKind, RepresentationResolution, ResolutionEvidence, ResourceId,
-    ResourceResolutionState, RevisionContext, RevisionId, Timestamp, ToolIdentity,
+    ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, Timestamp, ToolIdentity,
     TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
-    ImageSequenceSource, MediaResolver, prepare_confirmed_locator,
-    prepare_image_sequence_representation, prepare_media_root, prepare_original_media,
+    FileResourceSource, ImageSequenceSource, MediaResolver, prepare_confirmed_locator,
+    prepare_image_sequence_representation, prepare_media_root,
+    prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
     prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
@@ -149,6 +150,18 @@ pub struct PpActivityEdge {
     pub role: *const c_char,
 }
 
+/// Borrowed file and membership description supplied by a C caller.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct PpFileResourceInput {
+    /// Required NUL-terminated filesystem path.
+    pub path: *const c_char,
+    /// Required NUL-terminated namespaced resource role.
+    pub role: *const c_char,
+    /// Exactly zero or one.
+    pub required: u8,
+}
+
 /// Borrowed, fixed-layout semantic revision event.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -217,6 +230,12 @@ enum StagedMutation {
     AddMetadataValue(ObjectRef, MetadataProperty, MetadataValue),
     RemoveMetadataProperty(ObjectRef, MetadataProperty),
     Activity(Activity),
+}
+
+#[derive(Clone, Copy)]
+enum FileCollectionShape {
+    OrderedParts,
+    Package,
 }
 
 /// Opaque immutable external-identifier result set owned by the C caller.
@@ -2525,6 +2544,155 @@ pub unsafe extern "C" fn pp_transaction_add_image_sequence_representation(
                 representation_kind_from_abi(kind)?,
                 &source,
             )?;
+            out_representation_id.write(PpUuid {
+                bytes: import.representation().id().into_bytes(),
+            });
+            transaction
+                .mutations
+                .push(StagedMutation::Representation(import));
+            Ok(())
+        })
+    }
+}
+
+/// Stages an ordered, fully required multi-file representation.
+///
+/// # Safety
+///
+/// Handle, UUID, member-array, member-string, and output pointers must satisfy
+/// the public header contract; `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_add_ordered_parts_representation(
+    transaction: *mut PpTransaction,
+    asset_id: *const PpUuid,
+    kind: u32,
+    members: *const PpFileResourceInput,
+    member_count: u64,
+    out_representation_id: *mut PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: This exported function forwards the same pointer contract.
+    unsafe {
+        transaction_add_file_collection_representation(
+            transaction,
+            asset_id,
+            kind,
+            members,
+            member_count,
+            out_representation_id,
+            out_error,
+            FileCollectionShape::OrderedParts,
+        )
+    }
+}
+
+/// Stages a role-bearing package representation.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_transaction_add_ordered_parts_representation`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_add_package_representation(
+    transaction: *mut PpTransaction,
+    asset_id: *const PpUuid,
+    kind: u32,
+    members: *const PpFileResourceInput,
+    member_count: u64,
+    out_representation_id: *mut PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: This exported function forwards the same pointer contract.
+    unsafe {
+        transaction_add_file_collection_representation(
+            transaction,
+            asset_id,
+            kind,
+            members,
+            member_count,
+            out_representation_id,
+            out_error,
+            FileCollectionShape::Package,
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn transaction_add_file_collection_representation(
+    transaction: *mut PpTransaction,
+    asset_id: *const PpUuid,
+    kind: u32,
+    members: *const PpFileResourceInput,
+    member_count: u64,
+    out_representation_id: *mut PpUuid,
+    out_error: *mut *mut PpError,
+    shape: FileCollectionShape,
+) -> u32 {
+    // SAFETY: Null pointers and counts are validated before borrowed values are
+    // read, and no borrow escapes this call.
+    unsafe {
+        initialize_uuid(out_representation_id);
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let asset_id = asset_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("asset_id must not be null"))?;
+            if out_representation_id.is_null() {
+                return Err(invalid_argument("out_representation_id must not be null"));
+            }
+            let member_count = usize::try_from(member_count)
+                .map_err(|_| invalid_argument("member count is too large"))?;
+            if member_count > MAX_CONTENT_MEMBERS {
+                return Err(invalid_argument(format!(
+                    "member count must not exceed {MAX_CONTENT_MEMBERS}"
+                )));
+            }
+            let members = if member_count == 0 {
+                &[]
+            } else {
+                if members.is_null() {
+                    return Err(invalid_argument(
+                        "members must not be null when count is nonzero",
+                    ));
+                }
+                // SAFETY: The caller guarantees the checked count of readable values.
+                std::slice::from_raw_parts(members, member_count)
+            };
+            let sources = members
+                .iter()
+                .map(|member| {
+                    let required = match member.required {
+                        0 => false,
+                        1 => true,
+                        _ => {
+                            return Err(invalid_argument(
+                                "member required flag must be zero or one",
+                            ));
+                        }
+                    };
+                    let path = required_utf8(member.path, "member path")?;
+                    if path.is_empty() {
+                        return Err(invalid_argument("member path must not be empty"));
+                    }
+                    Ok(FileResourceSource::new(
+                        Path::new(path),
+                        ResourceRole::new(required_utf8(member.role, "member role")?)?,
+                        required,
+                    ))
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
+            let asset_id = AssetId::from_bytes(asset_id.bytes);
+            let kind = representation_kind_from_abi(kind)?;
+            let import = match shape {
+                FileCollectionShape::OrderedParts => {
+                    prepare_ordered_parts_representation(asset_id, kind, &sources)?
+                }
+                FileCollectionShape::Package => {
+                    prepare_package_representation(asset_id, kind, &sources)?
+                }
+            };
             out_representation_id.write(PpUuid {
                 bytes: import.representation().id().into_bytes(),
             });

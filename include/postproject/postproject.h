@@ -134,6 +134,12 @@ typedef struct pp_activity_edge {
   const char *role;
 } pp_activity_edge_t;
 
+typedef struct pp_file_resource_input {
+  const char *path;
+  const char *role;
+  uint8_t required;
+} pp_file_resource_input_t;
+
 typedef uint32_t pp_error_code_t;
 
 #define PP_OK UINT32_C(0)
@@ -529,6 +535,18 @@ PP_API pp_error_code_t pp_transaction_add_image_sequence_representation(
     uint32_t step, uint32_t rate_numerator, uint32_t rate_denominator,
     const int64_t *missing_frames, uint64_t missing_frame_count,
     pp_uuid_t *out_representation_id, pp_error_t **out_error);
+/* Member arrays and their strings are borrowed only for the call. Ordered
+ * parts must all be required; packages must contain a required member. */
+PP_API pp_error_code_t pp_transaction_add_ordered_parts_representation(
+    pp_transaction_t *transaction, const pp_uuid_t *asset_id,
+    pp_representation_kind_t kind, const pp_file_resource_input_t *members,
+    uint64_t member_count, pp_uuid_t *out_representation_id,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_add_package_representation(
+    pp_transaction_t *transaction, const pp_uuid_t *asset_id,
+    pp_representation_kind_t kind, const pp_file_resource_input_t *members,
+    uint64_t member_count, pp_uuid_t *out_representation_id,
+    pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_add_media_root(
     pp_transaction_t *transaction, const char *path, const char *label,
     int32_t priority, pp_uuid_t *out_root_id, pp_error_t **out_error);
