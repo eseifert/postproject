@@ -290,6 +290,25 @@ struct ImageSequenceDescriptor final {
   std::vector<std::int64_t> missing_frames;
 };
 
+struct ImageSequenceInput final {
+  std::string directory;
+  std::string prefix;
+  std::string suffix;
+  std::uint8_t padding;
+  std::int64_t start;
+  std::int64_t end;
+  std::uint32_t step;
+  std::uint32_t rate_numerator;
+  std::uint32_t rate_denominator;
+  std::vector<std::int64_t> missing_frames;
+};
+
+struct FileResourceInput final {
+  std::string path;
+  std::string role;
+  bool required;
+};
+
 struct Locator final {
   Uuid id;
   std::string uri;
@@ -1192,6 +1211,57 @@ public:
     return import_media_impl(path, name.c_str());
   }
 
+  Uuid addSingleFileRepresentation(const Uuid &asset_id,
+                                   RepresentationKind kind,
+                                   std::string_view path) {
+    const pp_uuid_t native_asset_id = detail::native_uuid(asset_id);
+    const std::string native_path = detail::checked_string(path, "path");
+    pp_uuid_t value{};
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_transaction_add_single_file_representation(
+            transaction_, &native_asset_id,
+            static_cast<pp_representation_kind_t>(kind), native_path.c_str(),
+            &value, &error);
+    detail::throw_if_error(status, error);
+    return detail::uuid(value);
+  }
+
+  Uuid addImageSequenceRepresentation(const Uuid &asset_id,
+                                      RepresentationKind kind,
+                                      const ImageSequenceInput &input) {
+    const pp_uuid_t native_asset_id = detail::native_uuid(asset_id);
+    const std::string directory =
+        detail::checked_string(input.directory, "directory");
+    const std::string prefix = detail::checked_string(input.prefix, "prefix");
+    const std::string suffix = detail::checked_string(input.suffix, "suffix");
+    pp_uuid_t value{};
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_transaction_add_image_sequence_representation(
+            transaction_, &native_asset_id,
+            static_cast<pp_representation_kind_t>(kind), directory.c_str(),
+            prefix.c_str(), suffix.c_str(), input.padding, input.start,
+            input.end, input.step, input.rate_numerator,
+            input.rate_denominator, input.missing_frames.data(),
+            static_cast<std::uint64_t>(input.missing_frames.size()), &value,
+            &error);
+    detail::throw_if_error(status, error);
+    return detail::uuid(value);
+  }
+
+  Uuid addOrderedPartsRepresentation(
+      const Uuid &asset_id, RepresentationKind kind,
+      const std::vector<FileResourceInput> &members) {
+    return add_file_collection_representation(asset_id, kind, members, false);
+  }
+
+  Uuid addPackageRepresentation(
+      const Uuid &asset_id, RepresentationKind kind,
+      const std::vector<FileResourceInput> &members) {
+    return add_file_collection_representation(asset_id, kind, members, true);
+  }
+
   Uuid addMediaRoot(std::string_view path, std::int32_t priority = 0) {
     return add_media_root_impl(path, nullptr, priority);
   }
@@ -1379,6 +1449,44 @@ private:
     pp_error_t *error = nullptr;
     const pp_error_code_t status = pp_transaction_add_media_root(
         transaction_, native_path.c_str(), label, priority, &value, &error);
+    detail::throw_if_error(status, error);
+    return detail::uuid(value);
+  }
+
+  Uuid add_file_collection_representation(
+      const Uuid &asset_id, RepresentationKind kind,
+      const std::vector<FileResourceInput> &members, bool package) {
+    std::vector<std::string> paths;
+    paths.reserve(members.size());
+    std::vector<std::string> roles;
+    roles.reserve(members.size());
+    for (const FileResourceInput &member : members) {
+      paths.push_back(detail::checked_string(member.path, "member path"));
+      roles.push_back(detail::checked_string(member.role, "member role"));
+    }
+    std::vector<pp_file_resource_input_t> native_members;
+    native_members.reserve(members.size());
+    for (std::size_t index = 0; index < members.size(); ++index) {
+      native_members.push_back(
+          {paths[index].c_str(), roles[index].c_str(),
+           static_cast<std::uint8_t>(members[index].required ? 1 : 0)});
+    }
+    const pp_uuid_t native_asset_id = detail::native_uuid(asset_id);
+    pp_uuid_t value{};
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        package ? pp_transaction_add_package_representation(
+                      transaction_, &native_asset_id,
+                      static_cast<pp_representation_kind_t>(kind),
+                      native_members.data(),
+                      static_cast<std::uint64_t>(native_members.size()), &value,
+                      &error)
+                : pp_transaction_add_ordered_parts_representation(
+                      transaction_, &native_asset_id,
+                      static_cast<pp_representation_kind_t>(kind),
+                      native_members.data(),
+                      static_cast<std::uint64_t>(native_members.size()), &value,
+                      &error);
     detail::throw_if_error(status, error);
     return detail::uuid(value);
   }
