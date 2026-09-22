@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  source:
+    name: Source archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        name: Verify tag version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          test -n "$version"
+          test "$GITHUB_REF_NAME" = "v$version"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+      - name: Build source archive and checksum
+        shell: bash
+        run: |
+          mkdir dist
+          archive="postproject-${{ steps.version.outputs.value }}-source.tar.gz"
+          git archive \
+            --format=tar.gz \
+            --prefix="postproject-${{ steps.version.outputs.value }}/" \
+            --output="dist/$archive" \
+            HEAD
+          cmake -E sha256sum "dist/$archive" > "dist/$archive.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-source
+          path: dist
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: release-source
+          path: dist
+      - name: Publish tagged artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --repo "$GITHUB_REPOSITORY"
+          --verify-tag
+          --title "PostProject $GITHUB_REF_NAME"
+          --generate-notes
