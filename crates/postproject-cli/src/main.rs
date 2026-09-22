@@ -10,7 +10,7 @@ use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, DecimalValue, EvidenceKind,
     ExternalIdentifier, FrameRange, IdentifierScheme, ImageSequencePattern, Locator,
-    LocatorAvailability, MediaRoot, MediaRootId, MetadataAssertion, MetadataField,
+    LocatorAvailability, LocatorId, MediaRoot, MediaRootId, MetadataAssertion, MetadataField,
     MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity, ProductionId,
     ProductionStoreTransaction, PropertyId, RationalRate, RationalValue, Representation,
     RepresentationAvailability, RepresentationId, RepresentationKind, RepresentationResolution,
@@ -48,6 +48,8 @@ enum Command {
     Representation(RepresentationArgs),
     /// Manage resolver search roots.
     Root(RootArgs),
+    /// Manage resource locators.
+    Locator(LocatorArgs),
     /// Manage external industry, vendor, and application identifiers.
     Identifier(IdentifierArgs),
     /// Inspect and manage standards-aware metadata assertions.
@@ -218,6 +220,24 @@ struct RootAddArgs {
 struct RootMutationArgs {
     production: PathBuf,
     root_id: String,
+}
+
+#[derive(Debug, Args)]
+struct LocatorArgs {
+    #[command(subcommand)]
+    command: LocatorCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum LocatorCommand {
+    /// Retire a locator that no longer identifies a useful access route.
+    Retire(LocatorRetireArgs),
+}
+
+#[derive(Debug, Args)]
+struct LocatorRetireArgs {
+    production: PathBuf,
+    locator_id: String,
 }
 
 #[derive(Debug, Args)]
@@ -846,6 +866,9 @@ fn execute(cli: Cli) -> Result<()> {
             RootCommand::Disable(args) => root_set_enabled(&args, false, cli.json),
             RootCommand::Remove(args) => root_remove(&args, cli.json),
         },
+        Command::Locator(args) => match args.command {
+            LocatorCommand::Retire(args) => locator_retire(&args, cli.json),
+        },
         Command::Identifier(args) => match args.command {
             IdentifierCommand::Add(args) => identifier_mutate(args, false, cli.json),
             IdentifierCommand::Remove(args) => identifier_mutate(args, true, cli.json),
@@ -1198,6 +1221,26 @@ fn root_view(root: &MediaRoot) -> RootView {
         label: root.label().map(str::to_owned),
         priority: root.priority(),
         enabled: root.is_enabled(),
+    }
+}
+
+fn locator_retire(args: &LocatorRetireArgs, json: bool) -> Result<()> {
+    let locator_id = LocatorId::from_str(&args.locator_id).context("parse locator ID")?;
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin locator transaction")?;
+    set_cli_revision_context(&mut transaction, "Retire media locator")?;
+    transaction
+        .retire_locator(locator_id)
+        .context("stage locator retirement")?;
+    transaction.commit().context("commit locator retirement")?;
+
+    if json {
+        print_json(&serde_json::json!({ "id": locator_id.to_string() }))
+    } else {
+        println!("retired locator {locator_id}");
+        Ok(())
     }
 }
 

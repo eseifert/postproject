@@ -409,6 +409,35 @@ fn manages_media_root_lifecycle() {
 }
 
 #[test]
+fn retires_resource_locator() {
+    let directory = tempfile::tempdir().expect("create test directory");
+    let production = directory.path().join("locators.pproj");
+    let media = directory.path().join("original.mov");
+    fs::write(&media, b"locator lifecycle fixture").expect("write media fixture");
+    let production = production.to_str().expect("UTF-8 production path");
+    run_json(&["init", production]);
+    let imported = run_json(&[
+        "media",
+        "add",
+        production,
+        media.to_str().expect("UTF-8 media path"),
+    ]);
+    let locator_id = imported["locator_id"].as_str().expect("locator ID");
+    let asset_id = imported["asset_id"].as_str().expect("asset ID");
+
+    let retired = run_json(&["locator", "retire", production, locator_id]);
+    assert_eq!(retired["id"], locator_id);
+
+    let shown = run_json(&["media", "show", production, asset_id]);
+    assert!(
+        shown["representations"][0]["resources"][0]["locators"]
+            .as_array()
+            .expect("locator array")
+            .is_empty()
+    );
+}
+
+#[test]
 fn lifecycle_and_explicit_ambiguous_confirmation() {
     let directory = tempfile::tempdir().expect("create test directory");
     let production = directory.path().join("production.pproj");
