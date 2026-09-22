@@ -53,6 +53,20 @@ matches = production.objects_by_external_identifier[
 ]
 ```
 
+The demonstrator CLI exposes the same media-root and locator lifecycle for
+integration experiments:
+
+```sh
+postproject root list production.pproj
+postproject root disable production.pproj ROOT_ID
+postproject root enable production.pproj ROOT_ID
+postproject root remove production.pproj ROOT_ID
+postproject locator retire production.pproj LOCATOR_ID
+```
+
+Each mutation is transactional and appears in the semantic revision feed. Pass
+`--json` for stable structured output.
+
 The [metadata guide](metadata-vocabularies.md), [provenance
 guide](provenance.md), and [revision feed guide](revision-feed.md) document the
 implemented cross-language surfaces. The root README contains the shortest

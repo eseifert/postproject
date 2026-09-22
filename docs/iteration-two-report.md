@@ -21,7 +21,8 @@ Each successful non-empty mutation transaction creates one durable, ordered
 revision with semantic events and optional origin/message context. Failed,
 rolled-back, and empty transactions do not advance the feed. Media roots can be
 enumerated, disabled, re-enabled, and removed; superseded locators can be
-retired. These lifecycle changes are transactional and journaled.
+retired. These lifecycle changes are transactional and journaled across Rust,
+the CLI, C, C++, and Python.
 
 The public C ABI remains the language boundary. Header-only C++17 and Python
 3.11 wrappers expose immutable typed values, deterministic ownership, compound
@@ -43,7 +44,7 @@ typed codecs preserve domain validation at the storage boundary.
 
 ## Verification summary
 
-- 141 Rust unit, integration, migration, CLI, FFI, and end-to-end tests pass
+- 143 Rust unit, integration, migration, CLI, FFI, and end-to-end tests pass
   locally with all features enabled.
 - 19 Python integration tests run against the release shared library and cover
   ownership, typed errors, identities, all representation shapes, typed

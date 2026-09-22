@@ -36,7 +36,10 @@ consumer to re-query current state.
 | `ResourceAdded` | A storage resource was created. |
 | `RepresentationResourceAdded` | A resource entered a representation structure. |
 | `LocatorAdded` | A resource locator was added or explicitly confirmed. |
+| `LocatorRetired` | A superseded resource locator was removed. |
 | `MediaRootAdded` | A resolver search root was added. |
+| `MediaRootEnabledChanged` | A resolver search root was enabled or disabled. |
+| `MediaRootRemoved` | A resolver search root was removed. |
 | `ExternalIdentifierAdded` | An exact identifier attachment was added. |
 | `ExternalIdentifierRemoved` | An exact identifier attachment was removed. |
 | `MetadataAddedOrReplaced` | Values for one metadata property changed. |
