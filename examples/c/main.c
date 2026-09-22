@@ -11,7 +11,8 @@ static void print_uuid(const pp_uuid_t *id) {
 
 int main(int argc, char **argv) {
   if (argc != 3) {
-    fprintf(stderr, "usage: postproject-c-example PROJECT MEDIA\n");
+    fprintf(stderr,
+            "usage: postproject-c-example OUTPUT_PRODUCTION MEDIA_FILE\n");
     return 2;
   }
 
@@ -20,7 +21,8 @@ int main(int argc, char **argv) {
   pp_representation_set_t *representations = NULL;
   pp_error_t *error = NULL;
   pp_uuid_t asset_id = {{0}};
-  pp_error_code_t status = pp_production_open(argv[1], &production, &error);
+  pp_error_code_t status =
+      pp_production_create(argv[1], "C quickstart", &production, &error);
   if (status == PP_OK) {
     status = pp_production_begin_transaction(production, &transaction, &error);
   }
