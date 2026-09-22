@@ -309,7 +309,6 @@ EXPORTED_SYMBOLS = (
     "pp_revision_set_release",
     "pp_transaction_add_external_identifier",
     "pp_transaction_add_media_root",
-    "pp_transaction_add_metadata_text",
     "pp_transaction_add_metadata_value",
     "pp_transaction_commit",
     "pp_transaction_confirm_locator",
@@ -524,8 +523,6 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_transaction_add_external_identifier.restype = ErrorCode
     lib.pp_transaction_remove_external_identifier.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(ObjectRef), ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_remove_external_identifier.restype = ErrorCode
-    lib.pp_transaction_add_metadata_text.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(ObjectRef), ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Error))]
-    lib.pp_transaction_add_metadata_text.restype = ErrorCode
     lib.pp_transaction_add_metadata_value.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(ObjectRef), ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(MetadataInput), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_add_metadata_value.restype = ErrorCode
     lib.pp_transaction_remove_metadata_property.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(ObjectRef), ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Error))]

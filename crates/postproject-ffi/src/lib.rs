@@ -2540,51 +2540,6 @@ pub unsafe extern "C" fn pp_transaction_remove_external_identifier(
     }
 }
 
-/// Stages one plain or language-tagged metadata text assertion.
-///
-/// `language` may be null for plain text. Other strings are required borrowed
-/// NUL-terminated UTF-8. The target is validated at commit.
-///
-/// # Safety
-///
-/// `transaction` must be live, `target` readable, string pointers must satisfy
-/// the rules above, and `out_error` may be null or writable.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn pp_transaction_add_metadata_text(
-    transaction: *mut PpTransaction,
-    target: *const PpObjectRef,
-    vocabulary: *const c_char,
-    property: *const c_char,
-    value: *const c_char,
-    language: *const c_char,
-    out_error: *mut *mut PpError,
-) -> u32 {
-    // SAFETY: Inputs are checked before dereference and borrowed only this call.
-    unsafe {
-        ffi_call(out_error, || {
-            let transaction = transaction
-                .as_mut()
-                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
-            transaction.lifecycle.ensure_open()?;
-            let target = target
-                .as_ref()
-                .ok_or_else(|| invalid_argument("target must not be null"))?;
-            let target = object_ref_from_abi(*target)?;
-            let property = metadata_property_from_abi(vocabulary, property)?;
-            let value = required_utf8(value, "value")?;
-            let language = optional_utf8(language, "language")?;
-            let value = language.map_or_else(
-                || MetadataValue::string(value),
-                |language| MetadataValue::language_string(value, language),
-            )?;
-            transaction
-                .mutations
-                .push(StagedMutation::AddMetadataValue(target, property, value));
-            Ok(())
-        })
-    }
-}
-
 /// Stages one typed metadata assertion from an owned metadata input.
 ///
 /// The input remains owned by the caller and may be released immediately after

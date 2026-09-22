@@ -96,7 +96,6 @@ pp_revision_set_get
 pp_revision_set_release
 pp_transaction_add_external_identifier
 pp_transaction_add_media_root
-pp_transaction_add_metadata_text
 pp_transaction_add_metadata_value
 pp_transaction_commit
 pp_transaction_confirm_locator

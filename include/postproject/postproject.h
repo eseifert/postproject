@@ -532,12 +532,8 @@ PP_API pp_error_code_t pp_transaction_remove_external_identifier(
     pp_transaction_t *transaction, const pp_object_ref_t *target,
     const char *scheme, const char *value, const char *qualifier,
     pp_error_t **out_error);
-/* Text is required. Language may be NULL for plain text. Vocabulary and
- * property identifiers are exact UTF-8 strings and are not normalized. */
-PP_API pp_error_code_t pp_transaction_add_metadata_text(
-    pp_transaction_t *transaction, const pp_object_ref_t *target,
-    const char *vocabulary, const char *property, const char *value,
-    const char *language, pp_error_t **out_error);
+/* Vocabulary and property identifiers are exact UTF-8 strings and are not
+ * normalized. The input remains owned by the caller. */
 PP_API pp_error_code_t pp_transaction_add_metadata_value(
     pp_transaction_t *transaction, const pp_object_ref_t *target,
     const char *vocabulary, const char *property,

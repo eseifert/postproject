@@ -141,9 +141,15 @@ int main(int argc, char **argv) {
     pp_error_release(error);
     return 23;
   }
-  status = pp_transaction_add_metadata_text(
-      transaction, &asset_ref, "com.example.metadata", "title", "C title",
-      "en-US", &error);
+  pp_metadata_input_t *title_input = NULL;
+  status = pp_metadata_input_create_string("C title", "en-US", &title_input,
+                                           &error);
+  if (status == PP_OK) {
+    status = pp_transaction_add_metadata_value(
+        transaction, &asset_ref, "com.example.metadata", "title", title_input,
+        &error);
+  }
+  pp_metadata_input_release(title_input);
   if (status != PP_OK) {
     pp_transaction_release(transaction);
     pp_production_release(production);
