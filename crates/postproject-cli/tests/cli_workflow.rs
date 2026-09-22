@@ -18,6 +18,28 @@ fn run_json(arguments: &[&str]) -> Value {
     serde_json::from_slice(&assertion.get_output().stdout).expect("command emits valid JSON")
 }
 
+fn add_representation_from_spec(
+    production: &str,
+    asset_id: &str,
+    kind: &str,
+    spec_path: &std::path::Path,
+    spec: &Value,
+) -> Value {
+    fs::write(
+        spec_path,
+        serde_json::to_vec(&spec).expect("serialize representation spec"),
+    )
+    .expect("write representation spec");
+    run_json(&[
+        "representation",
+        "add",
+        production,
+        asset_id,
+        kind,
+        spec_path.to_str().expect("UTF-8 spec path"),
+    ])
+}
+
 fn exercise_identifiers(production: &str, asset_id: &str) {
     let identifier = run_json(&[
         "identifier",
@@ -246,6 +268,97 @@ fn exercise_provenance(
         descendants[0]["representation_id"],
         output_representation_id
     );
+}
+
+#[test]
+fn adds_every_representation_shape() {
+    let directory = tempfile::tempdir().expect("create test directory");
+    let production = directory.path().join("production.pproj");
+    let original = directory.path().join("original.mov");
+    let proxy = directory.path().join("proxy.mov");
+    let second_part = directory.path().join("part2.mov");
+    let frame = directory.path().join("frame0001.exr");
+    let sidecar = directory.path().join("clip.xml");
+    fs::write(&original, b"original").expect("write original");
+    fs::write(&proxy, b"proxy").expect("write proxy");
+    fs::write(&second_part, b"part two").expect("write second part");
+    fs::write(&frame, b"frame").expect("write frame");
+    fs::write(&sidecar, b"metadata").expect("write sidecar");
+    let production = production.to_str().expect("UTF-8 production path");
+    run_json(&["init", production]);
+    let imported = run_json(&[
+        "media",
+        "add",
+        production,
+        original.to_str().expect("UTF-8 original path"),
+    ]);
+    let asset_id = imported["asset_id"].as_str().expect("asset ID");
+
+    add_representation_from_spec(
+        production,
+        asset_id,
+        "proxy",
+        &directory.path().join("single.json"),
+        &serde_json::json!({"structure": "single_file", "path": proxy}),
+    );
+    add_representation_from_spec(
+        production,
+        asset_id,
+        "derived",
+        &directory.path().join("sequence.json"),
+        &serde_json::json!({
+            "structure": "image_sequence",
+            "directory": directory.path(),
+            "prefix": "frame",
+            "suffix": ".exr",
+            "padding": 4,
+            "start": 1,
+            "end": 1,
+            "step": 1,
+            "rate_numerator": 24_000,
+            "rate_denominator": 1_001
+        }),
+    );
+    add_representation_from_spec(
+        production,
+        asset_id,
+        "optimized",
+        &directory.path().join("ordered.json"),
+        &serde_json::json!({
+            "structure": "ordered_parts",
+            "members": [
+                {"path": original, "role": "org.postproject:essence.first"},
+                {"path": second_part, "role": "org.postproject:essence.second"}
+            ]
+        }),
+    );
+    add_representation_from_spec(
+        production,
+        asset_id,
+        "derived",
+        &directory.path().join("package.json"),
+        &serde_json::json!({
+            "structure": "package",
+            "members": [
+                {"path": proxy, "role": "org.postproject:essence"},
+                {"path": sidecar, "role": "org.postproject:sidecar", "required": false}
+            ]
+        }),
+    );
+
+    let shown = run_json(&["media", "show", production, asset_id]);
+    let representations = shown["representations"]
+        .as_array()
+        .expect("representation array");
+    assert_eq!(representations.len(), 5);
+    let structures = representations
+        .iter()
+        .map(|representation| representation["structure"].as_str().expect("structure"))
+        .collect::<Vec<_>>();
+    assert!(structures.contains(&"single_resource"));
+    assert!(structures.contains(&"image_sequence"));
+    assert!(structures.contains(&"ordered_parts"));
+    assert!(structures.contains(&"package"));
 }
 
 #[test]
