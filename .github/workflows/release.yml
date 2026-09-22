@@ -21,6 +21,7 @@ jobs:
         name: Verify tag version
         shell: bash
         run: |
+          python3 tools/check_versions.py
           version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
           test -n "$version"
           test "$GITHUB_REF_NAME" = "v$version"

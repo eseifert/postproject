@@ -52,6 +52,10 @@ jobs:
       - run: ruff check python/src python/tests examples/python
       - run: ruff format --check python/src python/tests examples/python
       - run: ty check --project python python/src python/tests examples/python
+      - run: python tools/check_versions.py
+      - run: ruff check tools/check_versions.py
+      - run: ruff format --check tools/check_versions.py
+      - run: ty check tools/check_versions.py
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo doc --workspace --all-features --no-deps --locked
