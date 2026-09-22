@@ -51,6 +51,18 @@ install(
     FILES LICENSE-APACHE LICENSE-MIT README.md CHANGELOG.md
     DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/postproject"
 )
+install(
+    FILES examples/c/CMakeLists.txt examples/c/main.c
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/postproject/examples/c"
+)
+install(
+    FILES examples/cpp/CMakeLists.txt examples/cpp/main.cpp
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/postproject/examples/cpp"
+)
+install(
+    FILES examples/fixtures/sample-media.dat
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/doc/postproject/examples/fixtures"
+)
 
 configure_package_config_file(
     cmake/PostProjectConfig.cmake.in

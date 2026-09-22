@@ -1,0 +1,4 @@
+PostProject quickstart media fixture
+
+The library treats media as opaque bytes; this small fixture keeps the installed
+examples deterministic without requiring a codec or a large binary download.
