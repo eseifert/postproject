@@ -1,6 +1,6 @@
 # ADR 0015: Availability semantics and collection fingerprints
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-09-22
 
 ## Context
