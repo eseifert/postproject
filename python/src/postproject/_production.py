@@ -21,6 +21,7 @@ from ._abi import (
     AssetSet,
     Error,
     ExternalIdentifierSet,
+    MediaRootSet,
     MetadataSet,
     ObjectRefSet,
     RepresentationSet,
@@ -75,8 +76,12 @@ from ._model import (
     LocatorAddedEvent,
     LocatorAvailability,
     LocatorId,
+    LocatorRetiredEvent,
+    MediaRoot,
     MediaRootAddedEvent,
+    MediaRootEnabledChangedEvent,
     MediaRootId,
+    MediaRootRemovedEvent,
     MetadataAddedOrReplacedEvent,
     MetadataAssertion,
     MetadataBool,
@@ -336,6 +341,28 @@ class Production:
 
         self._require_open()
         return _Assets(self)
+
+    @property
+    def media_roots(self) -> tuple[MediaRoot, ...]:
+        """Return configured resolver roots in priority order."""
+
+        self._require_open()
+        handle = ctypes.POINTER(MediaRootSet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_media_roots(
+            self._handle, ctypes.byref(handle), ctypes.byref(error)
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native media-root query returned no result set")
+        try:
+            count = self._native.lib.pp_media_root_set_count(handle)
+            return tuple(
+                _media_root_at(self._native, handle, index)
+                for index in range(int(count))
+            )
+        finally:
+            self._native.lib.pp_media_root_set_release(handle)
 
     @property
     def activities(self) -> tuple[Activity, ...]:
@@ -933,6 +960,31 @@ class Transaction:
         self._native.check(status, error)
         return MediaRootId(_uuid(root_id))
 
+    def set_media_root_enabled(self, root_id: MediaRootId, enabled: bool) -> None:
+        """Stage a resolver root's enabled state."""
+
+        self._require_open()
+        native_id = _native_uuid(root_id.value)
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_set_media_root_enabled(
+            self._handle,
+            ctypes.byref(native_id),
+            int(enabled),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
+    def remove_media_root(self, root_id: MediaRootId) -> None:
+        """Stage removal of one resolver root."""
+
+        self._require_open()
+        native_id = _native_uuid(root_id.value)
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_remove_media_root(
+            self._handle, ctypes.byref(native_id), ctypes.byref(error)
+        )
+        self._native.check(status, error)
+
     def confirm_locator(self, resource_id: ResourceId, uri: str) -> None:
         """Stage explicit confirmation of one resource candidate URI."""
 
@@ -944,6 +996,17 @@ class Transaction:
             ctypes.byref(native_id),
             _utf8(uri, "locator URI"),
             ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
+    def retire_locator(self, locator_id: LocatorId) -> None:
+        """Stage retirement of one superseded resource locator."""
+
+        self._require_open()
+        native_id = _native_uuid(locator_id.value)
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_retire_locator(
+            self._handle, ctypes.byref(native_id), ctypes.byref(error)
         )
         self._native.check(status, error)
 
@@ -1238,6 +1301,35 @@ def _asset_at(native: NativeLibrary, assets: _Pointer[AssetSet], index: int) -> 
         int(created_at.value),
         _decode_optional(display_name.value),
         _decode_optional(import_source.value),
+    )
+
+
+def _media_root_at(
+    native: NativeLibrary, roots: _Pointer[MediaRootSet], index: int
+) -> MediaRoot:
+    root_id = Uuid()
+    uri = ctypes.c_char_p()
+    label = ctypes.c_char_p()
+    priority = ctypes.c_int32()
+    enabled = ctypes.c_uint8()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_media_root_set_get(
+        roots,
+        index,
+        ctypes.byref(root_id),
+        ctypes.byref(uri),
+        ctypes.byref(label),
+        ctypes.byref(priority),
+        ctypes.byref(enabled),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return MediaRoot(
+        MediaRootId(_uuid(root_id)),
+        _decode_required(uri.value, "media root URI"),
+        _decode_optional(label.value),
+        int(priority.value),
+        bool(enabled.value),
     )
 
 
@@ -2333,6 +2425,16 @@ def _revision_event_at(
         )
     elif kind == _abi.PP_REVISION_MEDIA_ROOT_ADDED:
         payload = MediaRootAddedEvent(MediaRootId(_uuid(event.media_root_id)))
+    elif kind == _abi.PP_REVISION_LOCATOR_RETIRED:
+        payload = LocatorRetiredEvent(
+            ResourceId(_uuid(event.resource_id)), LocatorId(_uuid(event.locator_id))
+        )
+    elif kind == _abi.PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED:
+        payload = MediaRootEnabledChangedEvent(
+            MediaRootId(_uuid(event.media_root_id)), bool(event.enabled)
+        )
+    elif kind == _abi.PP_REVISION_MEDIA_ROOT_REMOVED:
+        payload = MediaRootRemovedEvent(MediaRootId(_uuid(event.media_root_id)))
     elif kind == _abi.PP_REVISION_EXTERNAL_IDENTIFIER_ADDED:
         payload = ExternalIdentifierAddedEvent(
             _object_reference(event.target), _external_identifier(event)
