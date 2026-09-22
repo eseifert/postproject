@@ -516,6 +516,10 @@ PP_API pp_error_code_t pp_transaction_set_revision_context(
 PP_API pp_error_code_t pp_transaction_import_media(
     pp_transaction_t *transaction, const char *path, const char *display_name,
     pp_uuid_t *out_asset_id, pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_add_single_file_representation(
+    pp_transaction_t *transaction, const pp_uuid_t *asset_id,
+    pp_representation_kind_t kind, const char *path,
+    pp_uuid_t *out_representation_id, pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_add_media_root(
     pp_transaction_t *transaction, const char *path, const char *label,
     int32_t priority, pp_uuid_t *out_root_id, pp_error_t **out_error);

@@ -29,12 +29,14 @@ use postproject_core::{
     AssetId, AvailabilityIssue, AvailabilityIssueKind, Error, ErrorKind, EvidenceKind,
     ExternalIdentifier, HostObjectBinding, IdentifierScheme, Locator, MAX_ACTIVITY_EDGES,
     MediaRoot, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport,
-    ProductionId, PropertyId, RepresentationAvailability, RepresentationId,
-    RepresentationResolution, ResolutionEvidence, ResourceId, ResourceResolutionState,
-    RevisionContext, RevisionId, Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
+    ProductionId, PropertyId, RepresentationAvailability, RepresentationId, RepresentationImport,
+    RepresentationKind, RepresentationResolution, ResolutionEvidence, ResourceId,
+    ResourceResolutionState, RevisionContext, RevisionId, Timestamp, ToolIdentity,
+    TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     MediaResolver, prepare_confirmed_locator, prepare_media_root, prepare_original_media,
+    prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
 
@@ -94,6 +96,11 @@ const PP_OBJECT_ASSET: u32 = 2;
 const PP_OBJECT_REPRESENTATION: u32 = 3;
 const PP_OBJECT_RESOURCE: u32 = 4;
 const PP_OBJECT_ACTIVITY: u32 = 5;
+
+const PP_REPRESENTATION_ORIGINAL: u32 = 1;
+const PP_REPRESENTATION_PROXY: u32 = 2;
+const PP_REPRESENTATION_OPTIMIZED: u32 = 3;
+const PP_REPRESENTATION_DERIVED: u32 = 4;
 
 const PP_REVISION_ASSET_IMPORTED: u32 = 1;
 const PP_REVISION_REPRESENTATION_ADDED: u32 = 2;
@@ -200,6 +207,7 @@ pub struct PpTransaction {
 
 enum StagedMutation {
     Import(OriginalMediaImport),
+    Representation(RepresentationImport),
     MediaRoot(MediaRoot),
     Locator(Locator),
     AddExternalIdentifier(ObjectRef, ExternalIdentifier),
@@ -2382,6 +2390,57 @@ pub unsafe extern "C" fn pp_transaction_import_media(
     }
 }
 
+/// Stages one filesystem-backed single-file representation for an existing asset.
+///
+/// # Safety
+///
+/// `transaction`, `asset_id`, and `out_representation_id` must be live/readable
+/// or writable as appropriate. `path` must be borrowed NUL-terminated UTF-8;
+/// `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_add_single_file_representation(
+    transaction: *mut PpTransaction,
+    asset_id: *const PpUuid,
+    kind: u32,
+    path: *const c_char,
+    out_representation_id: *mut PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Null pointers are rejected before dereference and strings are
+    // borrowed only for this call.
+    unsafe {
+        initialize_uuid(out_representation_id);
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let asset_id = asset_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("asset_id must not be null"))?;
+            if out_representation_id.is_null() {
+                return Err(invalid_argument("out_representation_id must not be null"));
+            }
+            let path = required_utf8(path, "path")?;
+            if path.is_empty() {
+                return Err(invalid_argument("path must not be empty"));
+            }
+            let import = prepare_single_file_representation(
+                AssetId::from_bytes(asset_id.bytes),
+                representation_kind_from_abi(kind)?,
+                Path::new(path),
+            )?;
+            out_representation_id.write(PpUuid {
+                bytes: import.representation().id().into_bytes(),
+            });
+            transaction
+                .mutations
+                .push(StagedMutation::Representation(import));
+            Ok(())
+        })
+    }
+}
+
 /// Stages a filesystem media root and returns its stable identity.
 ///
 /// # Safety
@@ -3207,6 +3266,16 @@ fn object_ref_from_abi(value: PpObjectRef) -> Result<ObjectRef, Error> {
     }
 }
 
+fn representation_kind_from_abi(value: u32) -> Result<RepresentationKind, Error> {
+    match value {
+        PP_REPRESENTATION_ORIGINAL => Ok(RepresentationKind::Original),
+        PP_REPRESENTATION_PROXY => Ok(RepresentationKind::Proxy),
+        PP_REPRESENTATION_OPTIMIZED => Ok(RepresentationKind::Optimized),
+        PP_REPRESENTATION_DERIVED => Ok(RepresentationKind::Derived),
+        _ => Err(invalid_argument("unknown representation kind")),
+    }
+}
+
 pub(crate) fn object_ref_to_abi(value: ObjectRef) -> Result<PpObjectRef, Error> {
     let (kind, bytes) = match value {
         ObjectRef::Production(id) => (PP_OBJECT_PRODUCTION, id.into_bytes()),
@@ -3457,6 +3526,9 @@ impl PpTransaction {
             for mutation in &self.mutations {
                 match mutation {
                     StagedMutation::Import(import) => transaction.import_original(import)?,
+                    StagedMutation::Representation(import) => {
+                        transaction.add_representation(import)?;
+                    }
                     StagedMutation::MediaRoot(root) => transaction.add_media_root(root.clone())?,
                     StagedMutation::Locator(locator) => transaction.add_locator(locator)?,
                     StagedMutation::AddExternalIdentifier(target, identifier) => {

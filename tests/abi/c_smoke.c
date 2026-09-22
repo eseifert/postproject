@@ -716,6 +716,33 @@ int main(int argc, char **argv) {
     return 22;
   }
   pp_resolution_set_release(resolutions);
+
+  pp_uuid_t proxy_representation_id = {{0}};
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_add_single_file_representation(
+          transaction, &asset_id, PP_REPRESENTATION_PROXY, moved_media_path,
+          &proxy_representation_id, &error) != PP_OK ||
+      uuid_is_zero(&proxy_representation_id) ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 67;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+  representations = NULL;
+  if (pp_production_representations(production, &asset_id, &representations,
+                                    &error) != PP_OK ||
+      representations == NULL ||
+      pp_representation_set_count(representations) != UINT64_C(2)) {
+    pp_representation_set_release(representations);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 68;
+  }
+  pp_representation_set_release(representations);
   pp_production_release(production);
   production = NULL;
 
