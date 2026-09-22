@@ -57,6 +57,8 @@ typed codecs preserve domain validation at the storage boundary.
   gates Rust 1.85, Python 3.11, Ruff, ty, rustfmt, Clippy, rustdoc, mdBook,
   offline link checking, spelling, dependency/license policy, sanitizers, fuzz
   target builds, migration fixtures, and installed native consumers.
+- The lifecycle and ABI 14 acceptance run is
+  [GitHub Actions run 35724881302](https://github.com/eseifert/postproject/actions/runs/35724881302).
 - The end-to-end fixture persists an original, compound media, a derived proxy,
   structured metadata, activity lineage, and semantic revisions, then reopens
   and verifies the complete graph.
