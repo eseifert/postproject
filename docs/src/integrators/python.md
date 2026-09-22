@@ -8,22 +8,31 @@ Point the binding at an exact native library:
 
 ```sh
 export POSTPROJECT_LIBRARY=/opt/postproject/lib/libpostproject.so
+python /opt/postproject/share/doc/postproject/examples/python/quickstart.py \
+  production.pproj \
+  /opt/postproject/share/doc/postproject/examples/fixtures/sample-media.dat
 ```
 
 Applications may instead pass `library_path=` to `Production.create` or
 `Production.open`. The binding resolves that explicit path and does not search
-the working directory or modify the platform loader path.
+the working directory or modify the platform loader path. The installed
+quickstart above runs in package CI on Linux, macOS, and Windows.
 
 ```python
+from pathlib import Path
+
 from postproject import OriginIdentity, Production
 
+media = Path(
+    "/opt/postproject/share/doc/postproject/examples/fixtures/sample-media.dat"
+)
 with Production.create("production.pproj", "Documentary") as production:
     with production.transaction(
         origin=OriginIdentity("com.example.editor", "0.4.0"),
         message="Import camera original",
     ) as transaction:
         asset_id = transaction.import_media(
-            "rushes/A001.mov", display_name="Camera A"
+            media, display_name="Camera A"
         )
 
     assert asset_id in production.assets
