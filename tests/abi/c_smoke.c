@@ -24,6 +24,7 @@ int main(int argc, char **argv) {
   pp_revision_event_t revision_event = {0};
   char media_path[4096];
   char moved_media_path[4096];
+  char sequence_frame_path[4096];
 
   if (argc != 3) {
     return 64;
@@ -743,6 +744,49 @@ int main(int argc, char **argv) {
     return 68;
   }
   pp_representation_set_release(representations);
+
+  int sequence_path_length = snprintf(sequence_frame_path,
+                                      sizeof(sequence_frame_path),
+                                      "%s/frame0001.exr", argv[2]);
+  FILE *sequence_frame = sequence_path_length > 0 &&
+                                 (size_t)sequence_path_length <
+                                     sizeof(sequence_frame_path)
+                             ? fopen(sequence_frame_path, "wb")
+                             : NULL;
+  if (sequence_frame == NULL ||
+      fwrite("sequence frame", 1, 14, sequence_frame) != 14 ||
+      fclose(sequence_frame) != 0) {
+    pp_production_release(production);
+    return 69;
+  }
+  pp_uuid_t sequence_representation_id = {{0}};
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_add_image_sequence_representation(
+          transaction, &asset_id, PP_REPRESENTATION_DERIVED, argv[2], "frame",
+          ".exr", UINT8_C(4), INT64_C(1), INT64_C(1), UINT32_C(1),
+          UINT32_C(24000), UINT32_C(1001), NULL, 0,
+          &sequence_representation_id, &error) != PP_OK ||
+      uuid_is_zero(&sequence_representation_id) ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 70;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+  representations = NULL;
+  if (pp_production_representations(production, &asset_id, &representations,
+                                    &error) != PP_OK ||
+      representations == NULL ||
+      pp_representation_set_count(representations) != UINT64_C(3)) {
+    pp_representation_set_release(representations);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 71;
+  }
+  pp_representation_set_release(representations);
   pp_production_release(production);
   production = NULL;
 
@@ -754,6 +798,7 @@ int main(int argc, char **argv) {
   }
   pp_error_release(error);
   remove(moved_media_path);
+  remove(sequence_frame_path);
   pp_production_release(NULL);
   pp_transaction_release(NULL);
   return 0;
