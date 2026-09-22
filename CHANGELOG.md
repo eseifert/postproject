@@ -25,6 +25,8 @@ All notable changes to PostProject will be documented here. The project uses
   image-sequence, concrete resource, locator, and typed fingerprint inspection.
 - Added ABI version 10 host-binding formatting and parsing, with C++ and Python
   wrappers over the same public C implementation.
+- Added ABI version 11 owned typed-metadata inputs, including recursive lists
+  and structures, and removed the superseded text-only write function.
 - Added a strict, versioned HTTPS host-object binding format under
   `postproject.org` for portable production-scoped references.
 - Added an opt-in registry for UMID, ISAN, EIDR, and application identifier
