@@ -8,7 +8,8 @@ use crate::{
     PP_REVISION_ACTIVITY_CREATED, PP_REVISION_ACTIVITY_INPUT_ADDED,
     PP_REVISION_ACTIVITY_OUTPUT_ADDED, PP_REVISION_ASSET_IMPORTED,
     PP_REVISION_EXTERNAL_IDENTIFIER_ADDED, PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED,
-    PP_REVISION_LOCATOR_ADDED, PP_REVISION_MEDIA_ROOT_ADDED,
+    PP_REVISION_LOCATOR_ADDED, PP_REVISION_LOCATOR_RETIRED, PP_REVISION_MEDIA_ROOT_ADDED,
+    PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED, PP_REVISION_MEDIA_ROOT_REMOVED,
     PP_REVISION_METADATA_ADDED_OR_REPLACED, PP_REVISION_METADATA_REMOVED,
     PP_REVISION_REPRESENTATION_ADDED, PP_REVISION_REPRESENTATION_RESOURCE_ADDED,
     PP_REVISION_RESOURCE_ADDED, PpObjectRef, PpRevisionEvent, PpUuid, exact_cstring,
@@ -31,6 +32,7 @@ pub(crate) struct AbiRevisionEvent {
     activity_id: Option<PpUuid>,
     target: Option<PpObjectRef>,
     structural_position: Option<u32>,
+    enabled: Option<bool>,
     identifier_scheme: Option<CString>,
     identifier_value: Option<CString>,
     identifier_qualifier: Option<CString>,
@@ -63,6 +65,7 @@ impl AbiRevisionEvent {
             activity_id: self.activity_id.unwrap_or_else(zero_uuid),
             target: self.target.unwrap_or_else(zero_object_ref),
             structural_position: self.structural_position.unwrap_or(0),
+            enabled: self.enabled.map_or(0, u8::from),
             identifier_scheme: c_string_ptr(self.identifier_scheme.as_ref()),
             identifier_value: c_string_ptr(self.identifier_value.as_ref()),
             identifier_qualifier: c_string_ptr(self.identifier_qualifier.as_ref()),
@@ -93,6 +96,7 @@ impl TryFrom<&RevisionEvent> for AbiRevisionEvent {
             activity_id: None,
             target: None,
             structural_position: None,
+            enabled: None,
             identifier_scheme: None,
             identifier_value: None,
             identifier_qualifier: None,
@@ -138,6 +142,26 @@ impl TryFrom<&RevisionEvent> for AbiRevisionEvent {
             }
             RevisionEventKind::MediaRootAdded { media_root_id } => {
                 projected.kind = PP_REVISION_MEDIA_ROOT_ADDED;
+                projected.media_root_id = Some(uuid(media_root_id.into_bytes()));
+            }
+            RevisionEventKind::LocatorRetired {
+                resource_id,
+                locator_id,
+            } => {
+                projected.kind = PP_REVISION_LOCATOR_RETIRED;
+                projected.resource_id = Some(uuid(resource_id.into_bytes()));
+                projected.locator_id = Some(uuid(locator_id.into_bytes()));
+            }
+            RevisionEventKind::MediaRootEnabledChanged {
+                media_root_id,
+                enabled,
+            } => {
+                projected.kind = PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED;
+                projected.media_root_id = Some(uuid(media_root_id.into_bytes()));
+                projected.enabled = Some(*enabled);
+            }
+            RevisionEventKind::MediaRootRemoved { media_root_id } => {
+                projected.kind = PP_REVISION_MEDIA_ROOT_REMOVED;
                 projected.media_root_id = Some(uuid(media_root_id.into_bytes()));
             }
             RevisionEventKind::ExternalIdentifierAdded { target, identifier }

@@ -118,6 +118,9 @@ const PP_REVISION_METADATA_REMOVED: u32 = 10;
 const PP_REVISION_ACTIVITY_CREATED: u32 = 11;
 const PP_REVISION_ACTIVITY_INPUT_ADDED: u32 = 12;
 const PP_REVISION_ACTIVITY_OUTPUT_ADDED: u32 = 13;
+const PP_REVISION_LOCATOR_RETIRED: u32 = 14;
+const PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED: u32 = 15;
+const PP_REVISION_MEDIA_ROOT_REMOVED: u32 = 16;
 
 /// Current pre-1.0 ABI version.
 pub const ABI_VERSION: u32 = 13;
@@ -186,6 +189,8 @@ pub struct PpRevisionEvent {
     pub target: PpObjectRef,
     /// Structural member position for representation-resource events.
     pub structural_position: u32,
+    /// New enabled state for media-root enablement events; zero otherwise.
+    pub enabled: u8,
     /// Borrowed identifier scheme, or null when not applicable.
     pub identifier_scheme: *const c_char,
     /// Borrowed identifier value, or null when not applicable.
@@ -3501,6 +3506,7 @@ const fn empty_revision_event() -> PpRevisionEvent {
             id: PpUuid { bytes: [0; 16] },
         },
         structural_position: 0,
+        enabled: 0,
         identifier_scheme: ptr::null(),
         identifier_value: ptr::null(),
         identifier_qualifier: ptr::null(),

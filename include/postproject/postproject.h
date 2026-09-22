@@ -86,6 +86,9 @@ typedef uint32_t pp_revision_event_kind_t;
 #define PP_REVISION_ACTIVITY_CREATED UINT32_C(11)
 #define PP_REVISION_ACTIVITY_INPUT_ADDED UINT32_C(12)
 #define PP_REVISION_ACTIVITY_OUTPUT_ADDED UINT32_C(13)
+#define PP_REVISION_LOCATOR_RETIRED UINT32_C(14)
+#define PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED UINT32_C(15)
+#define PP_REVISION_MEDIA_ROOT_REMOVED UINT32_C(16)
 
 typedef uint32_t pp_metadata_value_kind_t;
 
@@ -121,6 +124,7 @@ typedef struct pp_revision_event {
   pp_uuid_t activity_id;
   pp_object_ref_t target;
   uint32_t structural_position;
+  uint8_t enabled;
   const char *identifier_scheme;
   const char *identifier_value;
   const char *identifier_qualifier;
