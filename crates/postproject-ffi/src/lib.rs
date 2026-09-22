@@ -29,11 +29,11 @@ use postproject_core::{
     Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, Error, ErrorKind, EvidenceKind,
     ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern,
     Locator, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS, MAX_SEQUENCE_EXCEPTIONS, MediaRoot,
-    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId,
-    PropertyId, RationalRate, RepresentationAvailability, RepresentationId, RepresentationImport,
-    RepresentationKind, RepresentationResolution, ResolutionEvidence, ResourceId,
-    ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, Timestamp, ToolIdentity,
-    TransactionLifecycle, VocabularyId,
+    MediaRootId, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity,
+    OriginalMediaImport, ProductionId, PropertyId, RationalRate, RepresentationAvailability,
+    RepresentationId, RepresentationImport, RepresentationKind, RepresentationResolution,
+    ResolutionEvidence, ResourceId, ResourceResolutionState, ResourceRole, RevisionContext,
+    RevisionId, Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, prepare_confirmed_locator,
@@ -228,6 +228,36 @@ pub struct PpTransaction {
 /// Opaque immutable asset result set owned by the C caller.
 pub struct PpAssetSet {
     assets: Vec<AbiAsset>,
+}
+
+/// Opaque immutable media-root result set owned by the C caller.
+pub struct PpMediaRootSet {
+    roots: Vec<AbiMediaRoot>,
+}
+
+struct AbiMediaRoot {
+    id: MediaRootId,
+    uri: CString,
+    label: Option<CString>,
+    priority: i32,
+    enabled: bool,
+}
+
+impl TryFrom<&MediaRoot> for AbiMediaRoot {
+    type Error = Error;
+
+    fn try_from(root: &MediaRoot) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: root.id(),
+            uri: exact_cstring(root.uri(), "media root URI")?,
+            label: root
+                .label()
+                .map(|value| exact_cstring(value, "media root label"))
+                .transpose()?,
+            priority: root.priority(),
+            enabled: root.is_enabled(),
+        })
+    }
 }
 
 struct AbiAsset {
@@ -666,6 +696,119 @@ pub unsafe extern "C" fn pp_asset_set_release(assets: *mut PpAssetSet) {
     if !assets.is_null() {
         // SAFETY: Non-null pointers must originate from `pp_production_assets`.
         unsafe { drop(Box::from_raw(assets)) };
+    }
+}
+
+/// Returns every configured media root in resolver order.
+///
+/// # Safety
+///
+/// `production` must be live, `out_roots` writable, and `out_error` null or
+/// writable. The returned set is caller-owned.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_media_roots(
+    production: *const PpProduction,
+    out_roots: *mut *mut PpMediaRootSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and pointers checked before use.
+    unsafe {
+        initialize_output(out_roots);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            require_output(out_roots, "out_roots")?;
+            let inner = lock_production(&production.state);
+            let roots = inner
+                .production()
+                .media_roots()
+                .iter()
+                .map(AbiMediaRoot::try_from)
+                .collect::<Result<Vec<_>, Error>>()?;
+            out_roots.write(Box::into_raw(Box::new(PpMediaRootSet { roots })));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the number of media roots in a result set. Null returns zero.
+///
+/// # Safety
+///
+/// A non-null pointer must be a live media-root set returned by this library.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_media_root_set_count(roots: *const PpMediaRootSet) -> u64 {
+    // SAFETY: A non-null pointer is guaranteed live by the caller.
+    unsafe {
+        roots
+            .as_ref()
+            .and_then(|roots| length_as_u64(roots.roots.len()).ok())
+            .unwrap_or(0)
+    }
+}
+
+/// Copies one media-root summary and borrows its strings from the set.
+///
+/// # Safety
+///
+/// The set and every output pointer must be live. String outputs remain valid
+/// until the set is released; `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn pp_media_root_set_get(
+    roots: *const PpMediaRootSet,
+    index: u64,
+    out_id: *mut PpUuid,
+    out_uri: *mut *const c_char,
+    out_label: *mut *const c_char,
+    out_priority: *mut i32,
+    out_enabled: *mut u8,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and validated before writes.
+    unsafe {
+        initialize_uuid(out_id);
+        initialize_const_output(out_uri);
+        initialize_const_output(out_label);
+        initialize_value(out_priority, 0);
+        initialize_value(out_enabled, 0);
+        ffi_call(out_error, || {
+            let roots = roots
+                .as_ref()
+                .ok_or_else(|| invalid_argument("roots must not be null"))?;
+            let root = item_at(&roots.roots, index, "media root")?;
+            write_copy(
+                out_id,
+                PpUuid {
+                    bytes: root.id.into_bytes(),
+                },
+                "out_id",
+            )?;
+            write_copy(out_uri, root.uri.as_ptr(), "out_uri")?;
+            write_copy(
+                out_label,
+                root.label
+                    .as_ref()
+                    .map_or(ptr::null(), |value| value.as_ptr()),
+                "out_label",
+            )?;
+            write_copy(out_priority, root.priority, "out_priority")?;
+            write_copy(out_enabled, u8::from(root.enabled), "out_enabled")
+        })
+    }
+}
+
+/// Releases a media-root result set. Null is accepted.
+///
+/// # Safety
+///
+/// A non-null pointer must be an owned media-root set returned by this library.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_media_root_set_release(roots: *mut PpMediaRootSet) {
+    if !roots.is_null() {
+        // SAFETY: Non-null pointers must originate from `pp_production_media_roots`.
+        unsafe { drop(Box::from_raw(roots)) };
     }
 }
 

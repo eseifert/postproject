@@ -22,6 +22,7 @@ extern "C" {
 typedef struct pp_production pp_production_t;
 typedef struct pp_transaction pp_transaction_t;
 typedef struct pp_asset_set pp_asset_set_t;
+typedef struct pp_media_root_set pp_media_root_set_t;
 typedef struct pp_representation_set pp_representation_set_t;
 typedef struct pp_resolution_set pp_resolution_set_t;
 typedef struct pp_external_identifier_set pp_external_identifier_set_t;
@@ -238,6 +239,17 @@ PP_API pp_error_code_t pp_asset_set_get(
     int64_t *out_created_at_unix_micros, const char **out_display_name,
     const char **out_import_source, pp_error_t **out_error);
 PP_API void pp_asset_set_release(pp_asset_set_t *assets);
+/* Media-root strings borrow the owning result set. Roots are ordered by
+ * resolver priority and stable identity. */
+PP_API pp_error_code_t pp_production_media_roots(
+    const pp_production_t *production, pp_media_root_set_t **out_roots,
+    pp_error_t **out_error);
+PP_API uint64_t pp_media_root_set_count(const pp_media_root_set_t *roots);
+PP_API pp_error_code_t pp_media_root_set_get(
+    const pp_media_root_set_t *roots, uint64_t index, pp_uuid_t *out_id,
+    const char **out_uri, const char **out_label, int32_t *out_priority,
+    uint8_t *out_enabled, pp_error_t **out_error);
+PP_API void pp_media_root_set_release(pp_media_root_set_t *roots);
 /* Representation strings borrow the owning result set. Members are returned in
  * structural order. Single-resource and image-sequence members have no role. */
 PP_API pp_error_code_t pp_production_representations(
