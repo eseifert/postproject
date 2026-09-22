@@ -7,7 +7,7 @@ use postproject_core::{
     FrameRange, IdentifierScheme, ImageSequencePattern, MetadataField, MetadataProperty,
     MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, PropertyId, RationalRate,
     RepresentationAvailability, RepresentationImport, RepresentationResolution, Resource,
-    ResourceRole, RevisionContext, ToolIdentity, VocabularyId,
+    ResourceRole, RevisionContext, RevisionEventKind, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, prepare_image_sequence_representation,
@@ -265,6 +265,7 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture) {
         fixture.activity.tool().expect("activity tool").version(),
         Some("8.0")
     );
+    assert_revision_feed(&reopened, fixture);
     assert_identifiers_and_metadata(&reopened, fixture);
 
     let stored_sequence = representations
@@ -312,6 +313,30 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture) {
             .map(Resource::id)
             .collect::<Vec<_>>()
     );
+}
+
+fn assert_revision_feed(production: &SqliteProduction, fixture: &Fixture) {
+    let changes = production
+        .changes_since(0, 10)
+        .expect("load workflow changes");
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].sequence(), 1);
+    assert_eq!(
+        changes[0].origin().expect("workflow origin").name(),
+        "Acceptance workflow"
+    );
+    let events = production
+        .events_for_revision(changes[0].id())
+        .expect("load workflow events");
+    assert_eq!(events.len(), 29);
+    assert!(events.iter().any(|event| matches!(
+        event.kind(),
+        RevisionEventKind::ActivityCreated { activity_id, .. }
+            if *activity_id == fixture.activity.id()
+    )));
+    assert!(events.iter().enumerate().all(|(position, event)| {
+        event.position() == u32::try_from(position).expect("event position fits u32")
+    }));
 }
 
 fn assert_identifiers_and_metadata(production: &SqliteProduction, fixture: &Fixture) {
