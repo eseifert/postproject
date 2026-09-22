@@ -1,15 +1,17 @@
 //! Deterministic, bounded filesystem media resolution.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
+    fs,
     path::{Path, PathBuf},
 };
 
 use postproject_core::{
-    Confidence, ContentStructure, Error, ErrorKind, EvidenceKind, FileFacts, Locator, MediaRoot,
-    ResolutionCandidate, ResolutionEvidence, Resource, ResourceFingerprint, ResourceResolution,
-    ResourceResolutionState, Result,
+    Confidence, ContentStructure, Error, ErrorKind, EvidenceKind, FileFacts,
+    ImageSequenceDescriptor, Locator, MAX_SEQUENCE_EXCEPTIONS, MediaRoot, ResolutionCandidate,
+    ResolutionEvidence, Resource, ResourceFingerprint, ResourceResolution, ResourceResolutionState,
+    Result,
 };
 use url::Url;
 use walkdir::WalkDir;
@@ -91,22 +93,36 @@ impl MediaResolver {
                 "known locator belongs to a different resource",
             ));
         }
-        let is_image_sequence = structure
+        if let Some(sequence) = structure
             .image_sequence_descriptor()
-            .is_some_and(|sequence| sequence.resource_id() == resource.id());
-        if let Some(candidate) = online_known_candidate(known_locators, is_image_sequence)? {
+            .filter(|sequence| sequence.resource_id() == resource.id())
+        {
+            let (candidate, missing_frames) =
+                match online_sequence_candidate(known_locators, sequence) {
+                    Ok(Some(result)) => result,
+                    Ok(None) => {
+                        return ResourceResolution::new(
+                            resource.id(),
+                            ResourceResolutionState::Offline,
+                            Vec::new(),
+                            Vec::new(),
+                        );
+                    }
+                    Err(detail) => return error_resolution(resource.id(), detail),
+                };
             return ResourceResolution::new(
                 resource.id(),
                 ResourceResolutionState::OnlineAtKnownLocator,
                 vec![candidate],
                 Vec::new(),
-            );
+            )?
+            .with_missing_frames(missing_frames);
         }
-        if is_image_sequence {
+        if let Some(candidate) = online_known_candidate(known_locators)? {
             return ResourceResolution::new(
                 resource.id(),
-                ResourceResolutionState::Offline,
-                Vec::new(),
+                ResourceResolutionState::OnlineAtKnownLocator,
+                vec![candidate],
                 Vec::new(),
             );
         }
@@ -223,16 +239,13 @@ impl MediaResolver {
     }
 }
 
-fn online_known_candidate(
-    known_locators: &[Locator],
-    requires_directory: bool,
-) -> Result<Option<ResolutionCandidate>> {
+fn online_known_candidate(known_locators: &[Locator]) -> Result<Option<ResolutionCandidate>> {
     let mut online = Vec::new();
     for locator in known_locators {
         let Ok(path) = file_uri_to_path(locator.uri()) else {
             continue;
         };
-        if (requires_directory && path.is_dir()) || (!requires_directory && path.is_file()) {
+        if path.is_file() {
             online.push(ResolutionCandidate::new(
                 locator.uri(),
                 Confidence::CERTAIN,
@@ -245,6 +258,62 @@ fn online_known_candidate(
     }
     online.sort_by(|left, right| left.uri().cmp(right.uri()));
     Ok(online.into_iter().next())
+}
+
+fn online_sequence_candidate(
+    known_locators: &[Locator],
+    descriptor: &ImageSequenceDescriptor,
+) -> std::result::Result<Option<(ResolutionCandidate, Vec<i64>)>, String> {
+    let mut online = known_locators
+        .iter()
+        .filter_map(|locator| {
+            let path = file_uri_to_path(locator.uri()).ok()?;
+            path.is_dir().then_some((locator.uri(), path))
+        })
+        .collect::<Vec<_>>();
+    online.sort_by_key(|(uri, _)| *uri);
+    let Some((uri, path)) = online.into_iter().next() else {
+        return Ok(None);
+    };
+
+    let names = fs::read_dir(&path)
+        .map_err(|error| format!("list image-sequence directory {}: {error}", path.display()))?
+        .map(|entry| {
+            entry.map(|entry| entry.file_name()).map_err(|error| {
+                format!("read image-sequence directory {}: {error}", path.display())
+            })
+        })
+        .collect::<std::result::Result<BTreeSet<_>, _>>()?;
+    let mut missing_frames = Vec::new();
+    let frames = descriptor.frames();
+    let mut frame = frames.start();
+    loop {
+        if !descriptor.is_known_missing(frame)
+            && !names.contains(OsStr::new(&descriptor.pattern().filename(frame)))
+        {
+            missing_frames.push(frame);
+            if missing_frames.len() > MAX_SEQUENCE_EXCEPTIONS {
+                return Err(format!(
+                    "image sequence has more than {MAX_SEQUENCE_EXCEPTIONS} missing frames"
+                ));
+            }
+        }
+        if frame == frames.end() {
+            break;
+        }
+        frame += i64::from(frames.step());
+    }
+
+    let candidate = ResolutionCandidate::new(
+        uri,
+        Confidence::CERTAIN,
+        vec![ResolutionEvidence::new(
+            EvidenceKind::KnownLocatorAvailable,
+            None,
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(Some((candidate, missing_frames)))
 }
 
 fn verify_candidate(
@@ -389,6 +458,10 @@ mod tests {
         let directory = tempfile::tempdir().expect("create directory");
         let sequence_directory = directory.path().join("plate");
         fs::create_dir(&sequence_directory).expect("create sequence directory");
+        fs::write(sequence_directory.join("plate.0001.exr"), b"frame 1")
+            .expect("write first frame");
+        fs::write(sequence_directory.join("plate.0003.exr"), b"frame 3")
+            .expect("write third frame");
         let resource_id = ResourceId::new();
         let descriptor = ImageSequenceDescriptor::new(
             resource_id,
@@ -427,6 +500,51 @@ mod tests {
             RepresentationAvailability::Partial
         );
         assert_eq!(aggregate.issues()[0].frames(), &[2]);
+    }
+
+    #[test]
+    fn sequence_directory_inventory_reports_unrecorded_gaps() {
+        let directory = tempfile::tempdir().expect("create directory");
+        fs::write(directory.path().join("plate.1001.exr"), b"frame 1001")
+            .expect("write first frame");
+        fs::write(directory.path().join("plate.1003.exr"), b"frame 1003")
+            .expect("write third frame");
+        let resource_id = ResourceId::new();
+        let descriptor = ImageSequenceDescriptor::new(
+            resource_id,
+            ImageSequencePattern::new("plate.", ".exr", 4).expect("valid pattern"),
+            FrameRange::new(1001, 1004, 1).expect("valid frame range"),
+            RationalRate::new(24, 1).expect("valid rate"),
+            Vec::new(),
+        )
+        .expect("valid sequence");
+        let structure = ContentStructure::image_sequence(descriptor);
+        let resource = Resource::new(resource_id, Vec::new(), None);
+        let locator = Locator::new(
+            LocatorId::new(),
+            resource_id,
+            canonical_file_uri(directory.path()).expect("sequence URI"),
+            None,
+            postproject_core::LocatorAvailability::Online,
+        )
+        .expect("valid locator");
+
+        let resolved = MediaResolver::default()
+            .resolve_resource(&resource, &structure, &[locator], &[])
+            .expect("resolve known sequence directory");
+        assert_eq!(resolved.missing_frames(), &[1002, 1004]);
+        let aggregate = RepresentationResolution::aggregate(
+            RepresentationId::new(),
+            &structure,
+            vec![resolved],
+        )
+        .expect("aggregate sequence");
+
+        assert_eq!(
+            aggregate.availability(),
+            RepresentationAvailability::Partial
+        );
+        assert_eq!(aggregate.issues()[0].frames(), &[1002, 1004]);
     }
 
     #[test]
