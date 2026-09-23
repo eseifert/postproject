@@ -13,6 +13,7 @@ src/users/README
 src/users/image-sequences-and-spanned-media
 src/users/metadata-and-provenance
 src/integrators/README
+src/integrators/installing-a-release
 src/integrators/c-quickstart
 src/integrators/cpp-quickstart
 src/integrators/python

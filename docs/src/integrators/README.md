@@ -5,6 +5,9 @@ RAII layer over that ABI, and installed consumers do not need Rust or Cargo.
 Until an explicit stability milestone, pin an exact release or commit and expect
 coordinated API, ABI, schema, CLI, and binding changes.
 
+Start with [installing a release](installing-a-release.md) when embedding a
+published package without a Rust toolchain.
+
 Key integration rules:
 
 - treat PostProject IDs as internal object identities, not industry IDs;

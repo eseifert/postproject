@@ -22,6 +22,7 @@
 # For integrators
 
 - [Integrator guide](integrators/README.md)
+  - [Install a release](integrators/installing-a-release.md)
   - [Host-object bindings](integrators/host-object-bindings.md)
 - [C quickstart](integrators/c-quickstart.md)
 - [C++ quickstart](integrators/cpp-quickstart.md)
