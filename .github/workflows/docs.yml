@@ -30,14 +30,22 @@ jobs:
       - run: python tools/check_docs_coverage.py include/postproject/postproject.h target/doxygen/xml
       - run: sphinx-build --fail-on-warning --keep-going -b html docs target/site
       - run: cargo doc --workspace --all-features --no-deps --locked
-      - name: Add versioned and Rust references
+      - name: Add Rust reference
         shell: bash
         run: |
-          mkdir -p target/versioned
-          cp -a target/site/. target/versioned/
-          mkdir -p target/site/0.3.0-alpha.1 target/site/rustdoc
-          cp -a target/versioned/. target/site/0.3.0-alpha.1/
+          mkdir -p target/site/rustdoc
           cp -a target/doc/. target/site/rustdoc/
+      - uses: actions/checkout@v7
+        with:
+          ref: v0.3.0-alpha.1
+          path: target/released-docs-source
+      - name: Build immutable release documentation
+        working-directory: target/released-docs-source
+        run: |
+          doxygen Doxyfile
+          python tools/normalize_doxygen_xml.py target/doxygen/xml
+          python tools/check_docs_coverage.py include/postproject/postproject.h target/doxygen/xml
+          sphinx-build --fail-on-warning --keep-going -b html docs "$GITHUB_WORKSPACE/target/site/0.3.0-alpha.1"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
