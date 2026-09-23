@@ -20,9 +20,10 @@ use postproject_core::{
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, InventoryCategory, InventoryReport, InventoryScanner,
-    MediaResolver, MediaRootMapping, prepare_confirmed_locator,
+    MediaRecognizer, MediaResolver, MediaRootMapping, RecognizedMedia, prepare_confirmed_locator,
     prepare_image_sequence_representation, prepare_ordered_parts_representation,
-    prepare_original_media, prepare_package_representation, prepare_single_file_representation,
+    prepare_original_media, prepare_package_representation, prepare_recognized_original_media,
+    prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use serde::{Deserialize, Serialize};
@@ -92,10 +93,16 @@ enum MediaCommand {
 #[derive(Debug, Args)]
 struct MediaAddArgs {
     production: PathBuf,
-    file: PathBuf,
+    path: PathBuf,
     /// Optional asset display name.
     #[arg(long)]
     name: Option<String>,
+    /// Exact rate for a recognized image sequence (NUMERATOR/DENOMINATOR).
+    #[arg(long)]
+    sequence_rate: Option<RationalRate>,
+    /// Recognize same-stem metadata sidecars beside a regular file.
+    #[arg(long)]
+    recognize_companions: bool,
 }
 
 #[derive(Debug, Args)]
@@ -541,6 +548,7 @@ struct ImportView {
     resource_id: String,
     locator_id: String,
     uri: String,
+    resource_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -988,15 +996,36 @@ fn init(args: InitArgs, json: bool) -> Result<()> {
 }
 
 fn media_add(args: MediaAddArgs, json: bool) -> Result<()> {
-    let prepared =
-        prepare_original_media(&args.file, args.name, Some("postproject-cli".to_owned()))
-            .context("prepare media import")?;
+    let recognize = args.path.is_dir() || args.recognize_companions;
+    let prepared = if recognize {
+        let fallback_rate = RationalRate::new(24, 1).context("prepare recognition rate")?;
+        let recognized = MediaRecognizer::new(args.sequence_rate.unwrap_or(fallback_rate))
+            .recognize(&args.path)
+            .context("recognize media")?;
+        let [recognized] = recognized.as_slice() else {
+            bail!(
+                "media recognition returned {} candidates; supply a path identifying one layout",
+                recognized.len()
+            );
+        };
+        if matches!(recognized, RecognizedMedia::ImageSequence { .. })
+            && args.sequence_rate.is_none()
+        {
+            bail!("recognized image sequences require --sequence-rate NUMERATOR/DENOMINATOR");
+        }
+        prepare_recognized_original_media(recognized, args.name, Some("postproject-cli".to_owned()))
+            .context("prepare recognized media import")?
+    } else {
+        prepare_original_media(&args.path, args.name, Some("postproject-cli".to_owned()))
+            .context("prepare media import")?
+    };
     let view = ImportView {
         asset_id: prepared.asset().id().to_string(),
         representation_id: prepared.representation().id().to_string(),
         resource_id: prepared.resources()[0].id().to_string(),
         locator_id: prepared.locators()[0].id().to_string(),
         uri: prepared.locators()[0].uri().to_owned(),
+        resource_count: prepared.resources().len(),
     };
     let mut production = SqliteProduction::open(&args.production).context("open production")?;
     let mut transaction = production
