@@ -25,7 +25,7 @@ exist.
 Use the exported package target from an application:
 
 ```cmake
-find_package(PostProject 0.2 REQUIRED CONFIG)
+find_package(PostProject 0.3 REQUIRED CONFIG)
 target_link_libraries(my_application PRIVATE PostProject::postproject)
 target_compile_features(my_application PRIVATE cxx_std_17)
 ```
