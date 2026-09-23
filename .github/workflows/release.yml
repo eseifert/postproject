@@ -36,7 +36,8 @@ jobs:
             --prefix="postproject-${{ steps.version.outputs.value }}/" \
             --output="dist/$archive" \
             HEAD
-          cmake -E sha256sum "dist/$archive" > "dist/$archive.sha256"
+          cd dist
+          cmake -E sha256sum "$archive" > "$archive.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: release-source
@@ -114,8 +115,8 @@ jobs:
           else
             cmake -E tar cfvz "$GITHUB_WORKSPACE/dist/$archive" .
           fi
-          cd "$GITHUB_WORKSPACE"
-          cmake -E sha256sum "dist/$archive" > "dist/$archive.sha256"
+          cd "$GITHUB_WORKSPACE/dist"
+          cmake -E sha256sum "$archive" > "$archive.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: release-native-${{ matrix.artifact }}
@@ -137,7 +138,8 @@ jobs:
         shell: bash
         run: |
           python -m pip wheel --no-deps ./python --wheel-dir dist
-          wheels=(dist/*.whl)
+          cd dist
+          wheels=(*.whl)
           test "${#wheels[@]}" -eq 1
           cmake -E sha256sum "${wheels[0]}" > "${wheels[0]}.sha256"
       - name: Test installed wheel
