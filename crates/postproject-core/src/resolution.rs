@@ -61,6 +61,8 @@ pub enum EvidenceKind {
     MediaRootUnmapped,
     /// A mapped media root cannot currently be searched.
     MediaRootUnavailable,
+    /// Present content does not match its stored fingerprint evidence.
+    FingerprintMismatch,
     /// Another candidate has equivalent credible evidence.
     ConflictingCandidate,
     /// Candidate discovery or verification could not complete safely.

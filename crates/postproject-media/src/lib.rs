@@ -42,7 +42,7 @@ pub use representation_fingerprint::{
     REPRESENTATION_FINGERPRINT_ALGORITHM, REPRESENTATION_FINGERPRINT_VERSION,
     fingerprint_representation,
 };
-pub use resolver::{MediaResolver, MediaRootMapping, ResolverOptions};
+pub use resolver::{MediaResolver, MediaRootMapping, ResolverOptions, VerificationMode};
 pub use sequence_fingerprint::{
     SEQUENCE_FINGERPRINT_ALGORITHM, SEQUENCE_FINGERPRINT_VERSION, SequenceFingerprintReport,
     fingerprint_image_sequence,

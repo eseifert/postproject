@@ -100,6 +100,17 @@ pub struct ResolverOptions {
     pub max_entries: usize,
 }
 
+/// Cost tier requested for one resolution call.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum VerificationMode {
+    /// Check that the locator and declared members are present.
+    #[default]
+    Presence,
+    /// Recompute stored content fingerprints for present resources.
+    Content,
+}
+
 impl Default for ResolverOptions {
     fn default() -> Self {
         Self {
@@ -152,21 +163,33 @@ impl MediaResolver {
         media_roots: &[MediaRoot],
         root_mappings: &[MediaRootMapping],
     ) -> Result<ResourceResolution> {
-        if !structure.resource_ids().contains(&resource.id()) {
-            return Err(Error::new(
-                ErrorKind::InvalidArgument,
-                "resource does not belong to the supplied content structure",
-            ));
-        }
-        if known_locators
-            .iter()
-            .any(|locator| locator.resource_id() != resource.id())
-        {
-            return Err(Error::new(
-                ErrorKind::InvalidArgument,
-                "known locator belongs to a different resource",
-            ));
-        }
+        self.resolve_resource_with_verification(
+            resource,
+            structure,
+            known_locators,
+            media_roots,
+            root_mappings,
+            VerificationMode::Presence,
+        )
+    }
+
+    /// Resolves one resource at an explicit presence or content-verification tier.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same argument and result-construction errors as
+    /// [`Self::resolve_resource`]. Verification failures are represented in the
+    /// returned result rather than failing the call.
+    pub fn resolve_resource_with_verification(
+        &self,
+        resource: &Resource,
+        structure: &ContentStructure,
+        known_locators: &[Locator],
+        media_roots: &[MediaRoot],
+        root_mappings: &[MediaRootMapping],
+        verification: VerificationMode,
+    ) -> Result<ResourceResolution> {
+        validate_resolution_inputs(resource, structure, known_locators)?;
         if let Some(sequence) = structure
             .image_sequence_descriptor()
             .filter(|sequence| sequence.resource_id() == resource.id())
@@ -184,15 +207,22 @@ impl MediaResolver {
                     }
                     Err(detail) => return error_resolution(resource.id(), detail),
                 };
-            return ResourceResolution::new(
+            let resolution = ResourceResolution::new(
                 resource.id(),
                 ResourceResolutionState::OnlineAtKnownLocator,
                 vec![candidate],
                 Vec::new(),
             )?
-            .with_missing_frames(missing_frames);
+            .with_missing_frames(missing_frames)?;
+            if verification == VerificationMode::Content {
+                return verify_known_sequence(resource, sequence, &resolution);
+            }
+            return Ok(resolution);
         }
         if let Some(candidate) = online_known_candidate(known_locators)? {
+            if verification == VerificationMode::Content {
+                return verify_known_file(resource, &candidate);
+            }
             return ResourceResolution::new(
                 resource.id(),
                 ResourceResolutionState::OnlineAtKnownLocator,
@@ -201,17 +231,17 @@ impl MediaResolver {
             );
         }
 
-        let original_name = known_locators.iter().find_map(|locator| {
-            file_uri_to_path(locator.uri())
-                .ok()
-                .and_then(|path| path.file_name().map(OsStr::to_os_string))
-        });
+        let original_path = known_locators
+            .iter()
+            .find_map(|locator| file_uri_to_path(locator.uri()).ok());
+        let original_name = original_path.as_deref().and_then(Path::file_name);
         let discovered = match self.discover(
             media_roots,
             root_mappings,
             resource.file_facts(),
             !resource.fingerprints().is_empty(),
-            original_name.as_deref(),
+            original_name,
+            original_path.as_deref(),
         ) {
             Ok(discovered) => discovered,
             Err(detail) => return error_resolution(resource.id(), detail),
@@ -340,6 +370,7 @@ impl MediaResolver {
         facts: Option<FileFacts>,
         has_fingerprint: bool,
         original_name: Option<&OsStr>,
+        original_path: Option<&Path>,
     ) -> std::result::Result<Discovery, String> {
         let mut discovered = BTreeMap::new();
         let mut diagnostics = Vec::new();
@@ -430,6 +461,7 @@ impl MediaResolver {
                 if filename_matches {
                     evidence.push(ResolutionEvidence::new(EvidenceKind::FileNameMatch, None));
                 }
+                add_relative_path_evidence(&mut evidence, original_path, entry.path());
                 discovered.entry(uri).or_insert(evidence);
             }
         }
@@ -438,6 +470,29 @@ impl MediaResolver {
             diagnostics,
         })
     }
+}
+
+fn validate_resolution_inputs(
+    resource: &Resource,
+    structure: &ContentStructure,
+    known_locators: &[Locator],
+) -> Result<()> {
+    if !structure.resource_ids().contains(&resource.id()) {
+        return Err(Error::new(
+            ErrorKind::InvalidArgument,
+            "resource does not belong to the supplied content structure",
+        ));
+    }
+    if known_locators
+        .iter()
+        .any(|locator| locator.resource_id() != resource.id())
+    {
+        return Err(Error::new(
+            ErrorKind::InvalidArgument,
+            "known locator belongs to a different resource",
+        ));
+    }
+    Ok(())
 }
 
 fn searchable_roots(
@@ -542,6 +597,139 @@ fn verify_sequence_directory(
         candidate,
         missing_frames,
     }))
+}
+
+fn verify_known_file(
+    resource: &Resource,
+    presence_candidate: &ResolutionCandidate,
+) -> Result<ResourceResolution> {
+    if resource.fingerprints().is_empty() {
+        return verification_failure(resource.id(), "resource has no stored fingerprint");
+    }
+    let path = file_uri_to_path(presence_candidate.uri())?;
+    let evidence = vec![ResolutionEvidence::new(
+        EvidenceKind::KnownLocatorAvailable,
+        None,
+    )];
+    match verify_candidate(
+        &path,
+        presence_candidate.uri(),
+        evidence,
+        resource.fingerprints(),
+    ) {
+        Ok(Some(candidate)) => ResourceResolution::new(
+            resource.id(),
+            ResourceResolutionState::OnlineAtKnownLocator,
+            vec![candidate],
+            Vec::new(),
+        ),
+        Ok(None) => verification_failure(
+            resource.id(),
+            "content at the known locator differs from its stored fingerprint",
+        ),
+        Err(detail) => verification_failure(resource.id(), detail),
+    }
+}
+
+fn verify_known_sequence(
+    resource: &Resource,
+    descriptor: &ImageSequenceDescriptor,
+    presence: &ResourceResolution,
+) -> Result<ResourceResolution> {
+    let Some(expected) = resource.fingerprints().iter().find(|fingerprint| {
+        fingerprint.algorithm() == SEQUENCE_FINGERPRINT_ALGORITHM
+            && fingerprint.version() == crate::SEQUENCE_FINGERPRINT_VERSION
+    }) else {
+        return verification_failure(
+            resource.id(),
+            "sequence has no stored collection fingerprint",
+        );
+    };
+    let Some(candidate) = presence.candidates().first() else {
+        return verification_failure(resource.id(), "sequence presence result has no candidate");
+    };
+    let path = file_uri_to_path(candidate.uri())?;
+    let report = match fingerprint_image_sequence(&path, descriptor) {
+        Ok(report) => report,
+        Err(error) => return verification_failure(resource.id(), error.to_string()),
+    };
+    if report.fingerprint() != expected {
+        return verification_failure(
+            resource.id(),
+            "sequence content differs from its stored collection fingerprint",
+        );
+    }
+    let verified = ResolutionCandidate::new(
+        candidate.uri(),
+        Confidence::from_basis_points(9_500)?,
+        vec![
+            ResolutionEvidence::new(EvidenceKind::KnownLocatorAvailable, None),
+            ResolutionEvidence::new(
+                EvidenceKind::PartialFingerprintMatch,
+                Some(format!(
+                    "{} version {}",
+                    expected.algorithm(),
+                    expected.version()
+                )),
+            ),
+        ],
+    )?;
+    ResourceResolution::new(
+        resource.id(),
+        ResourceResolutionState::OnlineAtKnownLocator,
+        vec![verified],
+        Vec::new(),
+    )?
+    .with_missing_frames(presence.missing_frames().to_vec())
+}
+
+fn verification_failure(
+    resource_id: postproject_core::ResourceId,
+    detail: impl Into<String>,
+) -> Result<ResourceResolution> {
+    ResourceResolution::new(
+        resource_id,
+        ResourceResolutionState::Error,
+        Vec::new(),
+        vec![ResolutionEvidence::new(
+            EvidenceKind::FingerprintMismatch,
+            Some(detail.into()),
+        )],
+    )
+}
+
+fn matching_parent_components(original: &Path, candidate: &Path) -> usize {
+    original
+        .parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .rev()
+        .zip(
+            candidate
+                .parent()
+                .into_iter()
+                .flat_map(Path::components)
+                .rev(),
+        )
+        .take_while(|(left, right)| left == right)
+        .count()
+}
+
+fn add_relative_path_evidence(
+    evidence: &mut Vec<ResolutionEvidence>,
+    original: Option<&Path>,
+    candidate: &Path,
+) {
+    let Some(components) = original
+        .map(|original| matching_parent_components(original, candidate))
+        .filter(|components| *components > 0)
+    else {
+        return;
+    };
+    evidence.push(ResolutionEvidence::new(
+        EvidenceKind::RelativePathSimilarity,
+        Some(format!("{components} matching parent path components")),
+    ));
 }
 
 fn online_known_candidate(known_locators: &[Locator]) -> Result<Option<ResolutionCandidate>> {
@@ -682,16 +870,24 @@ fn verify_candidate(
     if !filename_match {
         return Ok(None);
     }
-    let confidence = Confidence::from_basis_points(
-        if evidence
+    let confidence = Confidence::from_basis_points({
+        let base = if evidence
             .iter()
             .any(|item| item.kind() == EvidenceKind::FileSizeMatch)
         {
             7_000
         } else {
             5_000
-        },
-    )
+        };
+        if evidence
+            .iter()
+            .any(|item| item.kind() == EvidenceKind::RelativePathSimilarity)
+        {
+            base + 500
+        } else {
+            base
+        }
+    })
     .map_err(|error| error.to_string())?;
     ResolutionCandidate::new(uri, confidence, evidence)
         .map(Some)
@@ -768,6 +964,45 @@ mod tests {
         assert_eq!(
             resolution.candidates()[0].uri(),
             prepared.locators()[0].uri()
+        );
+    }
+
+    #[test]
+    fn content_verification_detects_replacement_at_a_known_locator() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let path = directory.path().join("clip.mov");
+        fs::write(&path, b"original content").expect("write original");
+        let prepared = prepare_original_media(&path, None, None).expect("prepare import");
+        fs::write(&path, b"replaced content").expect("replace in place");
+
+        let presence = MediaResolver::default()
+            .resolve_resource(
+                &prepared.resources()[0],
+                prepared.representation().content_structure(),
+                prepared.locators(),
+                &[],
+                &[],
+            )
+            .expect("presence resolution");
+        assert_eq!(
+            presence.state(),
+            ResourceResolutionState::OnlineAtKnownLocator
+        );
+
+        let verified = MediaResolver::default()
+            .resolve_resource_with_verification(
+                &prepared.resources()[0],
+                prepared.representation().content_structure(),
+                prepared.locators(),
+                &[],
+                &[],
+                VerificationMode::Content,
+            )
+            .expect("verification result");
+        assert_eq!(verified.state(), ResourceResolutionState::Error);
+        assert_eq!(
+            verified.evidence()[0].kind(),
+            EvidenceKind::FingerprintMismatch
         );
     }
 
@@ -1069,6 +1304,50 @@ mod tests {
         assert_eq!(resolution.state(), ResourceResolutionState::Ambiguous);
         assert_eq!(resolution.candidates().len(), 2);
         assert!(resolution.candidates()[0].uri() < resolution.candidates()[1].uri());
+    }
+
+    #[test]
+    fn relative_path_similarity_orders_filename_only_candidates() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let original_directory = directory.path().join("old/day01");
+        let root_directory = directory.path().join("new");
+        fs::create_dir_all(&original_directory).expect("create original directory");
+        fs::create_dir_all(root_directory.join("day01")).expect("create similar directory");
+        fs::create_dir_all(root_directory.join("other")).expect("create other directory");
+        let original = original_directory.join("clip.mov");
+        fs::write(&original, b"same-size").expect("write original");
+        let resource_id = ResourceId::new();
+        let resource = Resource::new(resource_id, Vec::new(), Some(FileFacts::new(9, None)));
+        let structure = ContentStructure::single_resource(resource_id);
+        let locator = Locator::new(
+            LocatorId::new(),
+            resource_id,
+            canonical_file_uri(&original).expect("original URI"),
+            None,
+            postproject_core::LocatorAvailability::Online,
+        )
+        .expect("locator");
+        fs::remove_file(&original).expect("remove original");
+        for path in [
+            root_directory.join("day01/clip.mov"),
+            root_directory.join("other/clip.mov"),
+        ] {
+            fs::write(path, b"same-size").expect("write candidate");
+        }
+        let root = prepare_media_root(&root_directory, None, 0).expect("root");
+
+        let resolution = MediaResolver::default()
+            .resolve_resource(&resource, &structure, &[locator], &[root], &[])
+            .expect("resolve candidates");
+        assert_eq!(resolution.state(), ResourceResolutionState::Ambiguous);
+        assert!(resolution.candidates()[0].uri().contains("day01"));
+        assert!(
+            resolution.candidates()[0]
+                .evidence()
+                .iter()
+                .any(|evidence| evidence.kind() == EvidenceKind::RelativePathSimilarity)
+        );
+        assert!(resolution.candidates()[0].confidence() > resolution.candidates()[1].confidence());
     }
 
     #[test]
