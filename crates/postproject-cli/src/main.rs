@@ -11,16 +11,17 @@ use postproject_core::{
     Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, DecimalValue, EvidenceKind,
     ExternalIdentifier, FrameRange, IdentifierScheme, ImageSequencePattern, Locator,
     LocatorAvailability, LocatorId, MediaRoot, MediaRootId, MetadataAssertion, MetadataField,
-    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity, ProductionId,
-    ProductionStoreTransaction, PropertyId, RationalRate, RationalValue, Representation,
-    RepresentationAvailability, RepresentationId, RepresentationKind, RepresentationResolution,
-    ResolutionEvidence, Resource, ResourceId, ResourceResolution, ResourceResolutionState,
-    ResourceRole, Revision, RevisionContext, RevisionEvent, RevisionEventKind, RevisionId,
-    Timestamp, ToolIdentity, VocabularyId,
+    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity,
+    OriginalMediaImport, ProductionId, ProductionStoreTransaction, PropertyId, RationalRate,
+    RationalValue, Representation, RepresentationAvailability, RepresentationId,
+    RepresentationKind, RepresentationResolution, ResolutionEvidence, Resource, ResourceId,
+    ResourceResolution, ResourceResolutionState, ResourceRole, Revision, RevisionContext,
+    RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
-    FileResourceSource, ImageSequenceSource, InventoryCategory, InventoryReport, InventoryScanner,
-    MediaRecognizer, MediaResolver, MediaRootMapping, RecognizedMedia, prepare_confirmed_locator,
+    FfprobeInspector, FileResourceSource, ImageSequenceSource, InspectionOutcome,
+    InventoryCategory, InventoryReport, InventoryScanner, MediaInspector, MediaRecognizer,
+    MediaResolver, MediaRootMapping, RecognizedMedia, prepare_confirmed_locator,
     prepare_image_sequence_representation, prepare_ordered_parts_representation,
     prepare_original_media, prepare_package_representation, prepare_recognized_original_media,
     prepare_single_file_representation,
@@ -103,6 +104,12 @@ struct MediaAddArgs {
     /// Recognize same-stem metadata sidecars beside a regular file.
     #[arg(long)]
     recognize_companions: bool,
+    /// Inspect imported media with ffprobe and record technical metadata.
+    #[arg(long)]
+    inspect: bool,
+    /// ffprobe executable used with --inspect.
+    #[arg(long, default_value = "ffprobe", requires = "inspect")]
+    ffprobe: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -549,6 +556,14 @@ struct ImportView {
     locator_id: String,
     uri: String,
     resource_count: usize,
+    inspections: Vec<InspectionView>,
+}
+
+#[derive(Debug, Serialize)]
+struct InspectionView {
+    path: String,
+    status: &'static str,
+    reason: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -922,7 +937,7 @@ fn execute(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Init(args) => init(args, cli.json),
         Command::Media(args) => match args.command {
-            MediaCommand::Add(args) => media_add(args, cli.json),
+            MediaCommand::Add(args) => media_add(&args, cli.json),
             MediaCommand::List(args) => media_list(&args, cli.json),
             MediaCommand::Show(args) => media_show(&args, cli.json),
             MediaCommand::Resolve(args) => media_resolve(args, cli.json),
@@ -995,9 +1010,51 @@ fn init(args: InitArgs, json: bool) -> Result<()> {
     }
 }
 
-fn media_add(args: MediaAddArgs, json: bool) -> Result<()> {
+fn media_add(args: &MediaAddArgs, json: bool) -> Result<()> {
+    let (prepared, inspection_paths) = prepare_cli_media(args)?;
+    let (technical_metadata, inspections) = inspect_cli_media(args, &inspection_paths);
+    let view = ImportView {
+        asset_id: prepared.asset().id().to_string(),
+        representation_id: prepared.representation().id().to_string(),
+        resource_id: prepared.resources()[0].id().to_string(),
+        locator_id: prepared.locators()[0].id().to_string(),
+        uri: prepared.locators()[0].uri().to_owned(),
+        resource_count: prepared.resources().len(),
+        inspections,
+    };
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin import transaction")?;
+    set_cli_revision_context(&mut transaction, "Import media")?;
+    transaction
+        .import_original(&prepared)
+        .context("stage media import")?;
+    for assertion in &technical_metadata {
+        transaction
+            .add_metadata_value(
+                ObjectRef::Representation(prepared.representation().id()),
+                assertion.property(),
+                assertion.value(),
+            )
+            .context("stage technical metadata")?;
+    }
+    transaction.commit().context("commit media import")?;
+
+    if json {
+        print_json(&view)
+    } else {
+        println!("imported asset {} from {}", view.asset_id, view.uri);
+        for inspection in &view.inspections {
+            println!("inspection {}: {}", inspection.path, inspection.status);
+        }
+        Ok(())
+    }
+}
+
+fn prepare_cli_media(args: &MediaAddArgs) -> Result<(OriginalMediaImport, Vec<PathBuf>)> {
     let recognize = args.path.is_dir() || args.recognize_companions;
-    let prepared = if recognize {
+    if recognize {
         let fallback_rate = RationalRate::new(24, 1).context("prepare recognition rate")?;
         let recognized = MediaRecognizer::new(args.sequence_rate.unwrap_or(fallback_rate))
             .recognize(&args.path)
@@ -1013,36 +1070,75 @@ fn media_add(args: MediaAddArgs, json: bool) -> Result<()> {
         {
             bail!("recognized image sequences require --sequence-rate NUMERATOR/DENOMINATOR");
         }
-        prepare_recognized_original_media(recognized, args.name, Some("postproject-cli".to_owned()))
-            .context("prepare recognized media import")?
+        let paths = recognized_inspection_paths(recognized);
+        let prepared = prepare_recognized_original_media(
+            recognized,
+            args.name.clone(),
+            Some("postproject-cli".to_owned()),
+        )
+        .context("prepare recognized media import")?;
+        Ok((prepared, paths))
     } else {
-        prepare_original_media(&args.path, args.name, Some("postproject-cli".to_owned()))
-            .context("prepare media import")?
-    };
-    let view = ImportView {
-        asset_id: prepared.asset().id().to_string(),
-        representation_id: prepared.representation().id().to_string(),
-        resource_id: prepared.resources()[0].id().to_string(),
-        locator_id: prepared.locators()[0].id().to_string(),
-        uri: prepared.locators()[0].uri().to_owned(),
-        resource_count: prepared.resources().len(),
-    };
-    let mut production = SqliteProduction::open(&args.production).context("open production")?;
-    let mut transaction = production
-        .begin_transaction()
-        .context("begin import transaction")?;
-    set_cli_revision_context(&mut transaction, "Import media")?;
-    transaction
-        .import_original(&prepared)
-        .context("stage media import")?;
-    transaction.commit().context("commit media import")?;
-
-    if json {
-        print_json(&view)
-    } else {
-        println!("imported asset {} from {}", view.asset_id, view.uri);
-        Ok(())
+        let prepared = prepare_original_media(
+            &args.path,
+            args.name.clone(),
+            Some("postproject-cli".to_owned()),
+        )
+        .context("prepare media import")?;
+        Ok((prepared, vec![args.path.clone()]))
     }
+}
+
+fn recognized_inspection_paths(recognized: &RecognizedMedia) -> Vec<PathBuf> {
+    match recognized {
+        RecognizedMedia::SingleFile(path) => vec![path.clone()],
+        RecognizedMedia::ImageSequence {
+            directory,
+            pattern,
+            frames,
+            missing_frames,
+            ..
+        } => (frames.start()..=frames.end())
+            .find(|frame| !missing_frames.contains(frame))
+            .map(|frame| vec![directory.join(pattern.filename(frame))])
+            .unwrap_or_default(),
+        RecognizedMedia::OrderedParts(members) | RecognizedMedia::Package(members) => members
+            .iter()
+            .filter(|member| member.is_required())
+            .map(|member| member.path().to_path_buf())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn inspect_cli_media(
+    args: &MediaAddArgs,
+    paths: &[PathBuf],
+) -> (Vec<MetadataAssertion>, Vec<InspectionView>) {
+    if !args.inspect {
+        return (Vec::new(), Vec::new());
+    }
+    let inspector = FfprobeInspector::with_executable(&args.ffprobe);
+    let mut assertions = Vec::new();
+    let mut views = Vec::new();
+    for path in paths {
+        let (status, reason) = match inspector.inspect(path) {
+            Ok(InspectionOutcome::Inspected(metadata)) => {
+                assertions.extend_from_slice(metadata.assertions());
+                ("recorded", None)
+            }
+            Ok(InspectionOutcome::Unavailable { reason }) => ("unavailable", Some(reason)),
+            Ok(InspectionOutcome::Failed { reason }) => ("failed", Some(reason)),
+            Err(error) => ("failed", Some(error.to_string())),
+            Ok(_) => ("failed", Some("unsupported inspection outcome".to_owned())),
+        };
+        views.push(InspectionView {
+            path: path.display().to_string(),
+            status,
+            reason,
+        });
+    }
+    (assertions, views)
 }
 
 fn representation_add(args: &RepresentationAddArgs, json: bool) -> Result<()> {

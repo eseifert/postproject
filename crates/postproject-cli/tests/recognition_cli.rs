@@ -5,6 +5,25 @@ use std::{fs, path::Path};
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
 
+#[cfg(unix)]
+fn fake_probe(directory: &Path, output: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = directory.join("ffprobe-fake");
+    fs::write(&path, format!("#!/bin/sh\nprintf '%s' '{output}'\n")).expect("write fake ffprobe");
+    let mut permissions = fs::metadata(&path).expect("fake metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("make fake executable");
+    path
+}
+
+#[cfg(windows)]
+fn fake_probe(directory: &Path, output: &str) -> std::path::PathBuf {
+    let path = directory.join("ffprobe-fake.cmd");
+    fs::write(&path, format!("@echo off\r\necho {output}\r\n")).expect("write fake ffprobe");
+    path
+}
+
 fn run_json(arguments: &[&str]) -> Value {
     let assertion = cargo_bin_cmd!("postproject")
         .arg("--json")
@@ -73,4 +92,58 @@ fn imports_a_sparse_sequence_with_an_explicit_rate() {
         imported["asset_id"].as_str().expect("asset ID"),
     ]);
     assert_eq!(shown["representations"][0]["structure"], "image_sequence");
+}
+
+#[test]
+fn optional_inspection_records_metadata_or_reports_unavailable() {
+    let temporary = tempfile::tempdir().expect("create temporary directory");
+    let production = temporary.path().join("inspected.pproj");
+    let media = temporary.path().join("camera.mov");
+    fs::write(&media, b"camera media").expect("write media");
+    let output = r#"{"format":{"format_name":"mov","duration":"2.5"},"streams":[{"index":0,"codec_name":"prores","codec_type":"video","width":1920,"height":1080}]}"#;
+    let ffprobe = fake_probe(temporary.path(), output);
+    let production = production.to_str().expect("UTF-8 production path");
+    run_json(&["init", production]);
+
+    let imported = run_json(&[
+        "media",
+        "add",
+        production,
+        media.to_str().expect("UTF-8 media path"),
+        "--inspect",
+        "--ffprobe",
+        ffprobe.to_str().expect("UTF-8 ffprobe path"),
+    ]);
+    assert_eq!(imported["inspections"][0]["status"], "recorded");
+    let metadata = run_json(&[
+        "metadata",
+        "list",
+        production,
+        "representation",
+        imported["representation_id"]
+            .as_str()
+            .expect("representation ID"),
+    ]);
+    assert_eq!(
+        metadata[0]["vocabulary"],
+        "https://postproject.org/ns/technical-media/1"
+    );
+
+    let second_production = temporary.path().join("unavailable.pproj");
+    let second_production = second_production.to_str().expect("UTF-8 production path");
+    run_json(&["init", second_production]);
+    let unavailable = run_json(&[
+        "media",
+        "add",
+        second_production,
+        media.to_str().expect("UTF-8 media path"),
+        "--inspect",
+        "--ffprobe",
+        temporary
+            .path()
+            .join("missing-ffprobe")
+            .to_str()
+            .expect("UTF-8 missing path"),
+    ]);
+    assert_eq!(unavailable["inspections"][0]["status"], "unavailable");
 }
