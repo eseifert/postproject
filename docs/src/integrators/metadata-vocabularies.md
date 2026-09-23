@@ -103,6 +103,12 @@ inspection operation is not currently exposed through C, C++, or Python; those
 surfaces can read the resulting assertion through their existing metadata
 traversal APIs.
 
+`media resolve --verify` reuses a single stored inspection as partial identity
+evidence when scoring relocated file candidates. The candidate remains
+ambiguous if another credible match exists. Use `--ffprobe PATH` to select the
+inspector executable; an unavailable or failed inspector leaves the other
+resolver evidence unchanged.
+
 Subprocess output is limited to 8 MiB per stream, execution defaults to a
 30-second deadline, JSON and numeric values are parsed without floating point,
 and stderr diagnostics are truncated. Missing `ffprobe`, non-zero exit, timeout,

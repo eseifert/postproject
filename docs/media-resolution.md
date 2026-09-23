@@ -52,6 +52,14 @@ confidence increment, which deterministically orders otherwise filename-only
 candidates. Relative paths alone never eliminate competing candidates or turn
 an ambiguous result into an automatic choice.
 
+At the opt-in verification tier, a single technical inspection stored on the
+representation can also be compared with candidate inspection results. An
+exact normalized profile match contributes partial-fingerprint evidence and a
+larger confidence increment than relative-path similarity. It still does not
+eliminate another credible candidate: the result remains `Ambiguous` until a
+caller confirms one URI. Missing `ffprobe`, failed inspection, compound imports
+with multiple unassociated profiles, and mismatches simply omit this evidence.
+
 Representation availability is then aggregated from its content structure.
 Every required member online is `Online`; a mix of online and offline required
 members is `Partial`; no resolvable required members is `Offline`; and an
@@ -79,7 +87,8 @@ nested shape through index-checked accessors, and the C++ wrapper copies it into
 owned `RepresentationResolution` values. Native confirmation remains a separate
 explicit transaction operation.
 
-The demonstrator exposes the expensive tier as `media resolve --verify`. Direct
-verification is currently available through the Rust media adapter and CLI, not
-as a separate C, C++, or Python operation; all native and Python surfaces retain
-presence resolution and explicit confirmation unchanged.
+The demonstrator exposes the expensive tier as `media resolve --verify`, with
+an optional `--ffprobe PATH` override for technical candidate evidence. Direct
+verification is currently available through the Rust media adapter and CLI,
+not as a separate C, C++, or Python operation; all native and Python surfaces
+retain presence resolution and explicit confirmation unchanged.
