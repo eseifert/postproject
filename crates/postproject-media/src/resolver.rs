@@ -16,7 +16,10 @@ use postproject_core::{
 use url::Url;
 use walkdir::WalkDir;
 
-use crate::{FULL_FINGERPRINT_ALGORITHM, canonical_file_uri, fingerprint_file};
+use crate::{
+    FULL_FINGERPRINT_ALGORITHM, SEQUENCE_FINGERPRINT_ALGORITHM, canonical_file_uri,
+    fingerprint_file, fingerprint_image_sequence,
+};
 
 /// One machine's directory mapping for a production-portable root name.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -75,6 +78,16 @@ impl MediaRootMapping {
 
 struct Discovery {
     candidates: BTreeMap<String, Vec<ResolutionEvidence>>,
+    diagnostics: Vec<ResolutionEvidence>,
+}
+
+struct SequenceCandidate {
+    candidate: ResolutionCandidate,
+    missing_frames: Vec<i64>,
+}
+
+struct SearchableRoots {
+    directories: Vec<(String, PathBuf)>,
     diagnostics: Vec<ResolutionEvidence>,
 }
 
@@ -162,11 +175,11 @@ impl MediaResolver {
                 match online_sequence_candidate(known_locators, sequence) {
                     Ok(Some(result)) => result,
                     Ok(None) => {
-                        return ResourceResolution::new(
-                            resource.id(),
-                            ResourceResolutionState::Offline,
-                            Vec::new(),
-                            Vec::new(),
+                        return self.resolve_moved_sequence(
+                            resource,
+                            sequence,
+                            media_roots,
+                            root_mappings,
                         );
                     }
                     Err(detail) => return error_resolution(resource.id(), detail),
@@ -239,6 +252,85 @@ impl MediaResolver {
             ));
         }
         ResourceResolution::new(resource.id(), state, candidates, evidence)
+    }
+
+    fn resolve_moved_sequence(
+        &self,
+        resource: &Resource,
+        descriptor: &ImageSequenceDescriptor,
+        roots: &[MediaRoot],
+        mappings: &[MediaRootMapping],
+    ) -> Result<ResourceResolution> {
+        let (found, mut diagnostics) =
+            match self.discover_sequences(roots, mappings, descriptor, resource.fingerprints()) {
+                Ok(found) => found,
+                Err(detail) => return error_resolution(resource.id(), detail),
+            };
+        let state = match found.len() {
+            0 if !diagnostics.is_empty() => ResourceResolutionState::Error,
+            0 => ResourceResolutionState::Offline,
+            1 => ResourceResolutionState::ResolvedProbable,
+            _ => ResourceResolutionState::Ambiguous,
+        };
+        if state == ResourceResolutionState::Ambiguous {
+            diagnostics.push(ResolutionEvidence::new(
+                EvidenceKind::ConflictingCandidate,
+                Some(format!("{} sequence directories match", found.len())),
+            ));
+        }
+        let missing_frames = if found.len() == 1 {
+            found[0].missing_frames.clone()
+        } else {
+            Vec::new()
+        };
+        ResourceResolution::new(
+            resource.id(),
+            state,
+            found.into_iter().map(|found| found.candidate).collect(),
+            diagnostics,
+        )?
+        .with_missing_frames(missing_frames)
+    }
+
+    fn discover_sequences(
+        &self,
+        roots: &[MediaRoot],
+        mappings: &[MediaRootMapping],
+        descriptor: &ImageSequenceDescriptor,
+        fingerprints: &[ResourceFingerprint],
+    ) -> std::result::Result<(Vec<SequenceCandidate>, Vec<ResolutionEvidence>), String> {
+        let search = searchable_roots(roots, mappings)?;
+        let mut found = BTreeMap::new();
+        let mut entries_seen = 0_usize;
+        for (root_name, root_path) in search.directories {
+            for entry in WalkDir::new(&root_path)
+                .follow_links(false)
+                .max_depth(self.options.max_depth)
+                .sort_by_file_name()
+            {
+                entries_seen = entries_seen.saturating_add(1);
+                if entries_seen > self.options.max_entries {
+                    return Err(format!(
+                        "resolver entry limit {} exceeded",
+                        self.options.max_entries
+                    ));
+                }
+                let entry =
+                    entry.map_err(|error| format!("scan {}: {error}", root_path.display()))?;
+                if !entry.file_type().is_dir() {
+                    continue;
+                }
+                let Some(candidate) =
+                    verify_sequence_directory(entry.path(), &root_name, descriptor, fingerprints)?
+                else {
+                    continue;
+                };
+                found
+                    .entry(candidate.candidate.uri().to_owned())
+                    .or_insert(candidate);
+            }
+        }
+        Ok((found.into_values().collect(), search.diagnostics))
     }
 
     fn discover(
@@ -348,6 +440,110 @@ impl MediaResolver {
     }
 }
 
+fn searchable_roots(
+    roots: &[MediaRoot],
+    mappings: &[MediaRootMapping],
+) -> std::result::Result<SearchableRoots, String> {
+    let mut by_name = BTreeMap::new();
+    for mapping in mappings {
+        if by_name
+            .insert(mapping.name(), mapping.directory())
+            .is_some()
+        {
+            return Err(format!(
+                "media root {} has more than one machine mapping",
+                mapping.name()
+            ));
+        }
+    }
+    let mut ordered = roots
+        .iter()
+        .filter(|root| root.is_enabled())
+        .collect::<Vec<_>>();
+    ordered.sort_by_key(|root| (root.priority(), root.id()));
+    let mut searchable = Vec::new();
+    let mut diagnostics = Vec::new();
+    for root in ordered {
+        let legacy = root
+            .legacy_uri()
+            .map(file_uri_to_path)
+            .transpose()
+            .map_err(|error| format!("legacy media root {} is invalid: {error}", root.name()))?;
+        let Some(path) = by_name.get(root.name()).copied().or(legacy.as_deref()) else {
+            diagnostics.push(ResolutionEvidence::new(
+                EvidenceKind::MediaRootUnmapped,
+                Some(root.name().to_owned()),
+            ));
+            continue;
+        };
+        if path.is_dir() {
+            searchable.push((root.name().to_owned(), path.to_path_buf()));
+        } else {
+            diagnostics.push(ResolutionEvidence::new(
+                EvidenceKind::MediaRootUnavailable,
+                Some(format!("{}: {}", root.name(), path.display())),
+            ));
+        }
+    }
+    Ok(SearchableRoots {
+        directories: searchable,
+        diagnostics,
+    })
+}
+
+fn verify_sequence_directory(
+    directory: &Path,
+    root_name: &str,
+    descriptor: &ImageSequenceDescriptor,
+    fingerprints: &[ResourceFingerprint],
+) -> std::result::Result<Option<SequenceCandidate>, String> {
+    let missing_frames = sequence_missing_frames(directory, descriptor)?;
+    if !missing_frames.is_empty() {
+        return Ok(None);
+    }
+    let expected = fingerprints.iter().find(|fingerprint| {
+        fingerprint.algorithm() == SEQUENCE_FINGERPRINT_ALGORITHM
+            && fingerprint.version() == crate::SEQUENCE_FINGERPRINT_VERSION
+    });
+    let mut evidence = vec![
+        ResolutionEvidence::new(EvidenceKind::MediaRootRelation, Some(root_name.to_owned())),
+        ResolutionEvidence::new(
+            EvidenceKind::FileNameMatch,
+            Some(format!(
+                "{}%0{}d{}",
+                descriptor.pattern().prefix(),
+                descriptor.pattern().padding(),
+                descriptor.pattern().suffix()
+            )),
+        ),
+    ];
+    let confidence = if let Some(expected) = expected {
+        let report =
+            fingerprint_image_sequence(directory, descriptor).map_err(|error| error.to_string())?;
+        if report.fingerprint() != expected {
+            return Ok(None);
+        }
+        evidence.push(ResolutionEvidence::new(
+            EvidenceKind::PartialFingerprintMatch,
+            Some(format!(
+                "{} version {}",
+                expected.algorithm(),
+                expected.version()
+            )),
+        ));
+        Confidence::from_basis_points(9_500).map_err(|error| error.to_string())?
+    } else {
+        Confidence::from_basis_points(7_000).map_err(|error| error.to_string())?
+    };
+    let uri = canonical_file_uri(directory).map_err(|error| error.to_string())?;
+    let candidate =
+        ResolutionCandidate::new(uri, confidence, evidence).map_err(|error| error.to_string())?;
+    Ok(Some(SequenceCandidate {
+        candidate,
+        missing_frames,
+    }))
+}
+
 fn online_known_candidate(known_locators: &[Locator]) -> Result<Option<ResolutionCandidate>> {
     let mut online = Vec::new();
     for locator in known_locators {
@@ -385,7 +581,25 @@ fn online_sequence_candidate(
         return Ok(None);
     };
 
-    let names = fs::read_dir(&path)
+    let missing_frames = sequence_missing_frames(&path, descriptor)?;
+
+    let candidate = ResolutionCandidate::new(
+        uri,
+        Confidence::CERTAIN,
+        vec![ResolutionEvidence::new(
+            EvidenceKind::KnownLocatorAvailable,
+            None,
+        )],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(Some((candidate, missing_frames)))
+}
+
+fn sequence_missing_frames(
+    path: &Path,
+    descriptor: &ImageSequenceDescriptor,
+) -> std::result::Result<Vec<i64>, String> {
+    let names = fs::read_dir(path)
         .map_err(|error| format!("list image-sequence directory {}: {error}", path.display()))?
         .map(|entry| {
             entry.map(|entry| entry.file_name()).map_err(|error| {
@@ -413,16 +627,7 @@ fn online_sequence_candidate(
         frame += i64::from(frames.step());
     }
 
-    let candidate = ResolutionCandidate::new(
-        uri,
-        Confidence::CERTAIN,
-        vec![ResolutionEvidence::new(
-            EvidenceKind::KnownLocatorAvailable,
-            None,
-        )],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(Some((candidate, missing_frames)))
+    Ok(missing_frames)
 }
 
 fn verify_candidate(
@@ -529,12 +734,15 @@ mod tests {
 
     use postproject_core::{
         ContentStructure, FrameRange, ImageSequenceDescriptor, ImageSequencePattern, LocatorId,
-        MediaRootId, RationalRate, RepresentationAvailability, RepresentationId,
+        MediaRoot, MediaRootId, RationalRate, RepresentationAvailability, RepresentationId,
         RepresentationResolution, ResourceId, ResourceResolutionState,
     };
 
     use super::*;
-    use crate::{prepare_media_root, prepare_original_media};
+    use crate::{
+        ImageSequenceSource, prepare_image_sequence_representation, prepare_media_root,
+        prepare_original_media,
+    };
 
     #[test]
     fn known_online_locator_wins_without_root_scan() {
@@ -655,6 +863,56 @@ mod tests {
             RepresentationAvailability::Partial
         );
         assert_eq!(aggregate.issues()[0].frames(), &[1002, 1004]);
+    }
+
+    #[test]
+    fn finds_a_relocated_sequence_as_one_resource() {
+        let temporary = tempfile::tempdir().expect("create directory");
+        let original = temporary.path().join("original");
+        let mapped_root = temporary.path().join("mapped");
+        fs::create_dir(&original).expect("create original sequence");
+        fs::create_dir(&mapped_root).expect("create mapped root");
+        for frame in 1001..=1003 {
+            fs::write(
+                original.join(format!("plate.{frame}.exr")),
+                frame.to_string(),
+            )
+            .expect("write frame");
+        }
+        let prepared = prepare_image_sequence_representation(
+            postproject_core::AssetId::new(),
+            postproject_core::RepresentationKind::Original,
+            &ImageSequenceSource::new(
+                &original,
+                ImageSequencePattern::new("plate.", ".exr", 4).expect("pattern"),
+                FrameRange::new(1001, 1003, 1).expect("range"),
+                RationalRate::new(24, 1).expect("rate"),
+                Vec::new(),
+            ),
+        )
+        .expect("prepare sequence");
+        let relocated = mapped_root.join("cards/day-01/plate");
+        fs::create_dir_all(relocated.parent().expect("parent")).expect("create parent");
+        fs::rename(&original, &relocated).expect("relocate sequence");
+        let root = MediaRoot::new(MediaRootId::new(), "rushes", None, None, 0, true)
+            .expect("portable root");
+        let mapping = MediaRootMapping::new("rushes", &mapped_root).expect("root mapping");
+
+        let resolved = MediaResolver::default()
+            .resolve_resource(
+                &prepared.resources()[0],
+                prepared.representation().content_structure(),
+                prepared.locators(),
+                &[root],
+                &[mapping],
+            )
+            .expect("resolve moved sequence");
+        assert_eq!(resolved.state(), ResourceResolutionState::ResolvedProbable);
+        assert_eq!(resolved.candidates().len(), 1);
+        assert_eq!(
+            resolved.candidates()[0].uri(),
+            canonical_file_uri(&relocated).expect("relocated URI")
+        );
     }
 
     #[test]
