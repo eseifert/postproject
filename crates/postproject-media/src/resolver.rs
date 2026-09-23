@@ -17,8 +17,8 @@ use url::Url;
 use walkdir::WalkDir;
 
 use crate::{
-    FULL_FINGERPRINT_ALGORITHM, SEQUENCE_FINGERPRINT_ALGORITHM, canonical_file_uri,
-    fingerprint_file, fingerprint_image_sequence,
+    FULL_FINGERPRINT_ALGORITHM, InspectionOutcome, MediaInspector, SEQUENCE_FINGERPRINT_ALGORITHM,
+    TechnicalMetadata, canonical_file_uri, fingerprint_file, fingerprint_image_sequence,
 };
 
 /// One machine's directory mapping for a production-portable root name.
@@ -89,6 +89,12 @@ struct SequenceCandidate {
 struct SearchableRoots {
     directories: Vec<(String, PathBuf)>,
     diagnostics: Vec<ResolutionEvidence>,
+}
+
+#[derive(Clone, Copy)]
+struct ResolutionContext<'a> {
+    verification: VerificationMode,
+    technical_evidence: Option<(&'a TechnicalMetadata, &'a dyn MediaInspector)>,
 }
 
 /// Resource limits applied to one resolver operation.
@@ -189,7 +195,90 @@ impl MediaResolver {
         root_mappings: &[MediaRootMapping],
         verification: VerificationMode,
     ) -> Result<ResourceResolution> {
+        self.resolve_resource_with_context(
+            resource,
+            structure,
+            known_locators,
+            media_roots,
+            root_mappings,
+            ResolutionContext {
+                verification,
+                technical_evidence: None,
+            },
+        )
+    }
+
+    /// Resolves one resource and optionally scores candidates using an
+    /// inspection result persisted at import time.
+    ///
+    /// Technical matches are partial identity evidence only. They can order
+    /// candidates but never turn an ambiguous result into an automatic choice.
+    /// Missing or failed inspection degrades to the other available evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::resolve_resource_with_verification`].
+    pub fn resolve_resource_with_technical_evidence(
+        &self,
+        resource: &Resource,
+        structure: &ContentStructure,
+        known_locators: &[Locator],
+        media_roots: &[MediaRoot],
+        root_mappings: &[MediaRootMapping],
+        technical_evidence: (&TechnicalMetadata, &dyn MediaInspector),
+    ) -> Result<ResourceResolution> {
+        self.resolve_resource_with_context(
+            resource,
+            structure,
+            known_locators,
+            media_roots,
+            root_mappings,
+            ResolutionContext {
+                verification: VerificationMode::Content,
+                technical_evidence: Some(technical_evidence),
+            },
+        )
+    }
+
+    fn resolve_resource_with_context(
+        &self,
+        resource: &Resource,
+        structure: &ContentStructure,
+        known_locators: &[Locator],
+        media_roots: &[MediaRoot],
+        root_mappings: &[MediaRootMapping],
+        context: ResolutionContext<'_>,
+    ) -> Result<ResourceResolution> {
         validate_resolution_inputs(resource, structure, known_locators)?;
+        if let Some(resolution) = self.resolve_known_resource(
+            resource,
+            structure,
+            known_locators,
+            media_roots,
+            root_mappings,
+            context,
+        )? {
+            return Ok(resolution);
+        }
+
+        self.resolve_discovered_file(
+            resource,
+            known_locators,
+            media_roots,
+            root_mappings,
+            context.technical_evidence,
+        )
+    }
+
+    fn resolve_known_resource(
+        &self,
+        resource: &Resource,
+        structure: &ContentStructure,
+        known_locators: &[Locator],
+        media_roots: &[MediaRoot],
+        root_mappings: &[MediaRootMapping],
+        context: ResolutionContext<'_>,
+    ) -> Result<Option<ResourceResolution>> {
         if let Some(sequence) = structure
             .image_sequence_descriptor()
             .filter(|sequence| sequence.resource_id() == resource.id())
@@ -198,14 +287,11 @@ impl MediaResolver {
                 match online_sequence_candidate(known_locators, sequence) {
                     Ok(Some(result)) => result,
                     Ok(None) => {
-                        return self.resolve_moved_sequence(
-                            resource,
-                            sequence,
-                            media_roots,
-                            root_mappings,
-                        );
+                        return self
+                            .resolve_moved_sequence(resource, sequence, media_roots, root_mappings)
+                            .map(Some);
                     }
-                    Err(detail) => return error_resolution(resource.id(), detail),
+                    Err(detail) => return error_resolution(resource.id(), detail).map(Some),
                 };
             let resolution = ResourceResolution::new(
                 resource.id(),
@@ -214,23 +300,34 @@ impl MediaResolver {
                 Vec::new(),
             )?
             .with_missing_frames(missing_frames)?;
-            if verification == VerificationMode::Content {
-                return verify_known_sequence(resource, sequence, &resolution);
+            if context.verification == VerificationMode::Content {
+                return verify_known_sequence(resource, sequence, &resolution).map(Some);
             }
-            return Ok(resolution);
+            return Ok(Some(resolution));
         }
         if let Some(candidate) = online_known_candidate(known_locators)? {
-            if verification == VerificationMode::Content {
-                return verify_known_file(resource, &candidate);
+            if context.verification == VerificationMode::Content {
+                return verify_known_file(resource, &candidate).map(Some);
             }
             return ResourceResolution::new(
                 resource.id(),
                 ResourceResolutionState::OnlineAtKnownLocator,
                 vec![candidate],
                 Vec::new(),
-            );
+            )
+            .map(Some);
         }
+        Ok(None)
+    }
 
+    fn resolve_discovered_file(
+        &self,
+        resource: &Resource,
+        known_locators: &[Locator],
+        media_roots: &[MediaRoot],
+        root_mappings: &[MediaRootMapping],
+        technical_evidence: Option<(&TechnicalMetadata, &dyn MediaInspector)>,
+    ) -> Result<ResourceResolution> {
         let original_path = known_locators
             .iter()
             .find_map(|locator| file_uri_to_path(locator.uri()).ok());
@@ -255,7 +352,20 @@ impl MediaResolver {
                     format!("discovered URI cannot be converted back to a path: {error}"),
                 )
             })?;
-            match verify_candidate(&path, &uri, cheap_evidence, resource.fingerprints()) {
+            let technical_match = resource.fingerprints().is_empty()
+                && technical_evidence.is_some_and(|(expected, inspector)| {
+                    matches!(
+                        inspector.inspect(&path),
+                        Ok(InspectionOutcome::Inspected(actual)) if actual == *expected
+                    )
+                });
+            match verify_candidate(
+                &path,
+                &uri,
+                cheap_evidence,
+                resource.fingerprints(),
+                technical_match,
+            ) {
                 Ok(Some(candidate)) => candidates.push(candidate),
                 Ok(None) => {}
                 Err(detail) => return error_resolution(resource.id(), detail),
@@ -616,6 +726,7 @@ fn verify_known_file(
         presence_candidate.uri(),
         evidence,
         resource.fingerprints(),
+        false,
     ) {
         Ok(Some(candidate)) => ResourceResolution::new(
             resource.id(),
@@ -823,6 +934,7 @@ fn verify_candidate(
     uri: &str,
     mut evidence: Vec<ResolutionEvidence>,
     expected: &[ResourceFingerprint],
+    technical_match: bool,
 ) -> std::result::Result<Option<ResolutionCandidate>, String> {
     if !expected.is_empty() {
         let report = fingerprint_file(path).map_err(|error| error.to_string())?;
@@ -870,6 +982,12 @@ fn verify_candidate(
     if !filename_match {
         return Ok(None);
     }
+    if technical_match {
+        evidence.push(ResolutionEvidence::new(
+            EvidenceKind::PartialFingerprintMatch,
+            Some("technical media profile matched".to_owned()),
+        ));
+    }
     let confidence = Confidence::from_basis_points({
         let base = if evidence
             .iter()
@@ -879,14 +997,16 @@ fn verify_candidate(
         } else {
             5_000
         };
-        if evidence
+        let relative_path = if evidence
             .iter()
             .any(|item| item.kind() == EvidenceKind::RelativePathSimilarity)
         {
-            base + 500
+            500
         } else {
-            base
-        }
+            0
+        };
+        let technical = if technical_match { 1_000 } else { 0 };
+        base + relative_path + technical
     })
     .map_err(|error| error.to_string())?;
     ResolutionCandidate::new(uri, confidence, evidence)

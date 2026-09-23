@@ -48,6 +48,25 @@ pub struct TechnicalMetadata {
 }
 
 impl TechnicalMetadata {
+    /// Reconstructs one inspection result from persisted metadata assertions.
+    ///
+    /// Returns `None` unless exactly one assertion uses the technical-media
+    /// inspection property. Compound imports can carry more than one result,
+    /// which cannot be associated with an individual resource without
+    /// additional provenance.
+    #[must_use]
+    pub fn from_assertions(assertions: &[MetadataAssertion]) -> Option<Self> {
+        let assertions = assertions
+            .iter()
+            .filter(|assertion| {
+                assertion.property().vocabulary().as_str() == TECHNICAL_METADATA_VOCABULARY
+                    && assertion.property().property().as_str() == TECHNICAL_INSPECTION_PROPERTY
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        (assertions.len() == 1).then_some(Self { assertions })
+    }
+
     /// Returns normalized assertions in deterministic order.
     #[must_use]
     pub fn assertions(&self) -> &[MetadataAssertion] {
