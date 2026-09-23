@@ -9,6 +9,7 @@ mod fingerprint;
 mod import;
 mod inventory;
 mod path;
+mod recognition;
 mod representation_fingerprint;
 mod resolver;
 mod sequence_fingerprint;
@@ -27,6 +28,11 @@ pub use inventory::{
     InventoryCategory, InventoryItem, InventoryReport, InventoryScanner, InventoryStats,
 };
 pub use path::canonical_file_uri;
+pub use recognition::{
+    AVCHD_CLIP_INFO_ROLE, AVCHD_ESSENCE_ROLE, AVCHD_NAVIGATION_ROLE, AVCHD_PLAYLIST_ROLE,
+    MediaRecognizer, PRIMARY_ESSENCE_ROLE, RecognizedMedia, RecognizedMember, SIDECAR_ROLE,
+    SPAN_PART_ROLE, prepare_recognized_original_media,
+};
 pub use representation_fingerprint::{
     REPRESENTATION_FINGERPRINT_ALGORITHM, REPRESENTATION_FINGERPRINT_VERSION,
     fingerprint_representation,
