@@ -3,12 +3,24 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::{Mutex, MutexGuard, PoisonError},
 };
 
 use postproject_media::{
     FfprobeInspector, InspectionOutcome, MediaInspector, TECHNICAL_INSPECTION_PROPERTY,
     TECHNICAL_METADATA_VOCABULARY,
 };
+
+/// Serializes tests that write or spawn fake executables.
+///
+/// A child forked by one test briefly inherits the write descriptor of a
+/// script another test is creating, and executing that script then fails
+/// with `ETXTBSY`.
+static PROCESS_LOCK: Mutex<()> = Mutex::new(());
+
+fn process_lock() -> MutexGuard<'static, ()> {
+    PROCESS_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 fn media_fixture(directory: &Path) -> PathBuf {
     let path = directory.join("clip.mov");
@@ -46,6 +58,7 @@ fn fake_probe(directory: &Path, stdout: &str, exit_code: i32) -> PathBuf {
 
 #[test]
 fn converts_ffprobe_json_to_vocabulary_metadata() {
+    let _process = process_lock();
     let temporary = tempfile::tempdir().expect("create temporary directory");
     let media = media_fixture(temporary.path());
     let output = r#"{
@@ -106,6 +119,7 @@ fn converts_ffprobe_json_to_vocabulary_metadata() {
 
 #[test]
 fn reports_missing_ffprobe_as_an_optional_capability_gap() {
+    let _process = process_lock();
     let temporary = tempfile::tempdir().expect("create temporary directory");
     let media = media_fixture(temporary.path());
     let missing = temporary.path().join("definitely-not-ffprobe");
@@ -118,6 +132,7 @@ fn reports_missing_ffprobe_as_an_optional_capability_gap() {
 
 #[test]
 fn rejects_malformed_tool_output_without_failing_the_adapter_call() {
+    let _process = process_lock();
     let temporary = tempfile::tempdir().expect("create temporary directory");
     let media = media_fixture(temporary.path());
     let executable = fake_probe(temporary.path(), "not-json", 0);

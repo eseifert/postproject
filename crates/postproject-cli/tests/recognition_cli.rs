@@ -1,14 +1,29 @@
 //! Compound-media import coverage through the distributed CLI surface.
 
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::Path,
+    sync::{Mutex, MutexGuard, PoisonError},
+};
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use serde_json::Value;
+
+/// Serializes creating fake executables with spawning the CLI.
+///
+/// A child forked while a fake script is still open for writing inherits that
+/// descriptor, and executing the script then fails with `ETXTBSY`.
+static PROCESS_LOCK: Mutex<()> = Mutex::new(());
+
+fn process_lock() -> MutexGuard<'static, ()> {
+    PROCESS_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 #[cfg(unix)]
 fn fake_probe(directory: &Path, output: &str) -> std::path::PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
+    let _process = process_lock();
     let path = directory.join("ffprobe-fake");
     fs::write(&path, format!("#!/bin/sh\nprintf '%s' '{output}'\n")).expect("write fake ffprobe");
     let mut permissions = fs::metadata(&path).expect("fake metadata").permissions();
@@ -30,6 +45,7 @@ fn fake_probe(directory: &Path, output: &str) -> std::path::PathBuf {
 }
 
 fn run_json(arguments: &[&str]) -> Value {
+    let _process = process_lock();
     let assertion = cargo_bin_cmd!("postproject")
         .arg("--json")
         .args(arguments)
