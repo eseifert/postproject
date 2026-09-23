@@ -57,6 +57,9 @@ All notable changes to PostProject will be documented here. The project uses
 
 ### Added
 
+- Opt-in fingerprint verification for known file and sequence locators,
+  explicit mismatch evidence, and weak relative-path candidate scoring exposed
+  through `media resolve --verify`.
 - A bounded optional `ffprobe` subprocess adapter that records normalized,
   vocabulary-backed technical metadata during CLI import while treating a
   missing inspector as a non-fatal capability gap.

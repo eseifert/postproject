@@ -25,6 +25,13 @@ when necessary. Traversal is deterministic, does not follow symlinks, defaults
 to a depth limit of 64 and an entry limit of 100,000, and reports a structured
 error result when a bound or filesystem operation prevents a safe answer.
 
+Presence and verification remain separate as required by ADR 0015. Normal
+resolution checks that a known locator and its declared members exist. Callers
+may opt into content verification per call; that tier recomputes the stored file
+or sampled sequence fingerprint. Present content that differs from its recorded
+identity produces an error result with `FingerprintMismatch` evidence. It is
+never silently accepted as a new version.
+
 Productions identify roots by logical name. Each machine maps those names to
 local directories when resolving; migrated pre-schema-6 roots retain their old
 absolute URI as a fallback. An unmapped root and a mapped-but-unavailable root
@@ -38,6 +45,12 @@ and file size strengthens the evidence. Equally credible candidates produce
 `Ambiguous` and require explicit confirmation. Confirmation adds a new locator
 for the selected resource inside a production transaction; the resolver itself
 never mutates production state.
+
+Candidate discovery also compares parent path components with the former
+locator. A match adds weak `RelativePathSimilarity` evidence and a small
+confidence increment, which deterministically orders otherwise filename-only
+candidates. Relative paths alone never eliminate competing candidates or turn
+an ambiguous result into an automatic choice.
 
 Representation availability is then aggregated from its content structure.
 Every required member online is `Online`; a mix of online and offline required
@@ -65,3 +78,8 @@ ordered resource results and availability issues. The C ABI exposes the same
 nested shape through index-checked accessors, and the C++ wrapper copies it into
 owned `RepresentationResolution` values. Native confirmation remains a separate
 explicit transaction operation.
+
+The demonstrator exposes the expensive tier as `media resolve --verify`. Direct
+verification is currently available through the Rust media adapter and CLI, not
+as a separate C, C++, or Python operation; all native and Python surfaces retain
+presence resolution and explicit confirmation unchanged.
