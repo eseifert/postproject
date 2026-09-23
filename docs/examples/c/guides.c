@@ -448,8 +448,8 @@ static pp_error_code_t bind_representation(const pp_uuid_t *production_id,
   const pp_object_ref_t object = {PP_OBJECT_REPRESENTATION,
                                   *representation_id};
   char *stored = NULL;
-  pp_uuid_t parsed_production;
-  pp_object_ref_t parsed_object;
+  pp_uuid_t parsed_production = {{0}};
+  pp_object_ref_t parsed_object = {0, {{0}}};
 
   pp_error_code_t status =
       pp_host_binding_format(production_id, &object, &stored, error);
