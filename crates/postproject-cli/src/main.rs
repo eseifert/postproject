@@ -21,10 +21,10 @@ use postproject_core::{
 use postproject_media::{
     FfprobeInspector, FileResourceSource, ImageSequenceSource, InspectionOutcome,
     InventoryCategory, InventoryReport, InventoryScanner, MediaInspector, MediaRecognizer,
-    MediaResolver, MediaRootMapping, RecognizedMedia, VerificationMode, prepare_confirmed_locator,
-    prepare_image_sequence_representation, prepare_ordered_parts_representation,
-    prepare_original_media, prepare_package_representation, prepare_recognized_original_media,
-    prepare_single_file_representation,
+    MediaResolver, MediaRootMapping, RecognizedMedia, TechnicalMetadata, VerificationMode,
+    prepare_confirmed_locator, prepare_image_sequence_representation,
+    prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
+    prepare_recognized_original_media, prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use serde::{Deserialize, Serialize};
@@ -136,6 +136,9 @@ struct MediaResolveArgs {
     /// Recompute stored fingerprints for content at known locators.
     #[arg(long)]
     verify: bool,
+    /// ffprobe executable used to compare persisted technical metadata.
+    #[arg(long, default_value = "ffprobe", requires = "verify")]
+    ffprobe: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -2088,42 +2091,20 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
         .representations(asset_id)
         .context("load asset representations")?;
     let resolver = MediaResolver::default();
-    let mut resolutions = Vec::new();
-    for representation in &representations {
-        let resources = production
-            .resources(representation.id())
-            .context("load representation resources")?;
-        let mut resource_resolutions = Vec::with_capacity(resources.len());
-        for resource in &resources {
-            let locators = production
-                .locators(resource.id())
-                .context("load resource locators")?;
-            resource_resolutions.push(
-                resolver
-                    .resolve_resource_with_verification(
-                        resource,
-                        representation.content_structure(),
-                        &locators,
-                        production.production().media_roots(),
-                        &root_mappings,
-                        if args.verify {
-                            VerificationMode::Content
-                        } else {
-                            VerificationMode::Presence
-                        },
-                    )
-                    .context("resolve representation resource")?,
-            );
-        }
-        resolutions.push(
-            RepresentationResolution::aggregate(
-                representation.id(),
-                representation.content_structure(),
-                resource_resolutions,
+    let inspector = FfprobeInspector::with_executable(&args.ffprobe);
+    let resolutions = representations
+        .iter()
+        .map(|representation| {
+            resolve_representation(
+                &production,
+                representation,
+                &resolver,
+                &root_mappings,
+                args.verify,
+                &inspector,
             )
-            .context("aggregate representation availability")?,
-        );
-    }
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     if let Some(uri) = args.confirm.as_deref() {
         let matching: Vec<_> = resolutions
@@ -2180,6 +2161,65 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
         }
         Ok(())
     }
+}
+
+fn resolve_representation(
+    production: &SqliteProduction,
+    representation: &Representation,
+    resolver: &MediaResolver,
+    root_mappings: &[MediaRootMapping],
+    verify: bool,
+    inspector: &dyn MediaInspector,
+) -> Result<RepresentationResolution> {
+    let technical_metadata = if verify {
+        let assertions = production
+            .metadata(ObjectRef::Representation(representation.id()))
+            .context("load representation technical metadata")?;
+        TechnicalMetadata::from_assertions(&assertions)
+    } else {
+        None
+    };
+    let resources = production
+        .resources(representation.id())
+        .context("load representation resources")?;
+    let resource_resolutions = resources
+        .iter()
+        .map(|resource| {
+            let locators = production
+                .locators(resource.id())
+                .context("load resource locators")?;
+            let resolution = if let Some(expected) = technical_metadata.as_ref() {
+                resolver.resolve_resource_with_technical_evidence(
+                    resource,
+                    representation.content_structure(),
+                    &locators,
+                    production.production().media_roots(),
+                    root_mappings,
+                    (expected, inspector),
+                )
+            } else {
+                resolver.resolve_resource_with_verification(
+                    resource,
+                    representation.content_structure(),
+                    &locators,
+                    production.production().media_roots(),
+                    root_mappings,
+                    if verify {
+                        VerificationMode::Content
+                    } else {
+                        VerificationMode::Presence
+                    },
+                )
+            };
+            resolution.context("resolve representation resource")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    RepresentationResolution::aggregate(
+        representation.id(),
+        representation.content_structure(),
+        resource_resolutions,
+    )
+    .context("aggregate representation availability")
 }
 
 fn parse_asset_id(value: &str) -> Result<AssetId> {
