@@ -16,6 +16,7 @@
 # For application users
 
 - [User guide](users/README.md)
+- [Portable production workflow](users/portable-production-workflow.md)
 - [Image sequences and spanned media](users/image-sequences-and-spanned-media.md)
 - [Metadata and provenance](users/metadata-and-provenance.md)
 

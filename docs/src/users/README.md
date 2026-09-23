@@ -24,3 +24,7 @@ mappings. Inventory distinguishes media already online from partial or missing
 representations, changed files, new media, duplicate or ambiguous relink
 candidates, and roots that are unmapped or unavailable. A disposable sidecar
 cache can accelerate repeated scans without changing the production file.
+
+The [portable production workflow](portable-production-workflow.md) follows a
+movie, image sequence, and camera package through import, a machine move,
+verification, inventory, and OTIO/OpenAssetIO resolution.

@@ -10,6 +10,7 @@ reference for exact signatures.
 :caption: Guides
 
 src/users/README
+src/users/portable-production-workflow
 src/users/image-sequences-and-spanned-media
 src/users/metadata-and-provenance
 src/integrators/README
