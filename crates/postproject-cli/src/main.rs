@@ -21,7 +21,7 @@ use postproject_core::{
 use postproject_media::{
     FfprobeInspector, FileResourceSource, ImageSequenceSource, InspectionOutcome,
     InventoryCategory, InventoryReport, InventoryScanner, MediaInspector, MediaRecognizer,
-    MediaResolver, MediaRootMapping, RecognizedMedia, prepare_confirmed_locator,
+    MediaResolver, MediaRootMapping, RecognizedMedia, VerificationMode, prepare_confirmed_locator,
     prepare_image_sequence_representation, prepare_ordered_parts_representation,
     prepare_original_media, prepare_package_representation, prepare_recognized_original_media,
     prepare_single_file_representation,
@@ -133,6 +133,9 @@ struct MediaResolveArgs {
     /// Map a production root name to this machine's directory (NAME=PATH).
     #[arg(long = "root-map", value_name = "NAME=PATH")]
     root_mappings: Vec<RootMappingArg>,
+    /// Recompute stored fingerprints for content at known locators.
+    #[arg(long)]
+    verify: bool,
 }
 
 #[derive(Debug, Args)]
@@ -2097,12 +2100,17 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
                 .context("load resource locators")?;
             resource_resolutions.push(
                 resolver
-                    .resolve_resource(
+                    .resolve_resource_with_verification(
                         resource,
                         representation.content_structure(),
                         &locators,
                         production.production().media_roots(),
                         &root_mappings,
+                        if args.verify {
+                            VerificationMode::Content
+                        } else {
+                            VerificationMode::Presence
+                        },
                     )
                     .context("resolve representation resource")?,
             );
@@ -2727,6 +2735,7 @@ const fn evidence_kind(kind: EvidenceKind) -> &'static str {
         EvidenceKind::MediaRootUnavailable => "media_root_unavailable",
         EvidenceKind::ConflictingCandidate => "conflicting_candidate",
         EvidenceKind::DiscoveryError => "discovery_error",
+        EvidenceKind::FingerprintMismatch => "fingerprint_mismatch",
         _ => "unknown",
     }
 }
