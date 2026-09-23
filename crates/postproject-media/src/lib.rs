@@ -7,6 +7,7 @@
 
 mod fingerprint;
 mod import;
+mod inspection;
 mod inventory;
 mod path;
 mod recognition;
@@ -23,6 +24,10 @@ pub use import::{
     prepare_image_sequence_representation, prepare_media_root,
     prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
     prepare_single_file_representation,
+};
+pub use inspection::{
+    FfprobeInspector, InspectionOutcome, MediaInspector, TECHNICAL_INSPECTION_PROPERTY,
+    TECHNICAL_METADATA_VOCABULARY, TechnicalMetadata,
 };
 pub use inventory::{
     InventoryCategory, InventoryItem, InventoryReport, InventoryScanner, InventoryStats,
