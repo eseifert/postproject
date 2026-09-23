@@ -112,8 +112,8 @@ Standalone installed-package examples live in [`examples/c`](examples/c) and
 - [Iteration-two acceptance report](docs/iteration-two-report.md)
 - [Iteration-three acceptance report](docs/iteration-three-report.md)
 
-Build the unified reference after installing `docs/requirements.txt` and
-Doxygen:
+Build the unified reference with Python 3.12 or newer after installing
+`docs/requirements.txt` and Doxygen:
 
 ```sh
 doxygen Doxyfile
