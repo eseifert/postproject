@@ -53,6 +53,8 @@ library:
 cargo run -p postproject-cli -- init production.pproj --name "Documentary"
 cargo run -p postproject-cli -- media add production.pproj examples/fixtures/sample-media.dat
 cargo run -p postproject-cli -- media list production.pproj
+cargo run -p postproject-cli -- root add production.pproj rushes --label "Camera originals"
+cargo run -p postproject-cli -- media resolve production.pproj ASSET_ID --root-map rushes=/mnt/show/rushes
 cargo run -p postproject-cli -- --json revisions since production.pproj --after 0
 ```
 

@@ -365,8 +365,6 @@ fn adds_every_representation_shape() {
 fn manages_media_root_lifecycle() {
     let directory = tempfile::tempdir().expect("create test directory");
     let production = directory.path().join("roots.pproj");
-    let root_directory = directory.path().join("media");
-    fs::create_dir(&root_directory).expect("create media root");
     let production = production.to_str().expect("UTF-8 production path");
     run_json(&["init", production]);
 
@@ -374,7 +372,7 @@ fn manages_media_root_lifecycle() {
         "root",
         "add",
         production,
-        root_directory.to_str().expect("UTF-8 root path"),
+        "rushes",
         "--label",
         "Rushes",
         "--priority",
@@ -385,6 +383,7 @@ fn manages_media_root_lifecycle() {
     let listed = run_json(&["root", "list", production]);
     assert_eq!(listed.as_array().expect("root array").len(), 1);
     assert_eq!(listed[0]["id"], root_id);
+    assert_eq!(listed[0]["name"], "rushes");
     assert_eq!(listed[0]["label"], "Rushes");
     assert_eq!(listed[0]["priority"], 7);
     assert_eq!(listed[0]["enabled"], true);
@@ -493,16 +492,22 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
         "root",
         "add",
         production.to_str().expect("UTF-8 production path"),
-        candidates.to_str().expect("UTF-8 root path"),
+        "relocated",
         "--label",
         "Relocated",
     ]);
+    let root_mapping = format!(
+        "relocated={}",
+        candidates.to_str().expect("UTF-8 root path")
+    );
 
     let ambiguous = run_json(&[
         "media",
         "resolve",
         production.to_str().expect("UTF-8 production path"),
         asset_id,
+        "--root-map",
+        &root_mapping,
     ]);
     assert_eq!(ambiguous["resolutions"][0]["availability"], "ambiguous");
     assert_eq!(
@@ -518,6 +523,8 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
         "resolve",
         production.to_str().expect("UTF-8 production path"),
         asset_id,
+        "--root-map",
+        &root_mapping,
         "--confirm",
         confirmed_uri,
     ]);

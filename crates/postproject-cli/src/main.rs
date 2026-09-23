@@ -19,8 +19,8 @@ use postproject_core::{
     Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
-    FileResourceSource, ImageSequenceSource, MediaResolver, prepare_confirmed_locator,
-    prepare_image_sequence_representation, prepare_media_root,
+    FileResourceSource, ImageSequenceSource, MediaResolver, MediaRootMapping,
+    prepare_confirmed_locator, prepare_image_sequence_representation,
     prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
     prepare_single_file_representation,
 };
@@ -114,6 +114,9 @@ struct MediaResolveArgs {
     /// Confirm one URI returned by this resolution and persist it.
     #[arg(long, value_name = "URI")]
     confirm: Option<String>,
+    /// Map a production root name to this machine's directory (NAME=PATH).
+    #[arg(long = "root-map", value_name = "NAME=PATH")]
+    root_mappings: Vec<RootMappingArg>,
 }
 
 #[derive(Debug, Args)]
@@ -208,7 +211,7 @@ enum RootCommand {
 #[derive(Debug, Args)]
 struct RootAddArgs {
     production: PathBuf,
-    directory: PathBuf,
+    name: String,
     #[arg(long)]
     label: Option<String>,
     /// Lower priorities are searched first.
@@ -220,6 +223,29 @@ struct RootAddArgs {
 struct RootMutationArgs {
     production: PathBuf,
     root_id: String,
+}
+
+#[derive(Clone, Debug)]
+struct RootMappingArg {
+    name: String,
+    directory: PathBuf,
+}
+
+impl FromStr for RootMappingArg {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        let (name, directory) = value
+            .split_once('=')
+            .ok_or_else(|| "root mapping must use NAME=PATH".to_owned())?;
+        if name.is_empty() || directory.is_empty() {
+            return Err("root mapping name and path must not be empty".to_owned());
+        }
+        Ok(Self {
+            name: name.to_owned(),
+            directory: PathBuf::from(directory),
+        })
+    }
 }
 
 #[derive(Debug, Args)]
@@ -555,8 +581,9 @@ struct LocatorView {
 #[derive(Debug, Serialize)]
 struct RootView {
     id: String,
-    uri: String,
+    name: String,
     label: Option<String>,
+    legacy_uri: Option<String>,
     priority: i32,
     enabled: bool,
 }
@@ -1098,8 +1125,15 @@ fn media_show(args: &MediaAssetArgs, json: bool) -> Result<()> {
 }
 
 fn root_add(args: RootAddArgs, json: bool) -> Result<()> {
-    let root = prepare_media_root(&args.directory, args.label, args.priority)
-        .context("prepare media root")?;
+    let root = MediaRoot::new(
+        MediaRootId::new(),
+        args.name,
+        args.label,
+        None,
+        args.priority,
+        true,
+    )
+    .context("prepare media root")?;
     let view = root_view(&root);
     let mut production = SqliteProduction::open(&args.production).context("open production")?;
     let mut transaction = production
@@ -1114,7 +1148,7 @@ fn root_add(args: RootAddArgs, json: bool) -> Result<()> {
     if json {
         print_json(&view)
     } else {
-        println!("added media root {} ({})", view.uri, view.id);
+        println!("added media root {} ({})", view.name, view.id);
         Ok(())
     }
 }
@@ -1137,7 +1171,7 @@ fn root_list(args: &ProductionArgs, json: bool) -> Result<()> {
                 if root.enabled { "enabled" } else { "disabled" },
                 root.priority,
                 root.label.as_deref().unwrap_or("-"),
-                root.uri
+                root.name
             );
         }
         Ok(())
@@ -1209,7 +1243,7 @@ fn root_remove(args: &RootMutationArgs, json: bool) -> Result<()> {
     if json {
         print_json(&view)
     } else {
-        println!("removed media root {} ({})", view.uri, view.id);
+        println!("removed media root {} ({})", view.name, view.id);
         Ok(())
     }
 }
@@ -1217,8 +1251,9 @@ fn root_remove(args: &RootMutationArgs, json: bool) -> Result<()> {
 fn root_view(root: &MediaRoot) -> RootView {
     RootView {
         id: root.id().to_string(),
-        uri: root.name().to_owned(),
+        name: root.name().to_owned(),
         label: root.label().map(str::to_owned),
+        legacy_uri: root.legacy_uri().map(str::to_owned),
         priority: root.priority(),
         enabled: root.is_enabled(),
     }
@@ -1844,6 +1879,12 @@ fn print_metadata_assertions(views: &[MetadataAssertionView], json: bool) -> Res
 }
 
 fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
+    let root_mappings = args
+        .root_mappings
+        .iter()
+        .map(|mapping| MediaRootMapping::new(&mapping.name, &mapping.directory))
+        .collect::<postproject_core::Result<Vec<_>>>()
+        .context("prepare root mappings")?;
     let mut production = SqliteProduction::open(&args.production).context("open production")?;
     let asset_id = parse_asset_id(&args.asset_id)?;
     find_asset(&production, asset_id)?;
@@ -1868,7 +1909,7 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
                         representation.content_structure(),
                         &locators,
                         production.production().media_roots(),
-                        &[],
+                        &root_mappings,
                     )
                     .context("resolve representation resource")?,
             );
@@ -2449,6 +2490,8 @@ const fn evidence_kind(kind: EvidenceKind) -> &'static str {
         EvidenceKind::FileNameMatch => "file_name_match",
         EvidenceKind::RelativePathSimilarity => "relative_path_similarity",
         EvidenceKind::MediaRootRelation => "media_root_relation",
+        EvidenceKind::MediaRootUnmapped => "media_root_unmapped",
+        EvidenceKind::MediaRootUnavailable => "media_root_unavailable",
         EvidenceKind::ConflictingCandidate => "conflicting_candidate",
         EvidenceKind::DiscoveryError => "discovery_error",
         _ => "unknown",
