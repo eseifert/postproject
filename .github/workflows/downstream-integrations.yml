@@ -1,0 +1,32 @@
+name: Downstream integration experiments
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  openassetio-manager:
+    uses: eseifert/postproject-openassetio-manager-spike/.github/workflows/ci.yml@main
+    with:
+      postproject_ref: ${{ github.sha }}
+
+  otio-openassetio:
+    uses: eseifert/postproject-otio-openassetio-spike/.github/workflows/ci.yml@main
+    with:
+      postproject_ref: ${{ github.sha }}
+
+  python-host:
+    uses: eseifert/postproject-python-host-spike/.github/workflows/ci.yml@main
+    with:
+      postproject_ref: ${{ github.sha }}
+
+  cpp-nle:
+    uses: eseifert/postproject-cpp-nle-spike/.github/workflows/ci.yml@main
+    with:
+      postproject_ref: ${{ github.sha }}
+
