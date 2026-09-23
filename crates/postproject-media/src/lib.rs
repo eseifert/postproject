@@ -7,6 +7,7 @@
 
 mod fingerprint;
 mod import;
+mod inventory;
 mod path;
 mod representation_fingerprint;
 mod resolver;
@@ -21,6 +22,9 @@ pub use import::{
     prepare_image_sequence_representation, prepare_media_root,
     prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
     prepare_single_file_representation,
+};
+pub use inventory::{
+    InventoryCategory, InventoryItem, InventoryReport, InventoryScanner, InventoryStats,
 };
 pub use path::canonical_file_uri;
 pub use representation_fingerprint::{

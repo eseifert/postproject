@@ -696,6 +696,8 @@ version = "0.3.0-alpha.1"
 dependencies = [
  "blake3",
  "postproject-core",
+ "serde",
+ "serde_json",
  "tempfile",
  "url",
  "walkdir",
