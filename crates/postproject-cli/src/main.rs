@@ -19,10 +19,10 @@ use postproject_core::{
     Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
-    FileResourceSource, ImageSequenceSource, MediaResolver, MediaRootMapping,
-    prepare_confirmed_locator, prepare_image_sequence_representation,
-    prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
-    prepare_single_file_representation,
+    FileResourceSource, ImageSequenceSource, InventoryCategory, InventoryReport, InventoryScanner,
+    MediaResolver, MediaRootMapping, prepare_confirmed_locator,
+    prepare_image_sequence_representation, prepare_ordered_parts_representation,
+    prepare_original_media, prepare_package_representation, prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use serde::{Deserialize, Serialize};
@@ -85,6 +85,8 @@ enum MediaCommand {
     Show(MediaAssetArgs),
     /// Resolve an asset under configured media roots.
     Resolve(MediaResolveArgs),
+    /// Inventory known and unassociated media without changing the production.
+    Inventory(MediaInventoryArgs),
 }
 
 #[derive(Debug, Args)]
@@ -117,6 +119,17 @@ struct MediaResolveArgs {
     /// Map a production root name to this machine's directory (NAME=PATH).
     #[arg(long = "root-map", value_name = "NAME=PATH")]
     root_mappings: Vec<RootMappingArg>,
+}
+
+#[derive(Debug, Args)]
+struct MediaInventoryArgs {
+    production: PathBuf,
+    /// Map a production root name to this machine's directory (NAME=PATH).
+    #[arg(long = "root-map", value_name = "NAME=PATH")]
+    root_mappings: Vec<RootMappingArg>,
+    /// Machine-local disposable sidecar cache.
+    #[arg(long, value_name = "PATH")]
+    cache: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -596,6 +609,29 @@ struct ResolveView {
 }
 
 #[derive(Debug, Serialize)]
+struct InventoryView {
+    items: Vec<InventoryItemView>,
+    stats: InventoryStatsView,
+}
+
+#[derive(Debug, Serialize)]
+struct InventoryItemView {
+    category: &'static str,
+    representation_id: Option<String>,
+    resource_id: Option<String>,
+    uri: Option<String>,
+    detail: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct InventoryStatsView {
+    entries_visited: usize,
+    fingerprints_computed: usize,
+    fingerprint_cache_hits: usize,
+    cache_rebuilt: bool,
+}
+
+#[derive(Debug, Serialize)]
 struct ResolutionView {
     representation_id: String,
     availability: &'static str,
@@ -882,6 +918,7 @@ fn execute(cli: Cli) -> Result<()> {
             MediaCommand::List(args) => media_list(&args, cli.json),
             MediaCommand::Show(args) => media_show(&args, cli.json),
             MediaCommand::Resolve(args) => media_resolve(args, cli.json),
+            MediaCommand::Inventory(args) => media_inventory(&args, cli.json),
         },
         Command::Representation(args) => match args.command {
             RepresentationCommand::Add(args) => representation_add(&args, cli.json),
@@ -1878,13 +1915,44 @@ fn print_metadata_assertions(views: &[MetadataAssertionView], json: bool) -> Res
     }
 }
 
-fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
-    let root_mappings = args
-        .root_mappings
+fn media_inventory(args: &MediaInventoryArgs, json: bool) -> Result<()> {
+    let root_mappings = prepare_root_mappings(&args.root_mappings)?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let report = InventoryScanner::default()
+        .scan(&production, &root_mappings, args.cache.as_deref())
+        .context("inventory production media")?;
+    let view = InventoryView::from(&report);
+    if json {
+        print_json(&view)
+    } else {
+        for item in &view.items {
+            println!(
+                "{}\t{}\t{}",
+                item.category,
+                item.uri.as_deref().unwrap_or("-"),
+                item.detail.as_deref().unwrap_or("-")
+            );
+        }
+        println!(
+            "visited={} fingerprints={} cache_hits={}",
+            view.stats.entries_visited,
+            view.stats.fingerprints_computed,
+            view.stats.fingerprint_cache_hits
+        );
+        Ok(())
+    }
+}
+
+fn prepare_root_mappings(mappings: &[RootMappingArg]) -> Result<Vec<MediaRootMapping>> {
+    mappings
         .iter()
         .map(|mapping| MediaRootMapping::new(&mapping.name, &mapping.directory))
         .collect::<postproject_core::Result<Vec<_>>>()
-        .context("prepare root mappings")?;
+        .context("prepare root mappings")
+}
+
+fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
+    let root_mappings = prepare_root_mappings(&args.root_mappings)?;
     let mut production = SqliteProduction::open(&args.production).context("open production")?;
     let asset_id = parse_asset_id(&args.asset_id)?;
     find_asset(&production, asset_id)?;
@@ -2330,6 +2398,31 @@ impl From<&Locator> for LocatorView {
     }
 }
 
+impl From<&InventoryReport> for InventoryView {
+    fn from(report: &InventoryReport) -> Self {
+        let stats = report.stats();
+        Self {
+            items: report
+                .items()
+                .iter()
+                .map(|item| InventoryItemView {
+                    category: inventory_category(item.category()),
+                    representation_id: item.representation_id().map(|id| id.to_string()),
+                    resource_id: item.resource_id().map(|id| id.to_string()),
+                    uri: item.uri().map(str::to_owned),
+                    detail: item.detail().map(str::to_owned),
+                })
+                .collect(),
+            stats: InventoryStatsView {
+                entries_visited: stats.entries_visited,
+                fingerprints_computed: stats.fingerprints_computed,
+                fingerprint_cache_hits: stats.fingerprint_cache_hits,
+                cache_rebuilt: stats.cache_rebuilt,
+            },
+        }
+    }
+}
+
 impl From<&RepresentationResolution> for ResolutionView {
     fn from(resolution: &RepresentationResolution) -> Self {
         Self {
@@ -2425,6 +2518,21 @@ const fn representation_kind(kind: RepresentationKind) -> &'static str {
         RepresentationKind::Proxy => "proxy",
         RepresentationKind::Optimized => "optimized",
         RepresentationKind::Derived => "derived",
+        _ => "unknown",
+    }
+}
+
+const fn inventory_category(category: InventoryCategory) -> &'static str {
+    match category {
+        InventoryCategory::KnownOnline => "known_online",
+        InventoryCategory::Partial => "partial",
+        InventoryCategory::Missing => "missing",
+        InventoryCategory::NewCandidate => "new_candidate",
+        InventoryCategory::Changed => "changed",
+        InventoryCategory::DuplicateCandidate => "duplicate_candidate",
+        InventoryCategory::AmbiguousRelinkCandidate => "ambiguous_relink_candidate",
+        InventoryCategory::RootUnmapped => "root_unmapped",
+        InventoryCategory::RootUnavailable => "root_unavailable",
         _ => "unknown",
     }
 }
