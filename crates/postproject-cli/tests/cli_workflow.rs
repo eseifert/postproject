@@ -436,6 +436,46 @@ fn retires_resource_locator() {
     );
 }
 
+fn confirm_relocated_candidate(production: &str, asset_id: &str, candidates: &std::path::Path) {
+    run_json(&[
+        "root",
+        "add",
+        production,
+        "relocated",
+        "--label",
+        "Relocated",
+    ]);
+    let root_mapping = format!(
+        "relocated={}",
+        candidates.to_str().expect("UTF-8 root path")
+    );
+    let ambiguous = run_json(&[
+        "media",
+        "resolve",
+        production,
+        asset_id,
+        "--root-map",
+        &root_mapping,
+    ]);
+    assert_eq!(ambiguous["resolutions"][0]["availability"], "ambiguous");
+    let resource = &ambiguous["resolutions"][0]["resources"][0];
+    assert_eq!(resource["state"], "ambiguous");
+    let confirmed_uri = resource["candidates"][0]["uri"]
+        .as_str()
+        .expect("candidate URI");
+    let confirmed = run_json(&[
+        "media",
+        "resolve",
+        production,
+        asset_id,
+        "--root-map",
+        &root_mapping,
+        "--confirm",
+        confirmed_uri,
+    ]);
+    assert_eq!(confirmed["confirmed_uri"], confirmed_uri);
+}
+
 #[test]
 fn lifecycle_and_explicit_ambiguous_confirmation() {
     let directory = tempfile::tempdir().expect("create test directory");
@@ -488,47 +528,11 @@ fn lifecycle_and_explicit_ambiguous_confirmation() {
         .expect("write second candidate");
     fs::remove_file(&original).expect("make original locator unavailable");
 
-    run_json(&[
-        "root",
-        "add",
-        production.to_str().expect("UTF-8 production path"),
-        "relocated",
-        "--label",
-        "Relocated",
-    ]);
-    let root_mapping = format!(
-        "relocated={}",
-        candidates.to_str().expect("UTF-8 root path")
-    );
-
-    let ambiguous = run_json(&[
-        "media",
-        "resolve",
+    confirm_relocated_candidate(
         production.to_str().expect("UTF-8 production path"),
         asset_id,
-        "--root-map",
-        &root_mapping,
-    ]);
-    assert_eq!(ambiguous["resolutions"][0]["availability"], "ambiguous");
-    assert_eq!(
-        ambiguous["resolutions"][0]["resources"][0]["state"],
-        "ambiguous"
+        &candidates,
     );
-    let confirmed_uri = ambiguous["resolutions"][0]["resources"][0]["candidates"][0]["uri"]
-        .as_str()
-        .expect("candidate URI");
-
-    let confirmed = run_json(&[
-        "media",
-        "resolve",
-        production.to_str().expect("UTF-8 production path"),
-        asset_id,
-        "--root-map",
-        &root_mapping,
-        "--confirm",
-        confirmed_uri,
-    ]);
-    assert_eq!(confirmed["confirmed_uri"], confirmed_uri);
 
     let resolved = run_json(&[
         "media",
