@@ -53,9 +53,9 @@ jobs:
       - run: ruff format --check python/src python/tests examples/python
       - run: ty check --project python python/src python/tests examples/python
       - run: python tools/check_versions.py
-      - run: ruff check tools/check_versions.py
-      - run: ruff format --check tools/check_versions.py
-      - run: ty check tools/check_versions.py
+      - run: ruff check tools/check_versions.py tools/check_docs_coverage.py tools/test_check_docs_coverage.py tools/normalize_doxygen_xml.py tools/test_normalize_doxygen_xml.py
+      - run: ruff format --check tools/check_versions.py tools/check_docs_coverage.py tools/test_check_docs_coverage.py tools/normalize_doxygen_xml.py tools/test_normalize_doxygen_xml.py
+      - run: ty check tools/check_versions.py tools/check_docs_coverage.py tools/test_check_docs_coverage.py tools/normalize_doxygen_xml.py tools/test_normalize_doxygen_xml.py
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo doc --workspace --all-features --no-deps --locked
@@ -65,18 +65,27 @@ jobs:
       - run: cargo clippy --manifest-path fuzz/Cargo.toml --bins --locked -- -D warnings
 
   documentation:
-    name: Documentation book and links
+    name: Unified documentation and links
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: sudo apt-get update && sudo apt-get install --yes doxygen
+      - run: python -m pip install --disable-pip-version-check -r docs/requirements.txt
       - uses: taiki-e/install-action@v2
         with:
-          tool: mdbook,lychee,typos-cli
-      - run: mdbook build docs
+          tool: lychee,typos-cli
+      - run: doxygen Doxyfile
+      - run: python tools/normalize_doxygen_xml.py target/doxygen/xml
+      - run: python tools/check_docs_coverage.py include/postproject/postproject.h target/doxygen/xml
+      - run: python -m unittest tools/test_check_docs_coverage.py tools/test_normalize_doxygen_xml.py
+      - run: sphinx-build --fail-on-warning --keep-going -b html docs target/postproject
       - run: >-
           lychee --offline --no-progress --root-dir target
           target/postproject README.md
-      - run: typos README.md docs/src docs/adr
+      - run: typos README.md docs
 
   dependencies:
     name: Dependency policy
