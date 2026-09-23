@@ -74,7 +74,8 @@ All notable changes to PostProject will be documented here. The project uses
 - Machine-local mappings from portable root names to local directories, with
   explicit unmapped/unavailable evidence and continued scanning of usable roots.
 - A tag-triggered GitHub release workflow publishing checksummed source,
-  Linux, macOS, and Windows native archives plus a tested Python wheel.
+  Linux, macOS, and Windows native archives plus a tested Python wheel. Native
+  archives include the CLI so installed workflows do not require Cargo.
 - A stewardship policy covering governance, compatibility, security reports,
   releases, and the transition to broader maintainership.
 - Installed, cross-platform-tested C, C++, and Python quickstarts with a small
