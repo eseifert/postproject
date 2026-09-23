@@ -173,5 +173,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/*
           --repo "$GITHUB_REPOSITORY"
           --verify-tag
+          --prerelease
           --title "PostProject $GITHUB_REF_NAME"
           --generate-notes
