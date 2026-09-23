@@ -14,6 +14,18 @@ particular representation such as a camera original or proxy. PostProject keeps
 that distinction so an application does not accidentally present
 representation-specific facts as facts about every copy.
 
+The CLI can optionally inspect imported files with an installed `ffprobe` and
+store container, stream, codec, dimensions, rates, channel layout, bit depth,
+pixel format, duration, timecode, and other embedded tags as typed metadata:
+
+```sh
+postproject media add production.pproj camera.mov --inspect
+```
+
+Inspection is optional. If `ffprobe` is missing or rejects the file, import
+still succeeds and the command reports `unavailable` or `failed` rather than
+inventing technical values.
+
 Provenance answers a different question: how was a result produced? An activity
 connects input representations, an operation, and its output representations.
 It can also record the responsible tool, version, agent, timing, and processing

@@ -87,6 +87,27 @@ The same typed values can be written through C, C++, Python, and the CLI;
 recursive input handles copy their children, so callers can release intermediate
 list and structure values immediately after construction.
 
+## Technical inspection
+
+The Rust media crate defines a `MediaInspector` adapter boundary and a bounded
+`FfprobeInspector` subprocess implementation. Successful results are ordinary
+typed assertions under
+`https://postproject.org/ns/technical-media/1` with property `inspection`; no
+FFmpeg type or dependency enters `postproject-core`. Raw embedded tag keys and
+values are represented as ordered key/value structures so unfamiliar tags do
+not need to become schema fields.
+
+The CLI reaches this adapter with `media add --inspect` and attaches successful
+assertions to the imported representation in the same transaction. The direct
+inspection operation is not currently exposed through C, C++, or Python; those
+surfaces can read the resulting assertion through their existing metadata
+traversal APIs.
+
+Subprocess output is limited to 8 MiB per stream, execution defaults to a
+30-second deadline, JSON and numeric values are parsed without floating point,
+and stderr diagnostics are truncated. Missing `ffprobe`, non-zero exit, timeout,
+oversized output, and malformed JSON are distinguishable outcomes.
+
 ## Optional Rust registry
 
 The core registry supplies a small set of advisory definitions for IPTC Video

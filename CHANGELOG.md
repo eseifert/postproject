@@ -57,6 +57,9 @@ All notable changes to PostProject will be documented here. The project uses
 
 ### Added
 
+- A bounded optional `ffprobe` subprocess adapter that records normalized,
+  vocabulary-backed technical metadata during CLI import while treating a
+  missing inspector as a non-fatal capability gap.
 - Adapter-level recognition for numbered image sequences, recording spans,
   metadata sidecars, and AVCHD camera-card packages, plus relocated-sequence
   resolution and compound original import from the CLI.
