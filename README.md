@@ -101,6 +101,7 @@ Standalone installed-package examples live in [`examples/c`](examples/c) and
 
 ## Documentation
 
+- [Published documentation](https://docs.postproject.org/)
 - [User guide](docs/src/users/README.md)
 - [Integrator guide](docs/src/integrators/README.md)
 - [Contributor guide](docs/src/contributors/README.md)
@@ -110,7 +111,15 @@ Standalone installed-package examples live in [`examples/c`](examples/c) and
 - [Iteration-one acceptance report](docs/iteration-one-report.md)
 - [Iteration-two acceptance report](docs/iteration-two-report.md)
 
-Build the documentation book with `mdbook build docs`.
+Build the unified reference after installing `docs/requirements.txt` and
+Doxygen:
+
+```sh
+doxygen Doxyfile
+python tools/normalize_doxygen_xml.py target/doxygen/xml
+python tools/check_docs_coverage.py include/postproject/postproject.h target/doxygen/xml
+sphinx-build --fail-on-warning -b html docs target/postproject
+```
 
 ## License
 

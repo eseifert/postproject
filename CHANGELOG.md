@@ -7,6 +7,9 @@ All notable changes to PostProject will be documented here. The project uses
 
 ### Changed
 
+- Replaced the mdBook-only documentation build with one versioned Sphinx site
+  combining the guides, generated Doxygen C/C++ reference, Python autodoc, and
+  links to matching rustdoc.
 - Advanced the development version to `0.3.0-alpha.1` and introduced a named
   integration-preview subset that remains compatible within the 0.3.x series.
 - Replaced absolute media-root identity with unique logical names in SQLite

@@ -16,12 +16,17 @@ for application users, integrators, and contributors. The delivered scope and
 remaining constraints are recorded in the
 [acceptance report](iteration-two-report.md).
 
+## Iteration 3 — in progress
+
+Add portable named storage roots, non-mutating inventory scans, compound-media
+recognition, optional technical inspection, opt-in content verification,
+OpenAssetIO and OTIO integration demonstrations, and a published unified API
+site. The library and local documentation work is implemented; the external
+integration repositories, published artifacts, and live sites remain release
+work.
+
 ## Explicitly later
 
-- the published documentation site at `postproject.org`;
-- automatic compound-media recognition and technical inspection;
-- a PostProject OpenAssetIO Manager and OTIO-through-OpenAssetIO demonstration;
-- portable named-root or volume mappings across machines;
 - full IPTC VMH and EBUCorePlus mapping packages;
 - W3C PROV and MovieLabs OMC import/export adapters;
 - C2PA assertion, signing, and verification integration;
