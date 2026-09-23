@@ -85,6 +85,10 @@ class FileResourceInput(ctypes.Structure):
     pass
 
 
+class MediaRootMapping(ctypes.Structure):
+    pass
+
+
 ObjectKind = ctypes.c_uint32
 RepresentationKind = ctypes.c_uint32
 ContentStructureKind = ctypes.c_uint32
@@ -180,6 +184,8 @@ PP_EVIDENCE_RELATIVE_PATH_SIMILARITY = 7
 PP_EVIDENCE_MEDIA_ROOT_RELATION = 8
 PP_EVIDENCE_CONFLICTING_CANDIDATE = 9
 PP_EVIDENCE_DISCOVERY_ERROR = 10
+PP_EVIDENCE_MEDIA_ROOT_UNMAPPED = 11
+PP_EVIDENCE_MEDIA_ROOT_UNAVAILABLE = 12
 
 
 Uuid._fields_ = [
@@ -223,6 +229,11 @@ FileResourceInput._fields_ = [
     ("required", ctypes.c_uint8),
 ]
 
+MediaRootMapping._fields_ = [
+    ("name", ctypes.c_char_p),
+    ("directory", ctypes.c_char_p),
+]
+
 
 PUBLIC_STRUCTS = {
     "pp_uuid_t": (Uuid, ("bytes",)),
@@ -230,6 +241,7 @@ PUBLIC_STRUCTS = {
     "pp_revision_event_t": (RevisionEvent, ("kind", "position", "asset_id", "representation_id", "resource_id", "locator_id", "media_root_id", "activity_id", "target", "structural_position", "enabled", "identifier_scheme", "identifier_value", "identifier_qualifier", "vocabulary", "property", "activity_kind", "role")),
     "pp_activity_edge_t": (ActivityEdge, ("representation_id", "role")),
     "pp_file_resource_input_t": (FileResourceInput, ("path", "role", "required")),
+    "pp_media_root_mapping_t": (MediaRootMapping, ("name", "directory")),
 }
 
 
@@ -391,7 +403,7 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_production_media_roots.restype = ErrorCode
     lib.pp_media_root_set_count.argtypes = [ctypes.POINTER(MediaRootSet)]
     lib.pp_media_root_set_count.restype = ctypes.c_uint64
-    lib.pp_media_root_set_get.argtypes = [ctypes.POINTER(MediaRootSet), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_media_root_set_get.argtypes = [ctypes.POINTER(MediaRootSet), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_int32), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_media_root_set_get.restype = ErrorCode
     lib.pp_media_root_set_release.argtypes = [ctypes.POINTER(MediaRootSet)]
     lib.pp_media_root_set_release.restype = None
@@ -541,7 +553,7 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_revision_event_set_get.restype = ErrorCode
     lib.pp_revision_event_set_release.argtypes = [ctypes.POINTER(RevisionEventSet)]
     lib.pp_revision_event_set_release.restype = None
-    lib.pp_production_resolve_asset.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ResolutionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_resolve_asset.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(MediaRootMapping), ctypes.c_uint64, ctypes.POINTER(ctypes.POINTER(ResolutionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_production_resolve_asset.restype = ErrorCode
     lib.pp_resolution_set_representation_count.argtypes = [ctypes.POINTER(ResolutionSet)]
     lib.pp_resolution_set_representation_count.restype = ctypes.c_uint64

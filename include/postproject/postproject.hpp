@@ -270,10 +270,16 @@ struct Asset final {
 
 struct MediaRoot final {
   Uuid id;
-  std::string uri;
+  std::string name;
   std::optional<std::string> label;
+  std::optional<std::string> legacy_uri;
   std::int32_t priority;
   bool enabled;
+};
+
+struct MediaRootMapping final {
+  std::string name;
+  std::string directory;
 };
 
 enum class RepresentationKind : std::uint32_t {
@@ -400,6 +406,8 @@ enum class EvidenceKind : std::uint32_t {
   media_root_relation = PP_EVIDENCE_MEDIA_ROOT_RELATION,
   conflicting_candidate = PP_EVIDENCE_CONFLICTING_CANDIDATE,
   discovery_error = PP_EVIDENCE_DISCOVERY_ERROR,
+  media_root_unmapped = PP_EVIDENCE_MEDIA_ROOT_UNMAPPED,
+  media_root_unavailable = PP_EVIDENCE_MEDIA_ROOT_UNAVAILABLE,
 };
 
 struct Evidence final {
@@ -1320,14 +1328,14 @@ public:
     return add_file_collection_representation(asset_id, kind, members, true);
   }
 
-  Uuid addMediaRoot(std::string_view path, std::int32_t priority = 0) {
-    return add_media_root_impl(path, nullptr, priority);
+  Uuid addMediaRoot(std::string_view name, std::int32_t priority = 0) {
+    return add_media_root_impl(name, nullptr, priority);
   }
 
-  Uuid addMediaRoot(std::string_view path, std::string_view label,
+  Uuid addMediaRoot(std::string_view name, std::string_view label,
                     std::int32_t priority = 0) {
     const std::string native_label = detail::checked_string(label, "label");
-    return add_media_root_impl(path, native_label.c_str(), priority);
+    return add_media_root_impl(name, native_label.c_str(), priority);
   }
 
   void setMediaRootEnabled(const Uuid &root_id, bool enabled) {
@@ -1524,13 +1532,13 @@ private:
     return detail::uuid(value);
   }
 
-  Uuid add_media_root_impl(std::string_view path, const char *label,
+  Uuid add_media_root_impl(std::string_view name, const char *label,
                            std::int32_t priority) {
-    const std::string native_path = detail::checked_string(path, "path");
+    const std::string native_name = detail::checked_string(name, "name");
     pp_uuid_t value{};
     pp_error_t *error = nullptr;
     const pp_error_code_t status = pp_transaction_add_media_root(
-        transaction_, native_path.c_str(), label, priority, &value, &error);
+        transaction_, native_name.c_str(), label, priority, &value, &error);
     detail::throw_if_error(status, error);
     return detail::uuid(value);
   }
@@ -1711,22 +1719,26 @@ public:
     result.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t index = 0; index < count; ++index) {
       pp_uuid_t id{};
-      const char *uri = nullptr;
+      const char *name = nullptr;
       const char *label = nullptr;
+      const char *legacy_uri = nullptr;
       std::int32_t priority = 0;
       std::uint8_t enabled = 0;
       pp_error_t *item_error = nullptr;
       const pp_error_code_t item_status = pp_media_root_set_get(
-          roots.get(), index, &id, &uri, &label, &priority, &enabled,
-          &item_error);
+          roots.get(), index, &id, &name, &label, &legacy_uri, &priority,
+          &enabled, &item_error);
       detail::throw_if_error(item_status, item_error);
-      if (uri == nullptr) {
-        throw Error(ErrorCode::internal, "media root has no URI");
+      if (name == nullptr) {
+        throw Error(ErrorCode::internal, "media root has no name");
       }
       result.push_back(
-          {detail::uuid(id), std::string(uri),
+          {detail::uuid(id), std::string(name),
            label != nullptr ? std::optional<std::string>(std::string(label))
                             : std::nullopt,
+           legacy_uri != nullptr
+               ? std::optional<std::string>(std::string(legacy_uri))
+               : std::nullopt,
            priority, enabled != 0});
     }
     return result;
@@ -1813,12 +1825,31 @@ public:
   }
 
   [[nodiscard]] std::vector<RepresentationResolution>
-  resolveAsset(const Uuid &asset_id) const {
+  resolveAsset(const Uuid &asset_id,
+               const std::vector<MediaRootMapping> &root_mappings = {}) const {
     const pp_uuid_t value = detail::native_uuid(asset_id);
+    std::vector<std::string> mapping_names;
+    std::vector<std::string> mapping_directories;
+    mapping_names.reserve(root_mappings.size());
+    mapping_directories.reserve(root_mappings.size());
+    for (const MediaRootMapping &mapping : root_mappings) {
+      mapping_names.push_back(detail::checked_string(mapping.name, "root name"));
+      mapping_directories.push_back(
+          detail::checked_string(mapping.directory, "root directory"));
+    }
+    std::vector<pp_media_root_mapping_t> native_mappings;
+    native_mappings.reserve(root_mappings.size());
+    for (std::size_t index = 0; index < root_mappings.size(); ++index) {
+      native_mappings.push_back(
+          {mapping_names[index].c_str(), mapping_directories[index].c_str()});
+    }
     pp_resolution_set_t *raw_resolutions = nullptr;
     pp_error_t *error = nullptr;
     const pp_error_code_t status = pp_production_resolve_asset(
-        production_, &value, &raw_resolutions, &error);
+        production_, &value,
+        native_mappings.empty() ? nullptr : native_mappings.data(),
+        static_cast<std::uint64_t>(native_mappings.size()), &raw_resolutions,
+        &error);
     detail::throw_if_error(status, error);
     detail::ResolutionSetHandle resolutions(raw_resolutions);
 

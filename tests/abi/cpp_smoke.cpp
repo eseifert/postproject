@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
   std::remove(path.c_str());
 
   try {
-    if (postproject::abi_version() != 14) {
+    if (postproject::abi_version() != 15) {
       return 3;
     }
 
@@ -50,8 +50,7 @@ int main(int argc, char **argv) {
     const postproject::ExternalIdentifier external_id{
         "com.example.asset", "asset-42", std::string("primary")};
     transaction.addExternalIdentifier(asset_ref, external_id);
-    const auto root_id = transaction.addMediaRoot(
-        std::filesystem::path(path).parent_path().string(), "fixtures");
+    const auto root_id = transaction.addMediaRoot("fixtures", "Fixture media");
     transaction.commit();
     const auto latest_revision = production.latestRevision();
     const auto revision_page = production.changesSince(0, 1);
@@ -91,7 +90,9 @@ int main(int argc, char **argv) {
     }
     const auto roots = production.mediaRoots();
     if (roots.size() != 1 || roots[0].id != root_id ||
-        roots[0].label != std::string("fixtures") || roots[0].priority != 0 ||
+        roots[0].name != "fixtures" ||
+        roots[0].label != std::string("Fixture media") ||
+        roots[0].legacy_uri.has_value() || roots[0].priority != 0 ||
         !roots[0].enabled) {
       return 25;
     }
@@ -145,7 +146,9 @@ int main(int argc, char **argv) {
 
     const std::string moved_media_path = media_path + ".moved";
     std::filesystem::rename(media_path, moved_media_path);
-    const auto resolutions = production.resolveAsset(asset_id);
+    const auto resolutions = production.resolveAsset(
+        asset_id,
+        {{"fixtures", std::filesystem::path(path).parent_path().string()}});
     if (resolutions.size() != 1 ||
         resolutions[0].availability !=
             postproject::RepresentationAvailability::online ||

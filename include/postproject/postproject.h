@@ -146,6 +146,12 @@ typedef struct pp_file_resource_input {
   uint8_t required;
 } pp_file_resource_input_t;
 
+/* Borrowed machine-local mapping used only for one resolution call. */
+typedef struct pp_media_root_mapping {
+  const char *name;
+  const char *directory;
+} pp_media_root_mapping_t;
+
 typedef uint32_t pp_error_code_t;
 
 #define PP_OK UINT32_C(0)
@@ -197,6 +203,8 @@ typedef uint32_t pp_evidence_kind_t;
 #define PP_EVIDENCE_MEDIA_ROOT_RELATION UINT32_C(8)
 #define PP_EVIDENCE_CONFLICTING_CANDIDATE UINT32_C(9)
 #define PP_EVIDENCE_DISCOVERY_ERROR UINT32_C(10)
+#define PP_EVIDENCE_MEDIA_ROOT_UNMAPPED UINT32_C(11)
+#define PP_EVIDENCE_MEDIA_ROOT_UNAVAILABLE UINT32_C(12)
 
 /* Inputs are borrowed UTF-8 without embedded NUL. A NULL display name is
  * absent. On success, *out_production is caller-owned and *out_error is NULL. On
@@ -247,8 +255,8 @@ PP_API pp_error_code_t pp_production_media_roots(
 PP_API uint64_t pp_media_root_set_count(const pp_media_root_set_t *roots);
 PP_API pp_error_code_t pp_media_root_set_get(
     const pp_media_root_set_t *roots, uint64_t index, pp_uuid_t *out_id,
-    const char **out_uri, const char **out_label, int32_t *out_priority,
-    uint8_t *out_enabled, pp_error_t **out_error);
+    const char **out_name, const char **out_label, const char **out_legacy_uri,
+    int32_t *out_priority, uint8_t *out_enabled, pp_error_t **out_error);
 PP_API void pp_media_root_set_release(pp_media_root_set_t *roots);
 /* Representation strings borrow the owning result set. Members are returned in
  * structural order. Single-resource and image-sequence members have no role. */
@@ -490,6 +498,8 @@ PP_API void pp_revision_event_set_release(pp_revision_event_set_t *events);
  * remain valid until pp_resolution_set_release(). */
 PP_API pp_error_code_t pp_production_resolve_asset(
     const pp_production_t *production, const pp_uuid_t *asset_id,
+    const pp_media_root_mapping_t *root_mappings,
+    uint64_t root_mapping_count,
     pp_resolution_set_t **out_resolutions, pp_error_t **out_error);
 PP_API uint64_t pp_resolution_set_representation_count(
     const pp_resolution_set_t *resolutions);
@@ -575,7 +585,7 @@ PP_API pp_error_code_t pp_transaction_add_package_representation(
     uint64_t member_count, pp_uuid_t *out_representation_id,
     pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_add_media_root(
-    pp_transaction_t *transaction, const char *path, const char *label,
+    pp_transaction_t *transaction, const char *name, const char *label,
     int32_t priority, pp_uuid_t *out_root_id, pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_set_media_root_enabled(
     pp_transaction_t *transaction, const pp_uuid_t *root_id, uint8_t enabled,

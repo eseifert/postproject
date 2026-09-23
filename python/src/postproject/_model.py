@@ -67,8 +67,9 @@ class MediaRoot:
     """Immutable configured resolver root."""
 
     id: MediaRootId
-    uri: str
+    name: str
     label: str | None
+    legacy_uri: str | None
     priority: int
     enabled: bool
 
@@ -307,6 +308,8 @@ class EvidenceKind(Enum):
     FILE_NAME_MATCH = "file_name_match"
     RELATIVE_PATH_SIMILARITY = "relative_path_similarity"
     MEDIA_ROOT_RELATION = "media_root_relation"
+    MEDIA_ROOT_UNMAPPED = "media_root_unmapped"
+    MEDIA_ROOT_UNAVAILABLE = "media_root_unavailable"
     CONFLICTING_CANDIDATE = "conflicting_candidate"
     DISCOVERY_ERROR = "discovery_error"
 

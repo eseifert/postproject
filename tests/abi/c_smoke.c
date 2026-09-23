@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     return 64;
   }
   (void)remove(argv[1]);
-  if (pp_abi_version() != UINT32_C(14)) {
+  if (pp_abi_version() != UINT32_C(15)) {
     return 1;
   }
   pp_error_code_t status =
@@ -157,7 +157,7 @@ int main(int argc, char **argv) {
     pp_error_release(error);
     return 26;
   }
-  status = pp_transaction_add_media_root(transaction, argv[2], "fixture root",
+  status = pp_transaction_add_media_root(transaction, "fixtures", "Fixture root",
                                          0, &root_id, &error);
   if (status != PP_OK || uuid_is_zero(&root_id)) {
     pp_transaction_release(transaction);
@@ -205,18 +205,21 @@ int main(int argc, char **argv) {
   pp_asset_set_release(assets);
   pp_media_root_set_t *roots = NULL;
   pp_uuid_t read_root_id = {{0}};
-  const char *root_uri = NULL;
+  const char *root_name = NULL;
   const char *root_label = NULL;
+  const char *root_legacy_uri = NULL;
   int32_t root_priority = 0;
   uint8_t root_enabled = 0;
   status = pp_production_media_roots(production, &roots, &error);
   if (status != PP_OK || roots == NULL ||
       pp_media_root_set_count(roots) != UINT64_C(1) ||
-      pp_media_root_set_get(roots, 0, &read_root_id, &root_uri, &root_label,
-                            &root_priority, &root_enabled, &error) != PP_OK ||
+      pp_media_root_set_get(roots, 0, &read_root_id, &root_name, &root_label,
+                            &root_legacy_uri, &root_priority, &root_enabled,
+                            &error) != PP_OK ||
       memcmp(read_root_id.bytes, root_id.bytes, sizeof(root_id.bytes)) != 0 ||
-      root_uri == NULL || root_label == NULL ||
-      strcmp(root_label, "fixture root") != 0 || root_priority != 0 ||
+      root_name == NULL || strcmp(root_name, "fixtures") != 0 ||
+      root_label == NULL || strcmp(root_label, "Fixture root") != 0 ||
+      root_legacy_uri != NULL || root_priority != 0 ||
       root_enabled != UINT8_C(1)) {
     pp_media_root_set_release(roots);
     pp_production_release(production);
@@ -523,7 +526,9 @@ int main(int argc, char **argv) {
   }
 
   pp_resolution_set_t *resolutions = NULL;
-  status = pp_production_resolve_asset(production, &asset_id, &resolutions, &error);
+  const pp_media_root_mapping_t root_mapping = {"fixtures", argv[2]};
+  status = pp_production_resolve_asset(production, &asset_id, &root_mapping,
+                                       UINT64_C(1), &resolutions, &error);
   if (status != PP_OK || resolutions == NULL ||
       pp_resolution_set_representation_count(resolutions) != UINT64_C(1)) {
     pp_resolution_set_release(resolutions);
@@ -602,8 +607,9 @@ int main(int argc, char **argv) {
   roots = NULL;
   status = pp_production_media_roots(production, &roots, &error);
   if (status != PP_OK || roots == NULL ||
-      pp_media_root_set_get(roots, 0, &read_root_id, &root_uri, &root_label,
-                            &root_priority, &root_enabled, &error) != PP_OK ||
+      pp_media_root_set_get(roots, 0, &read_root_id, &root_name, &root_label,
+                            &root_legacy_uri, &root_priority, &root_enabled,
+                            &error) != PP_OK ||
       root_enabled != UINT8_C(0)) {
     pp_media_root_set_release(roots);
     pp_resolution_set_release(resolutions);
@@ -782,7 +788,8 @@ int main(int argc, char **argv) {
 
   status = pp_production_open(argv[1], &production, &error);
   if (status != PP_OK ||
-      pp_production_resolve_asset(production, &asset_id, &resolutions, &error) !=
+      pp_production_resolve_asset(production, &asset_id, NULL, UINT64_C(0),
+                                  &resolutions, &error) !=
           PP_OK ||
       pp_resolution_set_get_representation(
           resolutions, 0, &representation_id, &availability, &resource_count,

@@ -56,13 +56,18 @@ removed, enumerated, and found by exact scheme and value. Metadata reads and
 writes preserve every typed value kind; scalar, repeated, structured, and
 reference values use `transaction.add_metadata()`. Provenance activities can be
 created and queried through immutable value objects and keyed graph views.
-`production.resolutions[asset_id]` returns typed representation availability,
-resource candidates, evidence, diagnostics, and missing-frame details.
+`production.resolve(asset_id, {"rushes": "/mnt/show/rushes"})` returns typed
+representation availability, resource candidates, evidence, diagnostics, and
+missing-frame details while supplying machine-local paths for named production
+roots. `production.resolutions[asset_id]` is the shorthand when no mappings are
+needed.
 `production.representations[asset_id]` returns the
 stored structure, ordered membership, compact sequence descriptor, resources,
 locators, and distinct resource and representation fingerprints as immutable
-values. `production.media_roots` lists immutable root summaries in resolver
-order. Root creation, enablement, removal, locator retirement, and explicit
+values. `production.media_roots` lists immutable logical-root summaries in
+resolver order. Root creation takes a portable name rather than a directory;
+local paths are supplied to `resolve()`. Root creation, enablement, removal,
+locator retirement, and explicit
 candidate confirmation are transactional through `add_media_root()`,
 `set_media_root_enabled()`, `remove_media_root()`, `retire_locator()`, and
 `confirm_locator()`. Transactions can add

@@ -6,7 +6,7 @@ import ctypes
 import os
 import weakref
 from _ctypes import _Pointer
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -38,6 +38,9 @@ from ._abi import (
 )
 from ._abi import (
     MetadataValue as NativeMetadataValue,
+)
+from ._abi import (
+    MediaRootMapping as NativeMediaRootMapping,
 )
 from ._abi import (
     Production as NativeProduction,
@@ -213,7 +216,7 @@ class _Resolutions:
         self._production = production
 
     def __getitem__(self, asset_id: AssetId) -> tuple[RepresentationResolution, ...]:
-        return self._production._resolve_asset(asset_id)
+        return self._production.resolve(asset_id)
 
 
 class _Representations:
@@ -442,6 +445,15 @@ class Production:
 
         self._require_open()
         return _Resolutions(self)
+
+    def resolve(
+        self,
+        asset_id: AssetId,
+        root_mappings: Mapping[str, str | os.PathLike[str]] | None = None,
+    ) -> tuple[RepresentationResolution, ...]:
+        """Resolve an asset using optional machine-local root mappings."""
+
+        return self._resolve_asset(asset_id, root_mappings or {})
 
     @property
     def representations(self) -> _Representations:
@@ -681,14 +693,31 @@ class Production:
         finally:
             self._native.lib.pp_revision_event_set_release(handle)
 
-    def _resolve_asset(self, asset_id: AssetId) -> tuple[RepresentationResolution, ...]:
+    def _resolve_asset(
+        self,
+        asset_id: AssetId,
+        root_mappings: Mapping[str, str | os.PathLike[str]],
+    ) -> tuple[RepresentationResolution, ...]:
         self._require_open()
         native_id = _native_uuid(asset_id.value)
+        mapping_values = sorted(root_mappings.items())
+        mapping_names = [_utf8(name, "root name") for name, _ in mapping_values]
+        mapping_directories = [_path_bytes(path) for _, path in mapping_values]
+        native_mappings = (NativeMediaRootMapping * len(mapping_values))(
+            *(
+                NativeMediaRootMapping(name, directory)
+                for name, directory in zip(
+                    mapping_names, mapping_directories, strict=True
+                )
+            )
+        )
         handle = ctypes.POINTER(ResolutionSet)()
         error = ctypes.POINTER(Error)()
         status = self._native.lib.pp_production_resolve_asset(
             self._handle,
             ctypes.byref(native_id),
+            native_mappings if mapping_values else None,
+            len(mapping_values),
             ctypes.byref(handle),
             ctypes.byref(error),
         )
@@ -940,18 +969,18 @@ class Transaction:
 
     def add_media_root(
         self,
-        path: str | os.PathLike[str],
+        name: str,
         label: str | None = None,
         priority: int = 0,
     ) -> MediaRootId:
-        """Stage a directory used for deterministic resource discovery."""
+        """Stage a portable logical root used for resource discovery."""
 
         self._require_open()
         root_id = Uuid()
         error = ctypes.POINTER(Error)()
         status = self._native.lib.pp_transaction_add_media_root(
             self._handle,
-            _path_bytes(path),
+            _utf8(name, "root name"),
             _optional_text(label),
             priority,
             ctypes.byref(root_id),
@@ -1308,8 +1337,9 @@ def _media_root_at(
     native: NativeLibrary, roots: _Pointer[MediaRootSet], index: int
 ) -> MediaRoot:
     root_id = Uuid()
-    uri = ctypes.c_char_p()
+    name = ctypes.c_char_p()
     label = ctypes.c_char_p()
+    legacy_uri = ctypes.c_char_p()
     priority = ctypes.c_int32()
     enabled = ctypes.c_uint8()
     error = ctypes.POINTER(Error)()
@@ -1317,8 +1347,9 @@ def _media_root_at(
         roots,
         index,
         ctypes.byref(root_id),
-        ctypes.byref(uri),
+        ctypes.byref(name),
         ctypes.byref(label),
+        ctypes.byref(legacy_uri),
         ctypes.byref(priority),
         ctypes.byref(enabled),
         ctypes.byref(error),
@@ -1326,8 +1357,9 @@ def _media_root_at(
     native.check(status, error)
     return MediaRoot(
         MediaRootId(_uuid(root_id)),
-        _decode_required(uri.value, "media root URI"),
+        _decode_required(name.value, "media root name"),
         _decode_optional(label.value),
+        _decode_optional(legacy_uri.value),
         int(priority.value),
         bool(enabled.value),
     )
@@ -2603,6 +2635,8 @@ def _evidence_kind(value: int) -> EvidenceKind:
             EvidenceKind.RELATIVE_PATH_SIMILARITY
         ),
         _abi.PP_EVIDENCE_MEDIA_ROOT_RELATION: EvidenceKind.MEDIA_ROOT_RELATION,
+        _abi.PP_EVIDENCE_MEDIA_ROOT_UNMAPPED: EvidenceKind.MEDIA_ROOT_UNMAPPED,
+        _abi.PP_EVIDENCE_MEDIA_ROOT_UNAVAILABLE: EvidenceKind.MEDIA_ROOT_UNAVAILABLE,
         _abi.PP_EVIDENCE_CONFLICTING_CANDIDATE: EvidenceKind.CONFLICTING_CANDIDATE,
         _abi.PP_EVIDENCE_DISCOVERY_ERROR: EvidenceKind.DISCOVERY_ERROR,
     }.get(value)

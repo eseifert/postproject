@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 14 is pre-release and may change during the 0.x series, with every
+ABI version 15 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
@@ -85,6 +85,12 @@ persistence time but does not silently choose a candidate.
 
 Resolution snapshots the database state it needs while holding the production
 lock, then releases that lock before filesystem discovery and fingerprinting.
+
+Logical media-root names are production knowledge. `pp_media_root_mapping_t`
+values borrow a root name and a machine-local directory only for one resolution
+call; the library copies and validates them before scanning. A null mapping
+pointer is valid only with a zero count. Root summaries expose an optional
+legacy absolute URI solely for lossless migration from schema versions before 6.
 
 ## Representation inspection
 

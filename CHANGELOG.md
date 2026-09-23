@@ -11,6 +11,8 @@ All notable changes to PostProject will be documented here. The project uses
   integration-preview subset that remains compatible within the 0.3.x series.
 - Replaced absolute media-root identity with unique logical names in SQLite
   schema 6. Migrated roots retain their former URI as a lossless legacy fallback.
+- Advanced the C ABI to version 15 for portable root summaries, per-call
+  machine-root mappings, and unmapped/unavailable resolution evidence.
 - Raised the Python binding's minimum supported version to Python 3.11.
 - Renamed the durable root container from `Project` to `Production` across the
   domain, SQLite schema, CLI, C ABI version 8, C++ wrapper, and Python binding;
@@ -72,10 +74,10 @@ All notable changes to PostProject will be documented here. The project uses
   revision, media-root, and transaction IDs plus typed cross-object references.
 - A compound-media model for single resources, compact image sequences,
   ordered parts, and packages with required or optional resource roles.
-- Canonical SQLite schema version 5 with transactional compound media,
+- Canonical SQLite schema version 6 with transactional compound media,
   external identifiers, typed metadata, provenance, lifecycle operations, and
   a durable semantic revision journal.
-- C ABI version 14 and C++17 wrappers for the complete public model, including
+- C ABI version 15 and C++17 wrappers for the complete public model, including
   compound-media creation and inspection, provenance, revisions, host bindings,
   asset/root enumeration, and locator/root lifecycle operations.
 - A Python 3.11 binding over the public C ABI with generated signatures,

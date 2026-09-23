@@ -157,12 +157,14 @@ class ProductionTests(unittest.TestCase):
         ) as production:
             with production.transaction() as transaction:
                 asset_id = transaction.import_media(self.media_path)
-                root_id = transaction.add_media_root(self.root, "Media", 4)
+                root_id = transaction.add_media_root("media", "Media", 4)
 
             roots = production.media_roots
             self.assertEqual(len(roots), 1)
             self.assertEqual(roots[0].id, root_id)
+            self.assertEqual(roots[0].name, "media")
             self.assertEqual(roots[0].label, "Media")
+            self.assertIsNone(roots[0].legacy_uri)
             self.assertEqual(roots[0].priority, 4)
             self.assertTrue(roots[0].enabled)
             locator_id = (
@@ -488,10 +490,12 @@ class ProductionTests(unittest.TestCase):
         ) as production:
             with production.transaction() as transaction:
                 asset_id = transaction.import_media(self.media_path)
-                transaction.add_media_root(candidates, "Relocated")
+                transaction.add_media_root("relocated", "Relocated")
             self.media_path.unlink()
 
-            resolution = production.resolutions[asset_id][0]
+            resolution = production.resolve(
+                asset_id, {"relocated": candidates}
+            )[0]
             self.assertEqual(
                 resolution.availability, RepresentationAvailability.AMBIGUOUS
             )

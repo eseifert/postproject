@@ -36,8 +36,8 @@ use postproject_core::{
     ToolIdentity, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
-    FileResourceSource, ImageSequenceSource, MediaResolver, prepare_confirmed_locator,
-    prepare_image_sequence_representation, prepare_media_root,
+    FileResourceSource, ImageSequenceSource, MediaResolver, MediaRootMapping,
+    prepare_confirmed_locator, prepare_image_sequence_representation,
     prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
     prepare_single_file_representation,
 };
@@ -93,6 +93,8 @@ const PP_EVIDENCE_RELATIVE_PATH_SIMILARITY: u32 = 7;
 const PP_EVIDENCE_MEDIA_ROOT_RELATION: u32 = 8;
 const PP_EVIDENCE_CONFLICTING_CANDIDATE: u32 = 9;
 const PP_EVIDENCE_DISCOVERY_ERROR: u32 = 10;
+const PP_EVIDENCE_MEDIA_ROOT_UNMAPPED: u32 = 11;
+const PP_EVIDENCE_MEDIA_ROOT_UNAVAILABLE: u32 = 12;
 
 const PP_OBJECT_PRODUCTION: u32 = 1;
 const PP_OBJECT_ASSET: u32 = 2;
@@ -123,7 +125,7 @@ const PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED: u32 = 15;
 const PP_REVISION_MEDIA_ROOT_REMOVED: u32 = 16;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 14;
+pub const ABI_VERSION: u32 = 15;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -163,6 +165,16 @@ pub struct PpFileResourceInput {
     pub role: *const c_char,
     /// Exactly zero or one.
     pub required: u8,
+}
+
+/// Borrowed machine-local mapping for one resolution operation.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct PpMediaRootMapping {
+    /// Required NUL-terminated logical root name.
+    pub name: *const c_char,
+    /// Required NUL-terminated local directory path.
+    pub directory: *const c_char,
 }
 
 /// Borrowed, fixed-layout semantic revision event.
@@ -237,8 +249,9 @@ pub struct PpMediaRootSet {
 
 struct AbiMediaRoot {
     id: MediaRootId,
-    uri: CString,
+    name: CString,
     label: Option<CString>,
+    legacy_uri: Option<CString>,
     priority: i32,
     enabled: bool,
 }
@@ -249,10 +262,14 @@ impl TryFrom<&MediaRoot> for AbiMediaRoot {
     fn try_from(root: &MediaRoot) -> Result<Self, Self::Error> {
         Ok(Self {
             id: root.id(),
-            uri: exact_cstring(root.name(), "media root name")?,
+            name: exact_cstring(root.name(), "media root name")?,
             label: root
                 .label()
                 .map(|value| exact_cstring(value, "media root label"))
+                .transpose()?,
+            legacy_uri: root
+                .legacy_uri()
+                .map(|value| exact_cstring(value, "legacy media root URI"))
                 .transpose()?,
             priority: root.priority(),
             enabled: root.is_enabled(),
@@ -763,8 +780,9 @@ pub unsafe extern "C" fn pp_media_root_set_get(
     roots: *const PpMediaRootSet,
     index: u64,
     out_id: *mut PpUuid,
-    out_uri: *mut *const c_char,
+    out_name: *mut *const c_char,
     out_label: *mut *const c_char,
+    out_legacy_uri: *mut *const c_char,
     out_priority: *mut i32,
     out_enabled: *mut u8,
     out_error: *mut *mut PpError,
@@ -772,8 +790,9 @@ pub unsafe extern "C" fn pp_media_root_set_get(
     // SAFETY: Outputs are initialized and validated before writes.
     unsafe {
         initialize_uuid(out_id);
-        initialize_const_output(out_uri);
+        initialize_const_output(out_name);
         initialize_const_output(out_label);
+        initialize_const_output(out_legacy_uri);
         initialize_value(out_priority, 0);
         initialize_value(out_enabled, 0);
         ffi_call(out_error, || {
@@ -788,13 +807,20 @@ pub unsafe extern "C" fn pp_media_root_set_get(
                 },
                 "out_id",
             )?;
-            write_copy(out_uri, root.uri.as_ptr(), "out_uri")?;
+            write_copy(out_name, root.name.as_ptr(), "out_name")?;
             write_copy(
                 out_label,
                 root.label
                     .as_ref()
                     .map_or(ptr::null(), |value| value.as_ptr()),
                 "out_label",
+            )?;
+            write_copy(
+                out_legacy_uri,
+                root.legacy_uri
+                    .as_ref()
+                    .map_or(ptr::null(), |value| value.as_ptr()),
+                "out_legacy_uri",
             )?;
             write_copy(out_priority, root.priority, "out_priority")?;
             write_copy(out_enabled, u8::from(root.enabled), "out_enabled")
@@ -2228,6 +2254,8 @@ pub unsafe extern "C" fn pp_metadata_value_get_reference(
 pub unsafe extern "C" fn pp_production_resolve_asset(
     production: *const PpProduction,
     asset_id: *const PpUuid,
+    root_mappings: *const PpMediaRootMapping,
+    root_mapping_count: u64,
     out_resolutions: *mut *mut PpResolutionSet,
     out_error: *mut *mut PpError,
 ) -> u32 {
@@ -2245,6 +2273,26 @@ pub unsafe extern "C" fn pp_production_resolve_asset(
             if out_resolutions.is_null() {
                 return Err(invalid_argument("out_resolutions must not be null"));
             }
+            let mapping_count = usize::try_from(root_mapping_count)
+                .map_err(|_| invalid_argument("root_mapping_count is too large"))?;
+            if mapping_count != 0 && root_mappings.is_null() {
+                return Err(invalid_argument(
+                    "root_mappings must not be null when root_mapping_count is nonzero",
+                ));
+            }
+            let native_mappings = if mapping_count == 0 {
+                &[]
+            } else {
+                std::slice::from_raw_parts(root_mappings, mapping_count)
+            };
+            let mappings = native_mappings
+                .iter()
+                .map(|mapping| {
+                    let name = required_utf8(mapping.name, "root mapping name")?;
+                    let directory = required_utf8(mapping.directory, "root mapping directory")?;
+                    MediaRootMapping::new(name, Path::new(directory))
+                })
+                .collect::<Result<Vec<_>, Error>>()?;
 
             let asset_id = AssetId::from_bytes(asset_id.bytes);
             let (media_roots, work) = {
@@ -2277,7 +2325,7 @@ pub unsafe extern "C" fn pp_production_resolve_asset(
                         representation.content_structure(),
                         &locators,
                         &media_roots,
-                        &[],
+                        &mappings,
                     )?;
                     resource_resolutions.push(resolution);
                 }
@@ -3020,7 +3068,7 @@ unsafe fn transaction_add_file_collection_representation(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pp_transaction_add_media_root(
     transaction: *mut PpTransaction,
-    path: *const c_char,
+    name: *const c_char,
     label: *const c_char,
     priority: i32,
     out_root_id: *mut PpUuid,
@@ -3038,12 +3086,9 @@ pub unsafe extern "C" fn pp_transaction_add_media_root(
             if out_root_id.is_null() {
                 return Err(invalid_argument("out_root_id must not be null"));
             }
-            let path = required_utf8(path, "path")?;
-            if path.is_empty() {
-                return Err(invalid_argument("path must not be empty"));
-            }
+            let name = required_utf8(name, "name")?;
             let label = optional_utf8(label, "label")?.map(str::to_owned);
-            let root = prepare_media_root(Path::new(path), label, priority)?;
+            let root = MediaRoot::new(MediaRootId::new(), name, label, None, priority, true)?;
             out_root_id.write(PpUuid {
                 bytes: root.id().into_bytes(),
             });
@@ -4185,6 +4230,8 @@ const fn evidence_kind(kind: EvidenceKind) -> u32 {
         EvidenceKind::MediaRootRelation => PP_EVIDENCE_MEDIA_ROOT_RELATION,
         EvidenceKind::ConflictingCandidate => PP_EVIDENCE_CONFLICTING_CANDIDATE,
         EvidenceKind::DiscoveryError => PP_EVIDENCE_DISCOVERY_ERROR,
+        EvidenceKind::MediaRootUnmapped => PP_EVIDENCE_MEDIA_ROOT_UNMAPPED,
+        EvidenceKind::MediaRootUnavailable => PP_EVIDENCE_MEDIA_ROOT_UNAVAILABLE,
         _ => 0,
     }
 }
