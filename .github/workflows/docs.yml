@@ -48,6 +48,19 @@ jobs:
           python tools/normalize_doxygen_xml.py target/doxygen/xml
           python tools/check_docs_coverage.py include/postproject/postproject.h target/doxygen/xml
           sphinx-build --fail-on-warning --keep-going -b html docs "$GITHUB_WORKSPACE/target/site/0.3.0-alpha.1"
+      - uses: actions/checkout@v7
+        with:
+          ref: v0.3.0-alpha.2
+          path: target/released-docs-source-alpha2
+      - name: Build latest immutable release documentation
+        working-directory: target/released-docs-source-alpha2
+        run: |
+          mkdir -p target/doxygen
+          doxygen Doxyfile
+          python tools/normalize_doxygen_xml.py target/doxygen/xml
+          python tools/check_docs_coverage.py include/postproject/postproject.h target/doxygen/xml
+          sphinx-build --fail-on-warning --keep-going -b html docs "$GITHUB_WORKSPACE/target/site/0.3.0-alpha.2"
+          cmake -E copy_directory "$GITHUB_WORKSPACE/target/site/0.3.0-alpha.2" "$GITHUB_WORKSPACE/target/site/latest"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
