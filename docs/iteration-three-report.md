@@ -30,10 +30,10 @@ candidate is package `0.3.0-alpha.1`, C ABI 15, and SQLite schema 6.
 Four disposable repositories run against PostProject `main` and are also
 called by PostProject CI against the revision under review:
 
-- [OpenAssetIO Manager spike](https://github.com/eseifert/postproject-openassetio-manager-spike)
-- [OTIO-through-OpenAssetIO spike](https://github.com/eseifert/postproject-otio-openassetio-spike)
-- [Python host spike](https://github.com/eseifert/postproject-python-host-spike)
-- [C++ NLE spike](https://github.com/eseifert/postproject-cpp-nle-spike)
+- [OpenAssetIO Manager validation](https://github.com/eseifert/postproject-openassetio)
+- [OTIO-through-OpenAssetIO validation](https://github.com/eseifert/postproject-otio-openassetio)
+- [Python host validation](https://github.com/eseifert/postproject-python-host)
+- [C++ NLE validation](https://github.com/eseifert/postproject-cpp-nle)
 
 Their findings informed the maintained
 [PostProject OpenAssetIO Manager](https://github.com/eseifert/postproject-openassetio-manager)
@@ -76,4 +76,3 @@ and the separate landing page.
   indexing and background jobs remain later work.
 - Releases are checksummed but not code-signed. PostProject remains pre-1.0,
   with only the subset named in ADR 0020 compatible within the 0.3 series.
-
