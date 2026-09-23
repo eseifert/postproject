@@ -25,6 +25,12 @@ when necessary. Traversal is deterministic, does not follow symlinks, defaults
 to a depth limit of 64 and an entry limit of 100,000, and reports a structured
 error result when a bound or filesystem operation prevents a safe answer.
 
+Productions identify roots by logical name. Each machine maps those names to
+local directories when resolving; migrated pre-schema-6 roots retain their old
+absolute URI as a fallback. An unmapped root and a mapped-but-unavailable root
+produce distinct evidence. Neither stops traversal of other roots, so reachable
+results remain visible together with the configuration diagnostic.
+
 Discovery, cheap file-size filtering, and fingerprint verification are separate
 stages. Full hashes produce exact resolution; sampled fingerprints produce
 probable resolution. If no fingerprint exists, a matching filename is required

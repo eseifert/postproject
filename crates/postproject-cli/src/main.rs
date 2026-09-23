@@ -1868,6 +1868,7 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
                         representation.content_structure(),
                         &locators,
                         production.production().media_roots(),
+                        &[],
                     )
                     .context("resolve representation resource")?,
             );

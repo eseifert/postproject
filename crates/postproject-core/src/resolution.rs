@@ -57,6 +57,10 @@ pub enum EvidenceKind {
     RelativePathSimilarity,
     /// The candidate is contained in a configured media root.
     MediaRootRelation,
+    /// A logical media root has no mapping on this machine.
+    MediaRootUnmapped,
+    /// A mapped media root cannot currently be searched.
+    MediaRootUnavailable,
     /// Another candidate has equivalent credible evidence.
     ConflictingCandidate,
     /// Candidate discovery or verification could not complete safely.

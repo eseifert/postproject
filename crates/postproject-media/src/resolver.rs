@@ -18,6 +18,66 @@ use walkdir::WalkDir;
 
 use crate::{FULL_FINGERPRINT_ALGORITHM, canonical_file_uri, fingerprint_file};
 
+/// One machine's directory mapping for a production-portable root name.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediaRootMapping {
+    name: String,
+    directory: PathBuf,
+}
+
+impl MediaRootMapping {
+    /// Creates a mapping to an existing local directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the name is invalid, the path cannot be
+    /// inspected, or the path is not a directory.
+    pub fn new(name: impl Into<String>, directory: impl AsRef<Path>) -> Result<Self> {
+        let name = name.into();
+        MediaRoot::validate_name(&name)?;
+        let directory = directory.as_ref();
+        let metadata = fs::metadata(directory).map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!("cannot read mapped root {}: {error}", directory.display()),
+            )
+        })?;
+        if !metadata.is_dir() {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                format!("mapped root is not a directory: {}", directory.display()),
+            ));
+        }
+        let directory = directory.canonicalize().map_err(|error| {
+            Error::new(
+                ErrorKind::Io,
+                format!(
+                    "cannot canonicalize mapped root {}: {error}",
+                    directory.display()
+                ),
+            )
+        })?;
+        Ok(Self { name, directory })
+    }
+
+    /// Returns the logical root name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns this machine's canonical directory.
+    #[must_use]
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+}
+
+struct Discovery {
+    candidates: BTreeMap<String, Vec<ResolutionEvidence>>,
+    diagnostics: Vec<ResolutionEvidence>,
+}
+
 /// Resource limits applied to one resolver operation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ResolverOptions {
@@ -77,6 +137,7 @@ impl MediaResolver {
         structure: &ContentStructure,
         known_locators: &[Locator],
         media_roots: &[MediaRoot],
+        root_mappings: &[MediaRootMapping],
     ) -> Result<ResourceResolution> {
         if !structure.resource_ids().contains(&resource.id()) {
             return Err(Error::new(
@@ -134,6 +195,7 @@ impl MediaResolver {
         });
         let discovered = match self.discover(
             media_roots,
+            root_mappings,
             resource.file_facts(),
             !resource.fingerprints().is_empty(),
             original_name.as_deref(),
@@ -143,7 +205,7 @@ impl MediaResolver {
         };
 
         let mut candidates = Vec::new();
-        for (uri, cheap_evidence) in discovered {
+        for (uri, cheap_evidence) in discovered.candidates {
             let path = file_uri_to_path(&uri).map_err(|error| {
                 Error::new(
                     ErrorKind::Internal,
@@ -158,6 +220,7 @@ impl MediaResolver {
         }
 
         let state = match candidates.len() {
+            0 if !discovered.diagnostics.is_empty() => ResourceResolutionState::Error,
             0 => ResourceResolutionState::Offline,
             1 if candidates[0].confidence() == Confidence::CERTAIN => {
                 ResourceResolutionState::ResolvedExact
@@ -165,42 +228,71 @@ impl MediaResolver {
             1 => ResourceResolutionState::ResolvedProbable,
             _ => ResourceResolutionState::Ambiguous,
         };
-        let evidence = if state == ResourceResolutionState::Ambiguous {
-            vec![ResolutionEvidence::new(
+        let mut evidence = discovered.diagnostics;
+        if state == ResourceResolutionState::Ambiguous {
+            evidence.push(ResolutionEvidence::new(
                 EvidenceKind::ConflictingCandidate,
                 Some(format!(
                     "{} candidates have matching identity evidence",
                     candidates.len()
                 )),
-            )]
-        } else {
-            Vec::new()
-        };
+            ));
+        }
         ResourceResolution::new(resource.id(), state, candidates, evidence)
     }
 
     fn discover(
         &self,
         roots: &[MediaRoot],
+        mappings: &[MediaRootMapping],
         facts: Option<FileFacts>,
         has_fingerprint: bool,
         original_name: Option<&OsStr>,
-    ) -> std::result::Result<BTreeMap<String, Vec<ResolutionEvidence>>, String> {
+    ) -> std::result::Result<Discovery, String> {
         let mut discovered = BTreeMap::new();
+        let mut diagnostics = Vec::new();
         let mut entries_seen = 0_usize;
+        let mut mappings_by_name = BTreeMap::new();
+        for mapping in mappings {
+            if mappings_by_name
+                .insert(mapping.name(), mapping.directory())
+                .is_some()
+            {
+                return Err(format!(
+                    "media root {} has more than one machine mapping",
+                    mapping.name()
+                ));
+            }
+        }
         let mut roots: Vec<_> = roots.iter().filter(|root| root.is_enabled()).collect();
         roots.sort_by_key(|root| (root.priority(), root.id()));
         for root in roots {
-            let Some(root_uri) = root.legacy_uri() else {
-                return Err(format!("media root {} is unmapped", root.name()));
+            let legacy_path = root
+                .legacy_uri()
+                .map(file_uri_to_path)
+                .transpose()
+                .map_err(|error| {
+                    format!("legacy media root {} is invalid: {error}", root.name())
+                })?;
+            let Some(root_path) = mappings_by_name
+                .get(root.name())
+                .copied()
+                .or(legacy_path.as_deref())
+            else {
+                diagnostics.push(ResolutionEvidence::new(
+                    EvidenceKind::MediaRootUnmapped,
+                    Some(root.name().to_owned()),
+                ));
+                continue;
             };
-            let root_path = file_uri_to_path(root_uri).map_err(|error| {
-                format!(
-                    "media root {} is not a local file URI: {error}",
-                    root.name()
-                )
-            })?;
-            for entry in WalkDir::new(&root_path)
+            if !root_path.is_dir() {
+                diagnostics.push(ResolutionEvidence::new(
+                    EvidenceKind::MediaRootUnavailable,
+                    Some(format!("{}: {}", root.name(), root_path.display())),
+                ));
+                continue;
+            }
+            for entry in WalkDir::new(root_path)
                 .follow_links(false)
                 .max_depth(self.options.max_depth)
                 .sort_by_file_name()
@@ -212,8 +304,16 @@ impl MediaResolver {
                         self.options.max_entries
                     ));
                 }
-                let entry =
-                    entry.map_err(|error| format!("scan {}: {error}", root_path.display()))?;
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        diagnostics.push(ResolutionEvidence::new(
+                            EvidenceKind::MediaRootUnavailable,
+                            Some(format!("{}: {error}", root.name())),
+                        ));
+                        continue;
+                    }
+                };
                 if !entry.file_type().is_file() {
                     continue;
                 }
@@ -241,7 +341,10 @@ impl MediaResolver {
                 discovered.entry(uri).or_insert(evidence);
             }
         }
-        Ok(discovered)
+        Ok(Discovery {
+            candidates: discovered,
+            diagnostics,
+        })
     }
 }
 
@@ -426,8 +529,8 @@ mod tests {
 
     use postproject_core::{
         ContentStructure, FrameRange, ImageSequenceDescriptor, ImageSequencePattern, LocatorId,
-        RationalRate, RepresentationAvailability, RepresentationId, RepresentationResolution,
-        ResourceId, ResourceResolutionState,
+        MediaRootId, RationalRate, RepresentationAvailability, RepresentationId,
+        RepresentationResolution, ResourceId, ResourceResolutionState,
     };
 
     use super::*;
@@ -445,6 +548,7 @@ mod tests {
                 &prepared.resources()[0],
                 prepared.representation().content_structure(),
                 prepared.locators(),
+                &[],
                 &[],
             )
             .expect("resolve known locator");
@@ -489,7 +593,7 @@ mod tests {
         .expect("valid locator");
 
         let resolved = MediaResolver::default()
-            .resolve_resource(&resource, &structure, &[locator], &[])
+            .resolve_resource(&resource, &structure, &[locator], &[], &[])
             .expect("resolve known sequence directory");
         assert_eq!(
             resolved.state(),
@@ -536,7 +640,7 @@ mod tests {
         .expect("valid locator");
 
         let resolved = MediaResolver::default()
-            .resolve_resource(&resource, &structure, &[locator], &[])
+            .resolve_resource(&resource, &structure, &[locator], &[], &[])
             .expect("resolve known sequence directory");
         assert_eq!(resolved.missing_frames(), &[1002, 1004]);
         let aggregate = RepresentationResolution::aggregate(
@@ -573,6 +677,7 @@ mod tests {
                 prepared.representation().content_structure(),
                 prepared.locators(),
                 &[root],
+                &[],
             )
             .expect("resolve moved media");
 
@@ -583,6 +688,102 @@ mod tests {
                 .evidence()
                 .iter()
                 .any(|evidence| evidence.kind() == EvidenceKind::FullHashMatch)
+        );
+    }
+
+    #[test]
+    fn machine_mapping_resolves_a_portable_root() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let old_directory = directory.path().join("workstation");
+        let laptop_directory = directory.path().join("laptop");
+        fs::create_dir(&old_directory).expect("create workstation directory");
+        fs::create_dir(&laptop_directory).expect("create laptop directory");
+        let old_path = old_directory.join("clip.mov");
+        fs::write(&old_path, b"portable media").expect("write media");
+        let prepared = prepare_original_media(&old_path, None, None).expect("prepare import");
+        fs::rename(&old_path, laptop_directory.join("clip.mov")).expect("move media");
+        let root = MediaRoot::new(
+            MediaRootId::new(),
+            "camera-originals",
+            Some("Camera originals".to_owned()),
+            None,
+            0,
+            true,
+        )
+        .expect("create portable root");
+        let mapping =
+            MediaRootMapping::new("camera-originals", &laptop_directory).expect("map root");
+
+        let resolution = MediaResolver::default()
+            .resolve_resource(
+                &prepared.resources()[0],
+                prepared.representation().content_structure(),
+                prepared.locators(),
+                &[root],
+                &[mapping],
+            )
+            .expect("resolve through mapping");
+
+        assert_eq!(resolution.state(), ResourceResolutionState::ResolvedExact);
+        assert_eq!(resolution.candidates().len(), 1);
+    }
+
+    #[test]
+    fn unusable_roots_are_reported_without_hiding_reachable_results() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let old_path = directory.path().join("old.mov");
+        let reachable = directory.path().join("reachable");
+        fs::create_dir(&reachable).expect("create reachable root");
+        fs::write(&old_path, b"media").expect("write original");
+        let prepared = prepare_original_media(&old_path, None, None).expect("prepare import");
+        fs::rename(&old_path, reachable.join("moved.mov")).expect("move media");
+        let unmapped = MediaRoot::new(MediaRootId::new(), "archive", None, None, 0, true)
+            .expect("create unmapped root");
+        let usable = MediaRoot::new(MediaRootId::new(), "working", None, None, 1, true)
+            .expect("create mapped root");
+        let mapping = MediaRootMapping::new("working", &reachable).expect("map reachable root");
+
+        let resolution = MediaResolver::default()
+            .resolve_resource(
+                &prepared.resources()[0],
+                prepared.representation().content_structure(),
+                prepared.locators(),
+                &[unmapped, usable],
+                &[mapping],
+            )
+            .expect("resolve reachable root");
+
+        assert_eq!(resolution.state(), ResourceResolutionState::ResolvedExact);
+        assert!(resolution.evidence().iter().any(|evidence| {
+            evidence.kind() == EvidenceKind::MediaRootUnmapped
+                && evidence.detail() == Some("archive")
+        }));
+    }
+
+    #[test]
+    fn unmapped_root_is_not_reported_as_missing_media() {
+        let directory = tempfile::tempdir().expect("create directory");
+        let path = directory.path().join("clip.mov");
+        fs::write(&path, b"media").expect("write media");
+        let prepared = prepare_original_media(&path, None, None).expect("prepare import");
+        fs::remove_file(path).expect("remove known media");
+        let root = MediaRoot::new(MediaRootId::new(), "offline-vault", None, None, 0, true)
+            .expect("create root");
+
+        let resolution = MediaResolver::default()
+            .resolve_resource(
+                &prepared.resources()[0],
+                prepared.representation().content_structure(),
+                prepared.locators(),
+                &[root],
+                &[],
+            )
+            .expect("report unmapped root");
+
+        assert_eq!(resolution.state(), ResourceResolutionState::Error);
+        assert_eq!(
+            resolution.evidence()[0].kind(),
+            EvidenceKind::MediaRootUnmapped
         );
     }
 
@@ -603,6 +804,7 @@ mod tests {
                 prepared.representation().content_structure(),
                 prepared.locators(),
                 &[root],
+                &[],
             )
             .expect("resolve ambiguous media");
 
@@ -632,6 +834,7 @@ mod tests {
                 prepared.representation().content_structure(),
                 prepared.locators(),
                 &[root],
+                &[],
             )
             .expect("create error result");
 

@@ -320,6 +320,7 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture, relocated: &Path) 
             stored_sequence.content_structure(),
             &locators,
             &[],
+            &[],
         )
         .expect("resolve sequence");
     let resolution = RepresentationResolution::aggregate(
@@ -392,6 +393,7 @@ fn assert_original_online(production: &SqliteProduction, fixture: &Fixture) {
                 .locators(resource.id())
                 .expect("load replacement locator"),
             production.production().media_roots(),
+            &[],
         )
         .expect("resolve relinked original");
     assert_eq!(
@@ -421,6 +423,7 @@ fn relink_moved_media(production: &mut SqliteProduction, fixture: &Fixture, relo
             fixture.original.representation().content_structure(),
             &original_locators,
             std::slice::from_ref(&replacement_root),
+            &[],
         )
         .expect("discover relocated original");
     assert_eq!(discovered.state(), ResourceResolutionState::ResolvedExact);

@@ -324,7 +324,7 @@ pub fn prepare_media_root(
         ));
     }
     let id = MediaRootId::new();
-    let name = label.clone().unwrap_or_else(|| format!("legacy-{}", id));
+    let name = label.clone().unwrap_or_else(|| format!("legacy-{id}"));
     MediaRoot::new(
         id,
         name,

@@ -55,6 +55,8 @@ All notable changes to PostProject will be documented here. The project uses
 
 ### Added
 
+- Machine-local mappings from portable root names to local directories, with
+  explicit unmapped/unavailable evidence and continued scanning of usable roots.
 - A tag-triggered GitHub release workflow publishing checksummed source,
   Linux, macOS, and Windows native archives plus a tested Python wheel.
 - A stewardship policy covering governance, compatibility, security reports,

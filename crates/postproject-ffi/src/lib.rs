@@ -2277,6 +2277,7 @@ pub unsafe extern "C" fn pp_production_resolve_asset(
                         representation.content_structure(),
                         &locators,
                         &media_roots,
+                        &[],
                     )?;
                     resource_resolutions.push(resolution);
                 }

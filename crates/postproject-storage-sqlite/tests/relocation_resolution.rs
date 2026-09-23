@@ -53,6 +53,7 @@ fn moved_media_resolves_and_confirmed_location_persists() {
             representation.content_structure(),
             locators,
             roots,
+            &[],
         )
     };
     let missing = resolve(&known_locators, &[]).expect("resolve without roots");

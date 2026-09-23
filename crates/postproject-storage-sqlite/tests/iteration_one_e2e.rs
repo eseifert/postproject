@@ -87,6 +87,7 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
                 representation.content_structure(),
                 &locators,
                 &[],
+                &[],
             )
             .expect("resolve without roots");
         assert_eq!(resolution.state(), ResourceResolutionState::Offline);
@@ -119,6 +120,7 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
                     representation.content_structure(),
                     &locators,
                     production.production().media_roots(),
+                    &[],
                 )
                 .expect("resolve relocated media");
             match resolution.state() {
@@ -176,6 +178,7 @@ fn relocation_workflow_handles_unique_and_ambiguous_media() {
                 &resource,
                 representation.content_structure(),
                 &locators,
+                &[],
                 &[],
             )
             .expect("resolve from confirmed locator without roots");

@@ -405,6 +405,28 @@ pub struct MediaRoot {
 }
 
 impl MediaRoot {
+    /// Validates a production-portable logical root name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] when `name` is empty, oversized,
+    /// path-shaped, contains control characters, or has surrounding whitespace.
+    pub fn validate_name(name: &str) -> Result<()> {
+        if name.is_empty()
+            || name.len() > 128
+            || name.trim() != name
+            || name
+                .chars()
+                .any(|character| character.is_control() || matches!(character, '/' | '\\'))
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "media-root name must be 1-128 UTF-8 bytes without surrounding whitespace, control characters, or path separators",
+            ));
+        }
+        Ok(())
+    }
+
     /// Creates a configured logical media root.
     ///
     /// # Errors
@@ -420,18 +442,7 @@ impl MediaRoot {
         enabled: bool,
     ) -> Result<Self> {
         let name = name.into();
-        if name.is_empty()
-            || name.len() > 128
-            || name.trim() != name
-            || name
-                .chars()
-                .any(|character| character.is_control() || matches!(character, '/' | '\\'))
-        {
-            return Err(Error::new(
-                ErrorKind::InvalidArgument,
-                "media-root name must be 1-128 UTF-8 bytes without surrounding whitespace, control characters, or path separators",
-            ));
-        }
+        Self::validate_name(&name)?;
         let legacy_uri = legacy_uri
             .map(|uri| normalize_uri(uri, "legacy media-root"))
             .transpose()?;
