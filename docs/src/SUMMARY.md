@@ -38,6 +38,7 @@
 - [Standards policy](contributors/standards-policy.md)
 - [Metadata model](contributors/metadata-model.md)
 - [Provenance model](contributors/provenance-model.md)
+- [Iteration 3 integration findings](../iteration-three-integration-findings.md)
 
 # Reference
 
