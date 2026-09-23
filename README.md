@@ -116,6 +116,7 @@ Build the unified reference with Python 3.12 or newer after installing
 `docs/requirements.txt` and Doxygen:
 
 ```sh
+mkdir -p target/doxygen
 doxygen Doxyfile
 python tools/normalize_doxygen_xml.py target/doxygen/xml
 python tools/check_docs_coverage.py include/postproject/postproject.h target/doxygen/xml
