@@ -34,13 +34,13 @@ from ._abi import (
     FileResourceInput as NativeFileResourceInput,
 )
 from ._abi import (
+    MediaRootMapping as NativeMediaRootMapping,
+)
+from ._abi import (
     MetadataInput as NativeMetadataInput,
 )
 from ._abi import (
     MetadataValue as NativeMetadataValue,
-)
-from ._abi import (
-    MediaRootMapping as NativeMediaRootMapping,
 )
 from ._abi import (
     Production as NativeProduction,

@@ -493,9 +493,7 @@ class ProductionTests(unittest.TestCase):
                 transaction.add_media_root("relocated", "Relocated")
             self.media_path.unlink()
 
-            resolution = production.resolve(
-                asset_id, {"relocated": candidates}
-            )[0]
+            resolution = production.resolve(asset_id, {"relocated": candidates})[0]
             self.assertEqual(
                 resolution.availability, RepresentationAvailability.AMBIGUOUS
             )
