@@ -60,3 +60,16 @@ issues. Missing sequence frames are sorted individual frame numbers. Optional
 package members may produce issues but do not reduce availability. Never choose
 one ambiguous candidate in integration code; present the candidates to the user
 and persist only an explicit confirmation.
+
+The Rust media adapter additionally exposes `MediaRecognizer` and
+`prepare_recognized_original_media` for filename- and layout-based discovery.
+The demonstrator CLI reaches the same adapter through `media add` for directory
+inputs and the `--recognize-companions` option for sidecars. Recognition is not
+yet exposed directly through the C ABI, C++ wrapper, or Python binding; those
+surfaces can still create every recognized structure explicitly with the
+operations above.
+
+AVCHD recognition assigns open-world PostProject roles for essence,
+clip-information, playlist, and navigation members. These labels describe the
+adapter's preservation model; they do not claim conformance validation or
+interpret vendor metadata.

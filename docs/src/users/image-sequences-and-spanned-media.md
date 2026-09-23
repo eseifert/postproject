@@ -32,3 +32,19 @@ Moving the folder or files changes their storage locators, not the identity of
 the asset or representation. Stored content evidence can help an application
 find the moved media. If several candidates are equally credible, the
 application should show them and ask for an explicit confirmation.
+
+The CLI recognizes numbered EXR, DPX, TIFF, and TIF groups, numbered MOV, MXF,
+MP4, and MTS spans, same-stem XML/XMP/JSON sidecars, and the checked AVCHD card
+layout. Sequence rates cannot be inferred safely from filenames, so they remain
+explicit:
+
+```sh
+postproject media add production.pproj renders/shot010 --sequence-rate 24000/1001
+postproject media add production.pproj /Volumes/CARD
+postproject media add production.pproj clip.mov --recognize-companions
+```
+
+When a directory contains several unrelated numbered groups, recognition
+returns ambiguity instead of choosing one. Move a known sequence beneath a
+mapped media root and normal resolution searches for its directory as one
+resource; confirmation persists the new directory locator.

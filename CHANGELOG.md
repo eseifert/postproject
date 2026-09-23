@@ -57,6 +57,9 @@ All notable changes to PostProject will be documented here. The project uses
 
 ### Added
 
+- Adapter-level recognition for numbered image sequences, recording spans,
+  metadata sidecars, and AVCHD camera-card packages, plus relocated-sequence
+  resolution and compound original import from the CLI.
 - Read-only media inventory with machine-inspectable categories, bounded root
   traversal, a disposable versioned sidecar cache, and CLI JSON output.
 - Machine-local mappings from portable root names to local directories, with
