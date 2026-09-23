@@ -110,6 +110,7 @@ Standalone installed-package examples live in [`examples/c`](examples/c) and
 - [Stewardship](STEWARDSHIP.md)
 - [Iteration-one acceptance report](docs/iteration-one-report.md)
 - [Iteration-two acceptance report](docs/iteration-two-report.md)
+- [Iteration-three acceptance report](docs/iteration-three-report.md)
 
 Build the unified reference after installing `docs/requirements.txt` and
 Doxygen:
