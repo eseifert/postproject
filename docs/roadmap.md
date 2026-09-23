@@ -16,14 +16,13 @@ for application users, integrators, and contributors. The delivered scope and
 remaining constraints are recorded in the
 [acceptance report](iteration-two-report.md).
 
-## Iteration 3 — in progress
+## Iteration 3 — complete
 
 Add portable named storage roots, non-mutating inventory scans, compound-media
 recognition, optional technical inspection, opt-in content verification,
 OpenAssetIO and OTIO integration demonstrations, and a published unified API
-site. The library and local documentation work is implemented; the external
-integration repositories, published artifacts, and live sites remain release
-work.
+site. The delivered scope and remaining constraints are recorded in the
+[acceptance report](iteration-three-report.md).
 
 ## Explicitly later
 

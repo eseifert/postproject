@@ -10,12 +10,12 @@ from the [GitHub release](https://github.com/eseifert/postproject/releases).
 For example, on Linux:
 
 ```sh
-sha256sum --check postproject-0.3.0-alpha.1-linux-x86_64.tar.gz.sha256
-mkdir postproject-0.3.0-alpha.1
-tar -xzf postproject-0.3.0-alpha.1-linux-x86_64.tar.gz \
-  -C postproject-0.3.0-alpha.1
-export PATH="$PWD/postproject-0.3.0-alpha.1/bin:$PATH"
-export LD_LIBRARY_PATH="$PWD/postproject-0.3.0-alpha.1/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+sha256sum --check postproject-0.3.0-alpha.2-linux-x86_64.tar.gz.sha256
+mkdir postproject-0.3.0-alpha.2
+tar -xzf postproject-0.3.0-alpha.2-linux-x86_64.tar.gz \
+  -C postproject-0.3.0-alpha.2
+export PATH="$PWD/postproject-0.3.0-alpha.2/bin:$PATH"
+export LD_LIBRARY_PATH="$PWD/postproject-0.3.0-alpha.2/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 postproject --version
 ```
 
@@ -33,7 +33,7 @@ library. Install it beside the native archive and give Python the absolute
 library path when opening or creating a production:
 
 ```sh
-python -m pip install postproject-0.3.0a1-py3-none-any.whl
+python -m pip install postproject-0.3.0a2-py3-none-any.whl
 ```
 
 ```python
@@ -48,4 +48,3 @@ production = Production.open(
 The Python snippet is the same public call exercised by the installed
 [Python quickstart](python.md). The CLI uses the Rust implementation directly;
 it does not dynamically load the C library.
-

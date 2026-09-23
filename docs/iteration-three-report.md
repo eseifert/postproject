@@ -1,8 +1,8 @@
 # Iteration 3 acceptance report
 
 Iteration 3 turns PostProject's model into a portable, inspectable workflow and
-tests it through applications outside the main repository. The release
-candidate is package `0.3.0-alpha.1`, C ABI 15, and SQLite schema 6.
+tests it through applications outside the main repository. The delivered
+release is package `0.3.0-alpha.2`, C ABI 15, and SQLite schema 6.
 
 ## Delivered scope
 
@@ -27,7 +27,7 @@ candidate is package `0.3.0-alpha.1`, C ABI 15, and SQLite schema 6.
 
 ## Integration validation
 
-Four disposable repositories run against PostProject `main` and are also
+Four validation repositories run against PostProject `main` and are also
 called by PostProject CI against the revision under review:
 
 - [OpenAssetIO Manager validation](https://github.com/eseifert/postproject-openassetio)

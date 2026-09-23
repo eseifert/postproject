@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "_ext"))
 
 project = "PostProject"
 author = "PostProject contributors"
-release = "0.3.0-alpha.1"
+release = "0.3.0-alpha.2"
 version = "0.3"
 
 extensions = [
