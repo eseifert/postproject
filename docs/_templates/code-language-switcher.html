@@ -1,0 +1,61 @@
+<label class="sidebar-search-container" for="postproject-code-language">
+  <span class="visually-hidden">Code example language</span>
+  <select id="postproject-code-language" class="sidebar-search" aria-label="Code example language">
+    <option value="c">Code: C</option>
+    <option value="cpp">Code: C++</option>
+    <option value="python">Code: Python</option>
+    <option value="rust">Code: Rust</option>
+    <option value="cli">Code: CLI</option>
+  </select>
+</label>
+<script>
+  (() => {
+    const key = "postproject-code-language";
+    const group = "code-language";
+    const labels = `.sd-tab-label[data-sync-group="${group}"]`;
+    const selector = document.getElementById("postproject-code-language");
+    const known = (value) =>
+      Array.from(selector.options).some((option) => option.value === value);
+    const remember = (value) => {
+      try {
+        window.localStorage.setItem(key, value);
+      } catch (_) {}
+      // sphinx-design restores synchronized tabs from session storage.
+      try {
+        window.sessionStorage.setItem(`sphinx-design-tab-id-${group}`, value);
+      } catch (_) {}
+    };
+    const show = (value) => {
+      document
+        .querySelectorAll(`${labels}[data-sync-id="${value}"]`)
+        .forEach((label) => {
+          label.previousElementSibling.checked = true;
+        });
+    };
+
+    // A ?code-language= link wins over the remembered choice.
+    let stored = new URLSearchParams(window.location.search).get(group);
+    if (!known(stored)) {
+      try {
+        stored = window.localStorage.getItem(key);
+      } catch (_) {}
+    }
+    if (known(stored)) {
+      selector.value = stored;
+    }
+    // Runs before sphinx-design initializes the tabs on DOMContentLoaded.
+    remember(selector.value);
+
+    selector.addEventListener("change", () => {
+      remember(selector.value);
+      show(selector.value);
+    });
+    document.addEventListener("click", (event) => {
+      const label = event.target instanceof Element && event.target.closest(labels);
+      if (label && known(label.dataset.syncId)) {
+        selector.value = label.dataset.syncId;
+        remember(selector.value);
+      }
+    });
+  })();
+</script>

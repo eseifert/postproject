@@ -18,6 +18,9 @@ src/integrators/installing-a-release
 src/integrators/c-quickstart
 src/integrators/cpp-quickstart
 src/integrators/python
+src/integrators/first-production
+src/integrators/external-identifiers
+src/integrators/media-resolution
 src/integrators/compound-media
 src/integrators/metadata-vocabularies
 src/integrators/provenance

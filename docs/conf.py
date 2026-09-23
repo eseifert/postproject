@@ -7,17 +7,33 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "python" / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "_ext"))
 
 project = "PostProject"
 author = "PostProject contributors"
 release = "0.3.0-alpha.1"
 version = "0.3"
 
-extensions = ["myst_parser", "breathe", "sphinx.ext.autodoc"]
+extensions = [
+    "myst_parser",
+    "breathe",
+    "sphinx.ext.autodoc",
+    "sphinx_design",
+    "postproject_code",
+]
 myst_enable_extensions = ["colon_fence", "deflist"]
 source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
 root_doc = "index"
-exclude_patterns = ["_build", "src/SUMMARY.md", "src/index.md"]
+exclude_patterns = ["_build", "_ext", "examples", "src/SUMMARY.md", "src/index.md"]
+
+# Tested programs whose marked regions populate the code-variants tabs.
+postproject_code_examples = {
+    "c": "examples/c/guides.c",
+    "cpp": "examples/cpp/guides.cpp",
+    "python": "examples/python/guides.py",
+    "rust": "examples/rust/tests/guides.rs",
+    "cli": "examples/cli/guides.sh",
+}
 
 breathe_projects = {"PostProject": str(ROOT / "target" / "doxygen" / "xml")}
 breathe_default_project = "PostProject"
@@ -29,17 +45,65 @@ html_static_path = ["_static"]
 html_css_files = ["postproject.css"]
 templates_path = ["_templates"]
 html_extra_path = ["CNAME", "versions.json"]
+# Fonts and colors follow the landing page (https://www.postproject.org/). Its
+# dark palette is used as-is; light mode keeps the fonts with a paper tone and
+# a darker signal green that stays readable on a light background.
+FONT_STACK = "Inter, ui-sans-serif, system-ui, sans-serif"
 html_theme_options = {
     "source_repository": "https://github.com/eseifert/postproject/",
     "source_branch": "main",
     "source_directory": "docs/",
+    "light_css_variables": {
+        "font-stack": FONT_STACK,
+        "font-stack--headings": FONT_STACK,
+        "font-stack--monospace": "ui-monospace, SFMono-Regular, Menlo, monospace",
+        "color-foreground-primary": "#101211",
+        "color-foreground-secondary": "#4a4f4b",
+        "color-foreground-muted": "#6b706c",
+        "color-foreground-border": "#c9c6bc",
+        "color-background-primary": "#fbfaf6",
+        "color-background-secondary": "#f2f0e9",
+        "color-background-hover": "#e8e5dc",
+        "color-background-border": "#dcd9cf",
+        "color-brand-primary": "#101211",
+        "color-brand-content": "#3b6a00",
+        "color-brand-visited": "#3b6a00",
+        "color-highlighted-background": "#e6f5cc",
+        "color-inline-code-background": "#efece4",
+    },
+    "dark_css_variables": {
+        "font-stack": FONT_STACK,
+        "font-stack--headings": FONT_STACK,
+        "font-stack--monospace": "ui-monospace, SFMono-Regular, Menlo, monospace",
+        "color-foreground-primary": "#f5f1e8",
+        "color-foreground-secondary": "#b8b4aa",
+        "color-foreground-muted": "#8e8a82",
+        "color-foreground-border": "#4a514b",
+        "color-background-primary": "#101211",
+        "color-background-secondary": "#191c1a",
+        "color-background-hover": "#232724",
+        "color-background-border": "#343a35",
+        "color-brand-primary": "#f5f1e8",
+        "color-brand-content": "#b9ff66",
+        "color-brand-visited": "#b9ff66",
+        "color-highlighted-background": "#33412b",
+        "color-inline-code-background": "#191c1a",
+        "color-code-background": "#191c1a",
+    },
+}
+pygments_dark_style = "monokai"
+html_context = {
+    "landing_url": "https://www.postproject.org/",
+    "landing_title": "postproject.org",
 }
 html_sidebars = {
     "**": [
+        "landing-link.html",
         "sidebar/brand.html",
         "sidebar/search.html",
         "version-switcher.html",
         "language-switcher.html",
+        "code-language-switcher.html",
         "sidebar/scroll-start.html",
         "sidebar/navigation.html",
         "sidebar/scroll-end.html",

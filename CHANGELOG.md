@@ -7,6 +7,14 @@ All notable changes to PostProject will be documented here. The project uses
 
 ### Changed
 
+- Added a site-wide code-language selector to the documentation. Guide examples
+  now appear as synchronized C, C++, Python, Rust, and CLI tabs, with an explicit
+  note where a surface lacks an operation, and every example is extracted from
+  programs that CI compiles and runs against the installed package. New guides
+  cover creating a production, external identifiers, and media roots and
+  resolution; the other integrator guides are now language-neutral.
+- Matched the documentation theme to the project landing page's fonts and
+  colors and added a link back to it.
 - Replaced the mdBook-only documentation build with one versioned Sphinx site
   combining the guides, generated Doxygen C/C++ reference, Python autodoc, and
   links to matching rustdoc.

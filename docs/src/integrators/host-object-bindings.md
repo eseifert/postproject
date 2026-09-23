@@ -13,45 +13,20 @@ The supported object-kind tokens are `production`, `asset`, `representation`,
 Its project-controlled HTTPS namespace can point to documentation, but parsing
 and using a binding never performs a network request.
 
-Rust integrations can construct and parse the value with `HostObjectBinding`:
+Formatting and parsing are pure value operations available in every library
+surface. The example binds a representation, stores the text, and parses it
+back:
 
-```rust
-use std::str::FromStr;
-
-use postproject_core::{HostObjectBinding, ObjectRef};
-
-let binding = HostObjectBinding::new(
-    production_id,
-    ObjectRef::Representation(representation_id),
-)
-.expect("valid binding");
-let stored = binding.to_string();
-
-let reopened = HostObjectBinding::from_str(&stored).expect("valid stored binding");
-assert_eq!(reopened, binding);
+```{code-variants} host-binding
+:::{no-variant} cli
+The CLI does not format or parse host-object bindings. Use one of the library
+surfaces.
+:::
 ```
 
-The public C ABI exposes `pp_host_binding_format` and
-`pp_host_binding_parse`. A formatted string is caller-owned and must be
-released exactly once with `pp_host_binding_release`; parsed UUID and object
-reference values are copied into caller-owned output structs.
-
-C++ exposes the same operations as a copied value:
-
-```cpp
-postproject::HostObjectBinding binding{production.id(), asset_ref};
-const std::string stored = binding.toString();
-const auto reopened = postproject::HostObjectBinding::fromString(stored);
-```
-
-Python uses keyed formatting, consistent with its other collection-like reads:
-
-```python
-stored = production.host_bindings[asset_id]
-binding = production.host_bindings.parse(stored)
-assert binding.production_id == production.id
-assert binding.object == asset_id
-```
+A formatted C string is caller-owned and must be released exactly once with
+`pp_host_binding_release`; parsed UUID and object-reference values are copied
+into caller-owned output structs. The other surfaces return ordinary values.
 
 Parsing is deliberately strict: versions and object kinds must be known, UUIDs
 must use lowercase hyphenated canonical text, and extra fields are rejected. A

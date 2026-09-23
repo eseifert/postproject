@@ -681,6 +681,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "postproject-doc-examples"
+version = "0.3.0-alpha.1"
+dependencies = [
+ "postproject-core",
+ "postproject-media",
+ "postproject-storage-sqlite",
+ "tempfile",
+]
+
+[[package]]
 name = "postproject-ffi"
 version = "0.3.0-alpha.1"
 dependencies = [

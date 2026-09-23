@@ -1,60 +1,46 @@
 # Provenance integration
 
-The Rust domain API represents a completed operation with `Activity`,
-`ActivityInput`, and `ActivityOutput`. Each activity has a stable `ActivityId`
-and open-world `ActivityKind`; edges may carry an open-world `ActivityRole`.
+Record a completed operation, such as a transcode or render, as an *activity*
+that consumed input representations and produced output representations. Each
+activity has a stable ID and an open-world kind; each input and output edge may
+carry an open-world role.
 
-Construct an activity from existing representation IDs, then optionally attach:
+An activity can optionally carry:
 
 - start and finish timestamps;
 - a bounded tool name, version, and absolute URI;
 - a bounded agent name and/or external identifier;
-- external identifiers for the activity itself, such as render-job IDs;
-- typed metadata parameters using `ObjectRef::Activity(activity.id())`.
+- external identifiers for the activity itself, such as render-job IDs; and
+- typed [metadata](metadata-vocabularies.md) parameters that target the
+  activity.
 
-Stage the activity with `ProductionStoreTransaction::create_activity`. Activity,
-edges, metadata, and other mutations in that production transaction commit or roll
-back together. Every referenced representation must already exist in the
-transaction view. A duplicate activity returns `AlreadyExists`, an absent
-representation returns `NotFound`, and a generation cycle returns `Conflict`.
+## Record an activity
+
+The example records a render that consumed the original camera file and
+produced an image sequence, then queries the provenance graph from both ends:
+
+```{code-variants} provenance
+```
+
+The activity, its edges, and other mutations in the same transaction commit or
+roll back together. Every referenced representation must already exist in the
+transaction's view. A duplicate activity is rejected as already existing, an
+absent representation as not found, and an edge that would create a generation
+cycle as a conflict.
 
 ## Queries
 
-`ProductionRead` exposes domain-shaped reads:
+The graph can be read in four directions:
 
-- `activities()` returns every activity in stable identity order;
-- `activities_producing(representation_id)` finds producers;
-- `activities_consuming(representation_id)` finds consumers;
-- `ancestors(representation_id)` follows inputs transitively;
-- `descendants(representation_id)` follows outputs transitively.
+- activities *producing* a representation;
+- activities *consuming* a representation;
+- transitive *ancestors*, following inputs; and
+- transitive *descendants*, following outputs.
 
-Edges inside an activity are canonicalized by representation ID and role. Graph
-traversal returns unique representation IDs in stable order. A representation
-with no provenance has empty results; an unknown representation is an error.
-
-## Python
-
-The Python API uses immutable value objects for activity facts and keyed views
-for graph queries:
-
-```python
-from postproject import ActivityEdge, ActivitySpec, ToolIdentity
-
-with production.transaction() as transaction:
-    activity_id = transaction.create_activity(
-        ActivitySpec(
-            "org.postproject:transcode",
-            inputs=(ActivityEdge(source_id, "org.postproject:primary"),),
-            outputs=(ActivityEdge(proxy_id, "org.postproject:proxy"),),
-            tool=ToolIdentity("FFmpeg", "8.0", "https://ffmpeg.org/"),
-        )
-    )
-
-activity = next(item for item in production.activities if item.id == activity_id)
-assert production.activities_consuming[source_id] == (activity,)
-assert production.activities_producing[proxy_id] == (activity,)
-assert production.provenance_ancestors[proxy_id] == (source_id,)
-```
+All activities can also be listed in stable identity order. Edges inside an
+activity are canonicalized by representation ID and role, and traversal returns
+unique representation IDs in stable order. A representation without provenance
+has empty results; an unknown representation is an error.
 
 ## Mapping guidance
 

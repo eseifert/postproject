@@ -1,76 +1,47 @@
 # Integrator guide
 
-PostProject exposes a public C ABI with opaque handles. The C++17 wrapper is a
-RAII layer over that ABI, and installed consumers do not need Rust or Cargo.
-Until an explicit stability milestone, pin an exact release or commit and expect
+PostProject exposes one set of operations through several surfaces:
+
+- the **C ABI**, with opaque handles and caller-released result sets;
+- a header-only **C++17** RAII wrapper over that ABI;
+- a **Python** binding over the same installed ABI;
+- the **Rust** domain, storage, and media crates the ABI is built from; and
+- the demonstrator **CLI**, for scripts and integration experiments.
+
+Installed C, C++, and Python consumers do not need Rust or Cargo. Until an
+explicit stability milestone, pin an exact release or commit and expect
 coordinated API, ABI, schema, CLI, and binding changes.
 
-Start with [installing a release](installing-a-release.md) when embedding a
-published package without a Rust toolchain.
+The guides describe each operation once and show it in every surface. Pick a
+language with the tabs above any example or with the **Code** selector in the
+sidebar; the choice applies site-wide. Where a surface has no equivalent
+operation yet, its tab says so explicitly.
 
-Key integration rules:
+Start with [installing a release](installing-a-release.md), then
+[create a production and import media](first-production.md).
+
+## Integration rules
 
 - treat PostProject IDs as internal object identities, not industry IDs;
-- preserve external scheme/value text exactly;
+- preserve external scheme and value text exactly;
 - never choose an ambiguous relink candidate silently;
 - perform mutations through explicit transactions;
 - advance revision cursors only after processing a complete revision;
-- release owned C handles with their documented release function;
+- release every owned C handle with its documented release function;
 - do not infer “revision”, “variant”, or “alternative” relationships from a
   processing activity.
 
-An identifier attachment in C uses a typed object reference and remains pending
-until commit:
+## Guides
 
-```c
-pp_object_ref_t target = {PP_OBJECT_ASSET, asset_id};
-pp_transaction_add_external_identifier(
-    tx, &target, "com.example.camera.serial", "A-0007", NULL, &error);
-pp_transaction_commit(tx, &error);
-```
+- [Create a production and import media](first-production.md)
+- [External identifiers](external-identifiers.md)
+- [Media roots and resolution](media-resolution.md)
+- [Compound media](compound-media.md)
+- [Metadata vocabularies](metadata-vocabularies.md)
+- [Provenance](provenance.md)
+- [Revision feed](revision-feed.md)
+- [Host-object bindings](host-object-bindings.md)
 
-The equivalent C++ wrapper copies values out of the C result-set handle:
-
-```cpp
-postproject::ObjectRef target{postproject::ObjectKind::asset, asset_id};
-tx.addExternalIdentifier(
-    target, {"com.example.camera.serial", "A-0007", std::nullopt});
-tx.commit();
-auto identifiers = production.externalIdentifiers(target);
-```
-
-Python uses the typed ID itself as the object reference:
-
-```python
-from postproject import ExternalIdentifier
-
-identifier = ExternalIdentifier(
-    "com.example.camera.serial", "A-0007"
-)
-with production.transaction() as transaction:
-    transaction.add_external_identifier(asset_id, identifier)
-
-identifiers = production.external_identifiers[asset_id]
-matches = production.objects_by_external_identifier[
-    identifier.scheme, identifier.value
-]
-```
-
-The demonstrator CLI exposes the same media-root and locator lifecycle for
-integration experiments:
-
-```sh
-postproject root list production.pproj
-postproject root disable production.pproj ROOT_ID
-postproject root enable production.pproj ROOT_ID
-postproject root remove production.pproj ROOT_ID
-postproject locator retire production.pproj LOCATOR_ID
-```
-
-Each mutation is transactional and appears in the semantic revision feed. Pass
-`--json` for stable structured output.
-
-The [metadata guide](metadata-vocabularies.md), [provenance
-guide](provenance.md), and [revision feed guide](revision-feed.md) document the
-implemented cross-language surfaces. The root README contains the shortest
-native build and C example.
+Media roots and locators can also be listed, disabled, re-enabled, removed, and
+retired. Each of these mutations is transactional and appears in the revision
+feed.

@@ -5,6 +5,7 @@ members = [
   "crates/postproject-ffi",
   "crates/postproject-media",
   "crates/postproject-storage-sqlite",
+  "docs/examples/rust",
 ]
 resolver = "3"
 exclude = ["fuzz"]

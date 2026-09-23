@@ -49,9 +49,9 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: python -m pip install --disable-pip-version-check -e "./python[dev]"
-      - run: ruff check python/src python/tests examples/python
-      - run: ruff format --check python/src python/tests examples/python
-      - run: ty check --project python python/src python/tests examples/python
+      - run: ruff check python/src python/tests examples/python docs/examples/python docs/_ext
+      - run: ruff format --check python/src python/tests examples/python docs/examples/python docs/_ext
+      - run: ty check --project python python/src python/tests examples/python docs/examples/python
       - run: python tools/check_versions.py
       - run: ruff check tools/check_versions.py tools/check_docs_coverage.py tools/test_check_docs_coverage.py tools/normalize_doxygen_xml.py tools/test_normalize_doxygen_xml.py
       - run: ruff format --check tools/check_versions.py tools/check_docs_coverage.py tools/test_check_docs_coverage.py tools/normalize_doxygen_xml.py tools/test_normalize_doxygen_xml.py
@@ -224,6 +224,14 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build target/cpp-consumer --config Release --parallel
       - run: ctest --test-dir target/cpp-consumer --build-config Release --output-on-failure
+      - name: Configure guide examples without Cargo
+        shell: bash
+        run: >-
+          cmake -S docs/examples -B target/doc-examples
+          -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/target/install"
+          -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build target/doc-examples --config Release --parallel
+      - run: ctest --test-dir target/doc-examples --build-config Release --output-on-failure
       - name: Verify native package
         shell: bash
         env:

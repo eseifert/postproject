@@ -45,6 +45,19 @@ is uploaded as a CI artifact. The same job builds and runs the C and C++
 quickstarts from their installed locations and runs the installed Python
 quickstart against the packaged media fixture.
 
+Every code example in the guides is an extract of a program that CI runs. The
+`code-variants` Sphinx directive reads `[name]` ... `[/name]` comment regions
+from `docs/examples/{c,cpp,python,cli}` and from the
+`postproject-doc-examples` workspace test, and the strict documentation build
+fails when an example is neither present nor explicitly marked unavailable for
+a surface. The Rust program runs under `cargo test --workspace`. The native
+package job configures `docs/examples` against the installed prefix and runs one
+shared scenario per surface through CTest: create a production, import media,
+attach an identifier and metadata, move the media and confirm the relocated
+candidate, add an image sequence, record provenance, drain the revision feed,
+and round-trip a host binding. The CLI script needs `bash` and `jq` and is
+skipped on Windows.
+
 The native sanitizer job rebuilds both consumers with AddressSanitizer and
 UndefinedBehaviorSanitizer, enables leak detection, and runs their real lifecycle
 and transaction workflows against the release shared library.

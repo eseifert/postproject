@@ -6,18 +6,35 @@ Use a standard namespace when a standard already defines the concept; use a
 stable application-owned namespace only for genuinely application-specific
 data.
 
-The core Rust API exposes `VocabularyId`, `PropertyId`, `MetadataProperty`,
-`MetadataValue`, `MetadataField`, and `MetadataAssertion`. The SQLite production
-API supports:
+## Add and read metadata
 
-- appending a repeated value;
-- atomically replacing every ordered value of a property;
-- removing a property;
-- reading one property or every assertion on a target;
-- finding every assertion with an exact vocabulary/property pair.
+A metadata assertion attaches a typed value to a production, asset,
+representation, resource, or activity under an exact vocabulary and property.
+Every surface can:
+
+- append a value, so a property can hold several ordered values;
+- remove every value of a property from a target;
+- read every assertion on a target; and
+- find every assertion that uses an exact vocabulary and property.
+
+The Rust storage API can additionally replace every ordered value of a property
+atomically. The example adds a language-tagged title to an asset and reads it
+back from both directions:
+
+```{code-variants} metadata
+```
 
 All writes belong to an explicit production transaction. A failed operation or
 rollback leaves no partial assertions.
+
+## Typed values
+
+Values are typed rather than stringly encoded: plain and language-tagged text,
+signed and unsigned 64-bit integers, exact decimals and rationals, booleans,
+timestamps, URIs, opaque bytes, typed object references, and recursively nested
+ordered lists and named-field structures. Every surface preserves every value
+kind on read. In C, recursive input handles copy their children, so callers can
+release intermediate list and structure values immediately after construction.
 
 ## CLI input and inspection
 
@@ -63,30 +80,6 @@ JSON output is explicitly tagged with value types. Decimal coefficients are
 strings so JSON consumers do not lose precision. Binary values use hexadecimal
 text. Lists and structured fields are recursive and ordered.
 
-Python uses typed immutable values and keyed reads:
-
-```python
-from postproject import MetadataLanguageString, MetadataProperty
-
-title = MetadataProperty(
-    "https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json",
-    "title",
-)
-with production.transaction() as transaction:
-    transaction.add_metadata(
-        asset_id, title, MetadataLanguageString("Interview", "en-US")
-    )
-
-assertions = production.metadata[asset_id]
-matching = production.metadata_by_property[title]
-```
-
-The decoder preserves all current ABI value kinds, including exact decimals
-and rationals, bytes, ordered lists and structures, and typed object references.
-The same typed values can be written through C, C++, Python, and the CLI;
-recursive input handles copy their children, so callers can release intermediate
-list and structure values immediately after construction.
-
 ## Technical inspection
 
 The Rust media crate defines a `MediaInspector` adapter boundary and a bounded
@@ -128,11 +121,12 @@ keeps unknown and application-specific metadata fully round-trippable.
 
 ## Availability
 
-The typed domain model, optional vocabulary registry, SQLite persistence, Rust
-production API, C traversal, typed CLI surface, and Python traversal are
-implemented. Activity metadata is writable after the activity is created in
-the same or an earlier transaction. The C++ typed wrapper and general typed
-writes through the C ABI and Python remain outstanding.
+The typed domain model, optional vocabulary registry, and SQLite persistence
+back every surface. C, Python, Rust, and the CLI read and write every value
+kind. The C++ wrapper writes every value kind but does not yet wrap metadata
+reads; C++ integrations call the C read functions directly. Activity metadata
+is writable after the activity is created in the same or an earlier
+transaction.
 
 See [standards boundaries](../concepts/standards-boundaries.md) and the
 [mapping matrix](../reference/standards-mapping-matrix.md) for the intended

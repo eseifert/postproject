@@ -1,1 +1,84 @@
 /* Reserved for small project-specific adjustments to the Furo theme. */
+
+/* Code-language tabs: keep long listings compact and scrollable. */
+.pp-code-variants.sd-tab-set {
+  margin: 1rem 0;
+}
+
+.pp-code-variants .sd-tab-content {
+  padding-top: 0;
+}
+
+.pp-code-variants .sd-tab-content > div[class*="highlight-"] {
+  margin: 0;
+}
+
+/* Explicit "no equivalent operation" state for one language. */
+.pp-code-variants .sd-tab-content > .pp-no-variant {
+  margin: 0.5rem 0;
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid var(--color-foreground-border);
+  background: var(--color-background-secondary);
+  color: var(--color-foreground-secondary);
+  font-size: var(--font-size--small);
+}
+
+.pp-code-variants .pp-no-variant > p:last-child {
+  margin-bottom: 0;
+}
+
+/* Link from the documentation back to the project landing page. */
+.pp-landing-link {
+  display: block;
+  padding: 0.75rem var(--sidebar-item-spacing-horizontal) 0;
+  color: var(--color-foreground-secondary);
+  font-size: var(--font-size--small);
+  text-decoration: none;
+}
+
+.pp-landing-link:hover {
+  color: var(--color-brand-content);
+}
+
+/* Landing-page typography: tight wordmark and headings, monospace eyebrows. */
+.sidebar-brand-text {
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.035em;
+}
+
+h1 {
+  font-weight: 800;
+}
+
+.sidebar-tree .caption,
+.toc-title {
+  color: var(--color-brand-content);
+  font: 700 0.72rem/1.2 var(--font-stack--monospace);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Tabs pick up the signal accent. */
+.pp-code-variants {
+  --sd-color-tabs-label-active: var(--color-brand-content);
+  --sd-color-tabs-underline-active: var(--color-brand-content);
+  --sd-color-tabs-label-hover: var(--color-foreground-primary);
+  --sd-color-tabs-underline-hover: var(--color-foreground-border);
+  --sd-color-tabs-label-inactive: var(--color-foreground-secondary);
+  --sd-color-tabs-underline: var(--color-background-border);
+}
+
+/* Sidebar selectors reuse the search-box frame but not its magnifier icon. */
+.sidebar-search-container:has(> select)::before {
+  display: none;
+}
+
+.sidebar-search-container > select.sidebar-search {
+  padding-left: var(--sidebar-item-spacing-horizontal);
+}
