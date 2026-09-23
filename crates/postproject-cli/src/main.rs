@@ -1217,7 +1217,7 @@ fn root_remove(args: &RootMutationArgs, json: bool) -> Result<()> {
 fn root_view(root: &MediaRoot) -> RootView {
     RootView {
         id: root.id().to_string(),
-        uri: root.uri().to_owned(),
+        uri: root.name().to_owned(),
         label: root.label().map(str::to_owned),
         priority: root.priority(),
         enabled: root.is_enabled(),

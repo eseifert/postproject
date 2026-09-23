@@ -198,7 +198,7 @@ fn journal_decodes_every_non_import_event_kind() {
     }
 
     let root_id = MediaRootId::new();
-    let root = MediaRoot::new(root_id, "file:///media", None, 0, true).expect("valid root");
+    let root = MediaRoot::new(root_id, "media", None, None, 0, true).expect("valid root");
     let identifier = ExternalIdentifier::new(
         IdentifierScheme::new("com.example.asset").expect("valid scheme"),
         "A001",

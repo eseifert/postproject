@@ -249,7 +249,7 @@ impl TryFrom<&MediaRoot> for AbiMediaRoot {
     fn try_from(root: &MediaRoot) -> Result<Self, Self::Error> {
         Ok(Self {
             id: root.id(),
-            uri: exact_cstring(root.uri(), "media root URI")?,
+            uri: exact_cstring(root.name(), "media root name")?,
             label: root
                 .label()
                 .map(|value| exact_cstring(value, "media root label"))

@@ -9,6 +9,8 @@ All notable changes to PostProject will be documented here. The project uses
 
 - Advanced the development version to `0.3.0-alpha.1` and introduced a named
   integration-preview subset that remains compatible within the 0.3.x series.
+- Replaced absolute media-root identity with unique logical names in SQLite
+  schema 6. Migrated roots retain their former URI as a lossless legacy fallback.
 - Raised the Python binding's minimum supported version to Python 3.11.
 - Renamed the durable root container from `Project` to `Production` across the
   domain, SQLite schema, CLI, C ABI version 8, C++ wrapper, and Python binding;

@@ -191,8 +191,14 @@ impl MediaResolver {
         let mut roots: Vec<_> = roots.iter().filter(|root| root.is_enabled()).collect();
         roots.sort_by_key(|root| (root.priority(), root.id()));
         for root in roots {
-            let root_path = file_uri_to_path(root.uri()).map_err(|error| {
-                format!("media root {} is not a local file URI: {error}", root.uri())
+            let Some(root_uri) = root.legacy_uri() else {
+                return Err(format!("media root {} is unmapped", root.name()));
+            };
+            let root_path = file_uri_to_path(root_uri).map_err(|error| {
+                format!(
+                    "media root {} is not a local file URI: {error}",
+                    root.name()
+                )
             })?;
             for entry in WalkDir::new(&root_path)
                 .follow_links(false)
@@ -224,7 +230,7 @@ impl MediaResolver {
                 let uri = canonical_file_uri(entry.path()).map_err(|error| error.to_string())?;
                 let mut evidence = vec![ResolutionEvidence::new(
                     EvidenceKind::MediaRootRelation,
-                    Some(root.uri().to_owned()),
+                    Some(root.name().to_owned()),
                 )];
                 if facts.is_some() {
                     evidence.push(ResolutionEvidence::new(EvidenceKind::FileSizeMatch, None));

@@ -1246,7 +1246,10 @@ fn load_production(connection: &Connection) -> Result<Production> {
 
 fn load_media_roots(connection: &Connection) -> Result<Vec<MediaRoot>> {
     let mut statement = connection
-        .prepare("SELECT id, uri, label, priority, enabled FROM media_roots ORDER BY priority, id")
+        .prepare(
+            "SELECT id, name, label, legacy_uri, priority, enabled
+             FROM media_roots ORDER BY priority, id",
+        )
         .map_err(sqlite_error("prepare media-root query"))?;
     let rows = statement
         .query_map([], |row| {
@@ -1254,18 +1257,20 @@ fn load_media_roots(connection: &Connection) -> Result<Vec<MediaRoot>> {
                 row.get::<_, Vec<u8>>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
-                row.get::<_, i32>(3)?,
-                row.get::<_, bool>(4)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, i32>(4)?,
+                row.get::<_, bool>(5)?,
             ))
         })
         .map_err(sqlite_error("query media roots"))?;
     rows.map(|row| {
-        let (id, uri, label, priority, enabled) =
+        let (id, name, label, legacy_uri, priority, enabled) =
             row.map_err(sqlite_error("read media-root row"))?;
         MediaRoot::new(
             MediaRootId::from_bytes(id_bytes(id, "media root")?),
-            uri,
+            name,
             label,
+            legacy_uri,
             priority,
             enabled,
         )

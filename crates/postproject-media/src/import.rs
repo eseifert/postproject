@@ -323,10 +323,13 @@ pub fn prepare_media_root(
             format!("media root is not a directory: {}", path.display()),
         ));
     }
+    let id = MediaRootId::new();
+    let name = label.clone().unwrap_or_else(|| format!("legacy-{}", id));
     MediaRoot::new(
-        MediaRootId::new(),
-        canonical_file_uri(path)?,
+        id,
+        name,
         label,
+        Some(canonical_file_uri(path)?),
         priority,
         true,
     )

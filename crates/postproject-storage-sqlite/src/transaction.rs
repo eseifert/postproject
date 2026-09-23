@@ -263,19 +263,20 @@ impl<'production> SqliteTransaction<'production> {
     /// # Errors
     ///
     /// Returns [`ErrorKind::Conflict`] if the transaction is closed,
-    /// [`ErrorKind::AlreadyExists`] for a duplicate identity or URI, or
+    /// [`ErrorKind::AlreadyExists`] for a duplicate identity or name, or
     /// [`ErrorKind::Storage`] for other persistence failures.
     pub fn add_media_root(&mut self, root: MediaRoot) -> Result<()> {
         let media_root_id = root.id();
         let transaction = self.open_transaction()?;
         transaction
             .execute(
-                "INSERT INTO media_roots (id, uri, label, priority, enabled)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT INTO media_roots (id, name, label, legacy_uri, priority, enabled)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     root.id().as_bytes().as_slice(),
-                    root.uri(),
+                    root.name(),
                     root.label(),
+                    root.legacy_uri(),
                     root.priority(),
                     root.is_enabled(),
                 ],
@@ -312,8 +313,9 @@ impl<'production> SqliteTransaction<'production> {
         let current = &self.pending_roots[index];
         let replacement = MediaRoot::new(
             current.id(),
-            current.uri(),
+            current.name(),
             current.label().map(str::to_owned),
+            current.legacy_uri().map(str::to_owned),
             current.priority(),
             enabled,
         )?;

@@ -11,7 +11,9 @@ from an untrusted production file while leaving ample room for production metada
 
 The current development schema stores a singleton production record plus assets,
 representations, content structures, resources, memberships, locators, typed
-fingerprints, media roots, metadata assertions, and external identifiers.
+fingerprints, logically named media roots, metadata assertions, and external
+identifiers. Machine-local root mappings are intentionally not production rows;
+schema 6 retains migrated absolute URIs only as transitional legacy fallbacks.
 Image-sequence descriptors and their known missing frames are stored compactly;
 a regular sequence does not require one resource row per frame. Public
 identities are 16-byte UUID values; SQLite row numbers are never exposed.

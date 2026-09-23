@@ -397,30 +397,49 @@ impl OriginalMediaImport {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MediaRoot {
     id: MediaRootId,
-    uri: String,
+    name: String,
     label: Option<String>,
+    legacy_uri: Option<String>,
     priority: i32,
     enabled: bool,
 }
 
 impl MediaRoot {
-    /// Creates a configured media root with a syntactically valid absolute URI.
+    /// Creates a configured logical media root.
     ///
     /// # Errors
     ///
-    /// Returns [`ErrorKind::InvalidArgument`] when `uri` is invalid or relative.
+    /// Returns [`ErrorKind::InvalidArgument`] when `name` is not a bounded,
+    /// portable root name or when `legacy_uri` is invalid or relative.
     pub fn new(
         id: MediaRootId,
-        uri: impl Into<String>,
+        name: impl Into<String>,
         label: Option<String>,
+        legacy_uri: Option<String>,
         priority: i32,
         enabled: bool,
     ) -> Result<Self> {
-        let uri = normalize_uri(uri, "media-root")?;
+        let name = name.into();
+        if name.is_empty()
+            || name.len() > 128
+            || name.trim() != name
+            || name
+                .chars()
+                .any(|character| character.is_control() || matches!(character, '/' | '\\'))
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "media-root name must be 1-128 UTF-8 bytes without surrounding whitespace, control characters, or path separators",
+            ));
+        }
+        let legacy_uri = legacy_uri
+            .map(|uri| normalize_uri(uri, "legacy media-root"))
+            .transpose()?;
         Ok(Self {
             id,
-            uri,
+            name,
             label,
+            legacy_uri,
             priority,
             enabled,
         })
@@ -432,16 +451,24 @@ impl MediaRoot {
         self.id
     }
 
-    /// Returns the UTF-8 root URI.
+    /// Returns the production-portable logical root name.
     #[must_use]
-    pub fn uri(&self) -> &str {
-        &self.uri
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Returns the optional user-facing label.
     #[must_use]
     pub fn label(&self) -> Option<&str> {
         self.label.as_deref()
+    }
+
+    /// Returns the absolute URI retained while migrating a pre-version-6 root.
+    ///
+    /// New roots do not carry this machine-local fallback.
+    #[must_use]
+    pub fn legacy_uri(&self) -> Option<&str> {
+        self.legacy_uri.as_deref()
     }
 
     /// Returns the resolver priority; lower values are considered first.
@@ -463,11 +490,11 @@ mod tests {
     use crate::{LocatorAvailability, LocatorId, ResourceId};
 
     #[test]
-    fn rejects_empty_root_uris() {
-        let root = MediaRoot::new(MediaRootId::new(), "", None, 0, true);
+    fn rejects_invalid_root_names() {
+        let root = MediaRoot::new(MediaRootId::new(), "path/name", None, None, 0, true);
 
         assert_eq!(
-            root.expect_err("empty URI must fail").kind(),
+            root.expect_err("path-shaped name must fail").kind(),
             ErrorKind::InvalidArgument
         );
     }
@@ -479,9 +506,9 @@ mod tests {
         let mut production =
             Production::new(ProductionId::new(), 1, Timestamp::from_unix_micros(0), None);
         production.set_media_roots(vec![
-            MediaRoot::new(second_id, "file:///b", None, 10, true).expect("valid root"),
-            MediaRoot::new(first_id, "file:///a", None, 10, true).expect("valid root"),
-            MediaRoot::new(MediaRootId::new(), "file:///top", None, 0, true).expect("valid root"),
+            MediaRoot::new(second_id, "second", None, None, 10, true).expect("valid root"),
+            MediaRoot::new(first_id, "first", None, None, 10, true).expect("valid root"),
+            MediaRoot::new(MediaRootId::new(), "top", None, None, 0, true).expect("valid root"),
         ]);
 
         assert_eq!(production.media_roots()[0].priority(), 0);

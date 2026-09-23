@@ -4,7 +4,7 @@ use postproject_core::{Error, ErrorKind, Result, Timestamp};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 /// The newest schema understood by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 5;
+pub const CURRENT_SCHEMA_VERSION: u32 = 6;
 
 struct Migration {
     version: u32,
@@ -31,6 +31,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 5,
         sql: include_str!("migrations/005_lifecycle_events.sql"),
+    },
+    Migration {
+        version: 6,
+        sql: include_str!("migrations/006_portable_media_roots.sql"),
     },
 ];
 
@@ -129,7 +133,7 @@ mod tests {
             .expect("query migration history")
             .collect::<std::result::Result<_, _>>()
             .expect("read migration history");
-        assert_eq!(applied, [1, 2, 3, 4, 5]);
+        assert_eq!(applied, [1, 2, 3, 4, 5, 6]);
         for table in [
             "productions",
             "assets",
@@ -173,6 +177,13 @@ mod tests {
                 [],
             )
             .expect("insert version-one production");
+        connection
+            .execute(
+                "INSERT INTO media_roots (id, uri, label, priority, enabled)
+                 VALUES (?1, 'file:///mnt/media', 'Camera originals', 5, 1)",
+                [vec![7_u8; 16]],
+            )
+            .expect("insert absolute media root");
 
         migrate(&mut connection).expect("migrate existing production");
 
@@ -182,6 +193,21 @@ mod tests {
             })
             .expect("read production version");
         assert_eq!(production_version, CURRENT_SCHEMA_VERSION);
+        let migrated_root: (String, Option<String>, Option<String>) = connection
+            .query_row(
+                "SELECT name, label, legacy_uri FROM media_roots",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("read migrated media root");
+        assert_eq!(
+            migrated_root,
+            (
+                "legacy-07070707070707070707070707070707".to_owned(),
+                Some("Camera originals".to_owned()),
+                Some("file:///mnt/media".to_owned()),
+            )
+        );
     }
 
     #[test]
