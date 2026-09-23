@@ -53,18 +53,21 @@ jobs:
             link_library: libpostproject.so
             static_library: libpostproject.a
             runtime_library: ""
+            cli_executable: postproject
             artifact: linux-x86_64
             format: tar.gz
           - os: macos-latest
             link_library: libpostproject.dylib
             static_library: libpostproject.a
             runtime_library: ""
+            cli_executable: postproject
             artifact: macos-native
             format: tar.gz
           - os: windows-latest
             link_library: postproject.dll.lib
             static_library: postproject.lib
             runtime_library: postproject.dll
+            cli_executable: postproject.exe
             artifact: windows-x86_64
             format: zip
     runs-on: ${{ matrix.os }}
@@ -73,18 +76,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked -p postproject-ffi
+      - run: cargo build --release --locked -p postproject-cli
       - name: Install native package
         shell: bash
         env:
           LINK_LIBRARY: ${{ matrix.link_library }}
           STATIC_LIBRARY: ${{ matrix.static_library }}
           RUNTIME_LIBRARY: ${{ matrix.runtime_library }}
+          CLI_EXECUTABLE: ${{ matrix.cli_executable }}
         run: |
           package_args=(
             -S .
             -B target/release-package
             "-DPOSTPROJECT_LIBRARY=$GITHUB_WORKSPACE/target/release/$LINK_LIBRARY"
             "-DPOSTPROJECT_STATIC_LIBRARY=$GITHUB_WORKSPACE/target/release/$STATIC_LIBRARY"
+            "-DPOSTPROJECT_CLI_EXECUTABLE=$GITHUB_WORKSPACE/target/release/$CLI_EXECUTABLE"
             "-DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/target/install"
             -DCMAKE_BUILD_TYPE=Release
           )
