@@ -57,6 +57,8 @@ All notable changes to PostProject will be documented here. The project uses
 
 ### Added
 
+- Read-only media inventory with machine-inspectable categories, bounded root
+  traversal, a disposable versioned sidecar cache, and CLI JSON output.
 - Machine-local mappings from portable root names to local directories, with
   explicit unmapped/unavailable evidence and continued scanning of usable roots.
 - A tag-triggered GitHub release workflow publishing checksummed source,

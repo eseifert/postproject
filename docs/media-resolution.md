@@ -47,9 +47,17 @@ package members produce diagnostics without reducing availability. Known
 missing image-sequence frames make an otherwise online sequence `Partial`, with
 the exact frames retained in the diagnostic.
 
-Current scans are intentionally uncached. Overlapping roots are de-duplicated by
-canonical file URI, but each resolve operation walks enabled roots afresh. A later
-filesystem index can replace discovery without changing result semantics.
+The inventory service scans every usable configured root without mutating the
+production and reports known-online, partial, missing, new, changed, duplicate,
+ambiguous-relink, unmapped-root, and unavailable-root observations. Results and
+work counters are deterministically ordered for host applications and tests.
+
+An optional JSON sidecar caches file size, modification time, and computed
+fingerprints. The cache is versioned, bounded to 64 MiB, tied to one production
+identity and exact root mapping, and lives outside the `.pproj` file. Missing,
+stale, incompatible, or corrupt caches are discarded and rebuilt; deleting the
+cache cannot change inventory semantics. The cache is an acceleration structure,
+not durable production data.
 
 Rust callers receive `ResourceResolution` values and aggregate them into a
 `RepresentationResolution`. The CLI emits one representation result containing

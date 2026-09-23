@@ -18,3 +18,9 @@ A production file stores identity, representation structure, resource locators,
 fingerprint evidence, and production metadata. PostProject does not upload this
 data or contact identifier registries. There is no network service in the
 current release.
+
+Applications can also run a read-only inventory across machine-local root
+mappings. Inventory distinguishes media already online from partial or missing
+representations, changed files, new media, duplicate or ambiguous relink
+candidates, and roots that are unmapped or unavailable. A disposable sidecar
+cache can accelerate repeated scans without changing the production file.
