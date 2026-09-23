@@ -5,6 +5,8 @@ All notable changes to PostProject will be documented here. The project uses
 
 ## Unreleased
 
+## 0.3.0-alpha.2 - 2026-09-24
+
 ### Changed
 
 - Added a site-wide code-language selector to the documentation. Guide examples
@@ -13,6 +15,13 @@ All notable changes to PostProject will be documented here. The project uses
   programs that CI compiles and runs against the installed package. New guides
   cover creating a production, external identifiers, and media roots and
   resolution; the other integrator guides are now language-neutral.
+- Published the complete Iteration 3 documentation under both its immutable
+  release path and `latest`, and marked alpha GitHub releases as prereleases.
+
+## 0.3.0-alpha.1 - 2026-09-23
+
+### Changed
+
 - Matched the documentation theme to the project landing page's fonts and
   colors and added a link back to it.
 - Replaced the mdBook-only documentation build with one versioned Sphinx site
