@@ -31,8 +31,15 @@ fn fake_probe(directory: &Path, stdout: &str, exit_code: i32) -> PathBuf {
 
 #[cfg(windows)]
 fn fake_probe(directory: &Path, stdout: &str, exit_code: i32) -> PathBuf {
+    // `echo` would split multi-line output into commands and interpret
+    // metacharacters, so the batch file replays the payload from a file.
+    let output = directory.join("ffprobe-fake.out");
+    fs::write(&output, stdout).expect("write fake ffprobe output");
     let path = directory.join("ffprobe-fake.cmd");
-    let script = format!("@echo off\r\necho {stdout}\r\nexit /b {exit_code}\r\n");
+    let script = format!(
+        "@echo off\r\ntype \"{}\"\r\nexit /b {exit_code}\r\n",
+        output.display()
+    );
     fs::write(&path, script).expect("write fake ffprobe");
     path
 }

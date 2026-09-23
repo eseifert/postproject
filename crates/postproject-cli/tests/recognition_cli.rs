@@ -19,8 +19,13 @@ fn fake_probe(directory: &Path, output: &str) -> std::path::PathBuf {
 
 #[cfg(windows)]
 fn fake_probe(directory: &Path, output: &str) -> std::path::PathBuf {
+    // `echo` would split multi-line output into commands and interpret
+    // metacharacters, so the batch file replays the payload from a file.
+    let payload = directory.join("ffprobe-fake.out");
+    fs::write(&payload, output).expect("write fake ffprobe output");
     let path = directory.join("ffprobe-fake.cmd");
-    fs::write(&path, format!("@echo off\r\necho {output}\r\n")).expect("write fake ffprobe");
+    let script = format!("@echo off\r\ntype \"{}\"\r\n", payload.display());
+    fs::write(&path, script).expect("write fake ffprobe");
     path
 }
 
