@@ -4,9 +4,9 @@ PostProject is application-neutral infrastructure for durable media identity,
 compound representations, storage resources and locators, metadata, provenance,
 and production-local change tracking in professional post-production software.
 
-> **Status:** early `0.2.0-alpha.1` development. No API, ABI, schema, CLI, or
-> binding compatibility is promised before an explicit stability milestone.
-> Experimental consumers should pin an exact release or commit.
+> **Status:** early `0.3.0-alpha.1` development. The named integration-preview
+> subset stays compatible within the 0.3.x series; other APIs remain
+> experimental. Consumers should pin a release series or exact commit.
 
 PostProject is standards-aware infrastructure, not a new media ontology. It
 preserves external identifiers and vocabulary terms and is designed to map to
