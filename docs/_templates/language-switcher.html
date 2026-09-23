@@ -1,0 +1,16 @@
+<label class="sidebar-search-container" for="postproject-language">
+  <span class="visually-hidden">Documentation language</span>
+  <select id="postproject-language" class="sidebar-search" aria-label="Documentation language">
+    <option value="en">English</option>
+  </select>
+</label>
+<script>
+  (() => {
+    const key = "postproject-doc-language";
+    const selector = document.getElementById("postproject-language");
+    selector.value = window.localStorage.getItem(key) || "en";
+    selector.addEventListener("change", () => {
+      window.localStorage.setItem(key, selector.value);
+    });
+  })();
+</script>

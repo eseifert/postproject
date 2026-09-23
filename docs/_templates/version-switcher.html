@@ -1,0 +1,31 @@
+<label class="sidebar-search-container" for="postproject-version">
+  <span class="visually-hidden">Documentation version</span>
+  <select id="postproject-version" class="sidebar-search" aria-label="Documentation version">
+    <option value="">Loading versions…</option>
+  </select>
+</label>
+<script>
+  (() => {
+    const key = "postproject-doc-version";
+    const selector = document.getElementById("postproject-version");
+    fetch("/versions.json")
+      .then((response) => response.json())
+      .then((versions) => {
+        const current = versions.find((item) =>
+          item.version !== "main" &&
+          window.location.pathname.startsWith(`/${item.version}/`)
+        ) || versions.find((item) => item.version === "main");
+        selector.replaceChildren(...versions.map((item) => {
+          const option = document.createElement("option");
+          option.value = item.url;
+          option.textContent = item.title;
+          option.selected = item.version === current?.version;
+          return option;
+        }));
+        selector.addEventListener("change", () => {
+          window.localStorage.setItem(key, selector.value);
+          window.location.assign(selector.value);
+        });
+      });
+  })();
+</script>
