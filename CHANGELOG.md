@@ -9,6 +9,10 @@ Development version: `0.4.0-alpha.1`.
 
 ### Added
 
+- Added first-class, typed dependency observations with exact authored
+  references, floating or pinned targets, complete-set replacement, semantic
+  revision events, and SQLite schema 8 foundations for bounded activity-input
+  dependency snapshots.
 - Added SQLite schema 7 foundations for explicit, journaled fingerprint
   observations with retained history, representation recomputation markers,
   and storage-captured activity input/output snapshots. Existing activities

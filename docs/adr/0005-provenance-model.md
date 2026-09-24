@@ -26,6 +26,17 @@ role; persistence captures current state inside the activity transaction.
 Pre-schema-7 edges retain an absent snapshot rather than receiving fabricated
 history. See ADR 0021.
 
+Schema version 8 extends input snapshots with the required live-dependency
+closure and its resolved representations. These dependency paths are evidence
+about what an activity consumed, not additional provenance edges: the live
+relationship remains independently replaceable and does not make its source
+representation stale. See ADR 0024.
+
+Persisted jobs are requests for work and do not become provenance activities
+while queued, claimed, or failed. Atomic successful completion records the
+completed activity and outputs; cancellation and failure record no fabricated
+PROV fact. See ADR 0023.
+
 SQLite schema version 2 stores activities and their edges. Creation and cycle
 validation occur inside the surrounding production transaction. Read APIs return
 deterministically ordered activities and support producing/consuming lookup plus

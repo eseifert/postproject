@@ -46,6 +46,14 @@ staleness; outputs distinguish an upstream change from overwriting the generated
 artifact itself. Snapshot data supplied on an in-memory activity specification
 is ignored and replaced by storage state.
 
+Schema version 8 also captures the required dependency closure of each input,
+including the typed path, resolved representation, and current fingerprint
+domains. Capture is bounded to 64 edges of depth and 1,000 distinct dependency
+representations. Dirty dependency observations, unresolved floating targets,
+and reached bounds are stored explicitly. Existing activities retain an absent
+dependency snapshot; new inputs retain a present marker even when the captured
+closure is empty. See ADR 0024.
+
 ## Standards impact
 
 An edge snapshot maps conceptually to a specialized PROV Entity describing the
@@ -69,4 +77,5 @@ open through a forward migration; their existing activities have absent
 snapshots and therefore evaluate as indeterminate rather than fresh.
 
 History increases storage use only when content is explicitly re-observed.
+Dependency snapshots add bounded path duplication at activity creation.
 Fingerprint algorithms remain open-world and their byte values remain opaque.

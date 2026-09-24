@@ -31,6 +31,12 @@ knowledge state is computed on demand and is never stored on the representation:
 - `diverged` means the artifact's own current fingerprint differs from its
   output snapshot.
 
+Required dependency evidence captured on each activity input participates in
+the same result. A changed dependency fingerprint or required path is stale. A
+dirty dependency set, unresolved floating target, absent legacy closure, or
+truncated capture is indeterminate. Reasons contain the typed dependency path;
+the live dependency source itself is not classified as stale. See ADR 0024.
+
 Every non-current result carries structured reasons naming the activity edge,
 representation, fingerprint domain, captured and current values, upstream
 state, or traversal limit as applicable. Evaluation reads production knowledge
