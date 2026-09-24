@@ -840,6 +840,21 @@ struct AgentIdentifierView {
 struct ActivityEdgeView {
     representation_id: String,
     role: Option<String>,
+    snapshot: Option<ActivityEdgeSnapshotView>,
+}
+
+#[derive(Debug, Serialize)]
+struct ActivityEdgeSnapshotView {
+    revision_sequence: u64,
+    fingerprints: Vec<FingerprintSnapshotView>,
+}
+
+#[derive(Debug, Serialize)]
+struct FingerprintSnapshotView {
+    algorithm: String,
+    version: u16,
+    value_hex: String,
+    observed_revision_sequence: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1884,7 +1899,7 @@ fn activity_add(args: ActivityAddArgs, json: bool) -> Result<()> {
             .context("validate activity agent")?;
         activity = activity.with_agent(agent);
     }
-    let view = activity_view(&activity);
+    let activity_id = activity.id();
     let mut production = SqliteProduction::open(&args.production).context("open production")?;
     let mut transaction = production
         .begin_transaction()
@@ -1894,6 +1909,14 @@ fn activity_add(args: ActivityAddArgs, json: bool) -> Result<()> {
         .create_activity(&activity)
         .context("stage activity")?;
     transaction.commit().context("commit activity")?;
+    drop(transaction);
+    let stored_activity = production
+        .activities()
+        .context("reload activity snapshots")?
+        .into_iter()
+        .find(|candidate| candidate.id() == activity_id)
+        .context("committed activity is missing")?;
+    let view = activity_view(&stored_activity);
 
     if json {
         print_json(&view)
@@ -1932,6 +1955,7 @@ fn activity_view(activity: &Activity) -> ActivityView {
             .map(|input| ActivityEdgeView {
                 representation_id: input.representation_id().to_string(),
                 role: input.role().map(|role| role.as_str().to_owned()),
+                snapshot: input.snapshot().map(activity_edge_snapshot_view),
             })
             .collect(),
         outputs: activity
@@ -1940,6 +1964,25 @@ fn activity_view(activity: &Activity) -> ActivityView {
             .map(|output| ActivityEdgeView {
                 representation_id: output.representation_id().to_string(),
                 role: output.role().map(|role| role.as_str().to_owned()),
+                snapshot: output.snapshot().map(activity_edge_snapshot_view),
+            })
+            .collect(),
+    }
+}
+
+fn activity_edge_snapshot_view(
+    snapshot: &postproject_core::ActivityEdgeSnapshot,
+) -> ActivityEdgeSnapshotView {
+    ActivityEdgeSnapshotView {
+        revision_sequence: snapshot.revision_sequence(),
+        fingerprints: snapshot
+            .fingerprints()
+            .iter()
+            .map(|fingerprint| FingerprintSnapshotView {
+                algorithm: fingerprint.algorithm().to_owned(),
+                version: fingerprint.version(),
+                value_hex: hex::encode(fingerprint.value()),
+                observed_revision_sequence: fingerprint.observed_revision_sequence(),
             })
             .collect(),
     }

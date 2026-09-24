@@ -40,6 +40,21 @@ fn add_representation_from_spec(
     ])
 }
 
+fn assert_activity_snapshots(created: &Value) {
+    let created_input = &created["inputs"][0];
+    assert_eq!(created_input["role"], PRIMARY_INPUT_ROLE);
+    assert_eq!(created_input["snapshot"]["revision_sequence"], 3);
+    assert_eq!(
+        created_input["snapshot"]["fingerprints"]
+            .as_array()
+            .expect("input fingerprint snapshots")
+            .len(),
+        1
+    );
+    assert_eq!(created["outputs"][0]["role"], PROXY_OUTPUT_ROLE);
+    assert_eq!(created["outputs"][0]["snapshot"]["revision_sequence"], 3);
+}
+
 fn exercise_identifiers(production: &str, asset_id: &str) {
     let identifier = run_json(&[
         "identifier",
@@ -220,9 +235,7 @@ fn exercise_provenance(
     assert_eq!(agent_identifier["scheme"], "com.example.worker");
     assert_eq!(agent_identifier["value"], "worker-42");
     assert_eq!(agent_identifier["qualifier"], "primary");
-    let created_input = &created["inputs"][0];
-    assert_eq!(created_input["role"], PRIMARY_INPUT_ROLE);
-    assert_eq!(created["outputs"][0]["role"], PROXY_OUTPUT_ROLE);
+    assert_activity_snapshots(&created);
 
     let parameter = run_json(&[
         "metadata",
@@ -240,6 +253,10 @@ fn exercise_provenance(
     let listed = run_json(&["activity", "list", production]);
     assert_eq!(listed.as_array().expect("activity array").len(), 1);
     assert_eq!(listed[0]["id"], activity_id);
+    assert_eq!(
+        listed[0]["inputs"][0]["snapshot"],
+        created["inputs"][0]["snapshot"]
+    );
 
     let producing = run_json(&[
         "activity",
