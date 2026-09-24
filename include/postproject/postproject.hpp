@@ -1371,6 +1371,33 @@ public:
     detail::throw_if_error(status, error);
   }
 
+  void recordResourceFingerprint(const Uuid &resource_id,
+                                 const Fingerprint &fingerprint) {
+    const pp_uuid_t id = detail::native_uuid(resource_id);
+    const std::string algorithm =
+        detail::checked_string(fingerprint.algorithm, "fingerprint algorithm");
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_record_resource_fingerprint(
+        transaction_, &id, algorithm.c_str(), fingerprint.version,
+        fingerprint.value.data(),
+        static_cast<std::uint64_t>(fingerprint.value.size()), &error);
+    detail::throw_if_error(status, error);
+  }
+
+  void recordRepresentationFingerprint(const Uuid &representation_id,
+                                       const Fingerprint &fingerprint) {
+    const pp_uuid_t id = detail::native_uuid(representation_id);
+    const std::string algorithm =
+        detail::checked_string(fingerprint.algorithm, "fingerprint algorithm");
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_transaction_record_representation_fingerprint(
+            transaction_, &id, algorithm.c_str(), fingerprint.version,
+            fingerprint.value.data(),
+            static_cast<std::uint64_t>(fingerprint.value.size()), &error);
+    detail::throw_if_error(status, error);
+  }
+
   void addExternalIdentifier(const ObjectRef &target,
                              const ExternalIdentifier &identifier) {
     mutate_external_identifier(false, target, identifier);

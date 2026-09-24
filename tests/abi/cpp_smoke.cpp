@@ -126,6 +126,19 @@ int main(int argc, char **argv) {
              .last_seen_unix_micros.has_value()) {
       return 17;
     }
+    auto observations = production.beginTransaction();
+    observations.recordResourceFingerprint(
+        representations[0].resources[0].id,
+        {"cpp-smoke", 1, {UINT8_C(0x10), UINT8_C(0x20)}});
+    observations.recordRepresentationFingerprint(
+        representations[0].id,
+        {"cpp-smoke-tree", 1, {UINT8_C(0x30), UINT8_C(0x40)}});
+    observations.commit();
+    const auto observed_representations = production.representations(asset_id);
+    if (observed_representations[0].fingerprints.size() != 2 ||
+        observed_representations[0].resources[0].fingerprints.size() != 2) {
+      return 26;
+    }
     const auto identifiers = production.externalIdentifiers(asset_ref);
     const auto found =
         production.findByExternalIdentifier("com.example.asset", "asset-42");
