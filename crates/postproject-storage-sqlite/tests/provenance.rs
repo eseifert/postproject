@@ -2,10 +2,10 @@
 
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
-    Asset, AssetId, ContentStructure, ErrorKind, ExternalIdentifier, IdentifierScheme, Locator,
-    LocatorAvailability, LocatorId, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, PropertyId, Representation, RepresentationId, RepresentationKind,
-    Resource, ResourceId, Timestamp, ToolIdentity, VocabularyId,
+    ArtifactReproducibilityIssue, Asset, AssetId, ContentStructure, ErrorKind, ExternalIdentifier,
+    IdentifierScheme, Locator, LocatorAvailability, LocatorId, MetadataProperty, MetadataValue,
+    ObjectRef, OriginalMediaImport, PropertyId, Representation, RepresentationId,
+    RepresentationKind, Resource, ResourceId, Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use tempfile::tempdir;
@@ -171,6 +171,73 @@ fn activity_metadata_is_atomic_with_activity_creation() {
         [value]
     );
     assert_activity_identifier(&reopened, activity_id, &activity_identifier);
+}
+
+#[test]
+fn reproducibility_report_names_each_missing_condition() {
+    let directory = tempdir().expect("create temporary directory");
+    let path = directory.path().join("reproducibility.pproj");
+    let mut production = SqliteProduction::create(&path, None).expect("create production");
+    let (source, source_id) = import(11);
+    let (proxy, proxy_id) = import(12);
+    let (render, render_id) = import(13);
+    let incomplete = activity(ActivityId::new(), source_id, proxy_id);
+    let complete_id = ActivityId::new();
+    let complete = activity(complete_id, proxy_id, render_id).with_tool(
+        ToolIdentity::new("Renderer", Some("1.0".to_owned()), None).expect("valid tool"),
+    );
+    let parameter = MetadataProperty::new(
+        VocabularyId::new("org.postproject.parameters").expect("valid vocabulary"),
+        PropertyId::new("profile").expect("valid property"),
+    );
+    let value = MetadataValue::string("review").expect("valid value");
+
+    let mut transaction = production.begin_transaction().expect("begin transaction");
+    for item in [&source, &proxy, &render] {
+        transaction.import_original(item).expect("import media");
+    }
+    transaction
+        .create_activity(&incomplete)
+        .expect("create incomplete activity");
+    transaction
+        .create_activity(&complete)
+        .expect("create complete activity");
+    transaction
+        .add_metadata_value(ObjectRef::Activity(complete_id), &parameter, &value)
+        .expect("record activity parameter");
+    transaction.commit().expect("commit provenance");
+    drop(transaction);
+
+    let source_report = production
+        .artifact_reproducibility(source_id)
+        .expect("report original reproducibility");
+    assert_eq!(
+        source_report.issues(),
+        [ArtifactReproducibilityIssue::ProducingActivityMissing]
+    );
+
+    let proxy_report = production
+        .artifact_reproducibility(proxy_id)
+        .expect("report proxy reproducibility");
+    assert!(!proxy_report.is_reproducible());
+    assert!(proxy_report.issues().iter().any(|issue| matches!(
+        issue,
+        ArtifactReproducibilityIssue::ToolIdentityMissing { .. }
+    )));
+    assert!(proxy_report.issues().iter().any(|issue| matches!(
+        issue,
+        ArtifactReproducibilityIssue::ParametersMissing { .. }
+    )));
+
+    let render_report = production
+        .artifact_reproducibility(render_id)
+        .expect("report render reproducibility");
+    assert!(render_report.is_reproducible());
+    assert_eq!(render_report.producing_activity_id(), Some(complete_id));
+    assert_eq!(
+        render_report.activity_kind().map(ActivityKind::as_str),
+        Some("org.postproject:transcode")
+    );
 }
 
 #[test]
