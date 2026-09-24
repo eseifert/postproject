@@ -1,7 +1,7 @@
 //! Versioned deterministic encoding for persisted metadata values.
 
 use postproject_core::{
-    ActivityId, AssetId, DecimalValue, Error, ErrorKind, MAX_METADATA_BINARY_BYTES,
+    ActivityId, AssetId, DecimalValue, Error, ErrorKind, JobId, MAX_METADATA_BINARY_BYTES,
     MAX_METADATA_COLLECTION_ITEMS, MAX_METADATA_NESTING_DEPTH, MAX_METADATA_TEXT_BYTES,
     MAX_METADATA_URI_BYTES, MAX_PROPERTY_ID_BYTES, MetadataField, MetadataValue, MetadataValueKind,
     ObjectRef, ProductionId, PropertyId, RationalValue, RepresentationId, Result, Timestamp,
@@ -139,6 +139,7 @@ fn encode_reference(writer: &mut Writer, reference: ObjectRef) -> Result<()> {
         ObjectRef::Representation(id) => (2, id.into_bytes()),
         ObjectRef::Resource(id) => (3, id.into_bytes()),
         ObjectRef::Activity(id) => (4, id.into_bytes()),
+        ObjectRef::Job(id) => (5, id.into_bytes()),
         _ => {
             return Err(Error::new(
                 ErrorKind::Unsupported,
@@ -224,6 +225,7 @@ fn decode_reference(reader: &mut Reader<'_>) -> Result<ObjectRef> {
             postproject_core::ResourceId::from_bytes(bytes),
         )),
         4 => Ok(ObjectRef::Activity(ActivityId::from_bytes(bytes))),
+        5 => Ok(ObjectRef::Job(JobId::from_bytes(bytes))),
         _ => Err(malformed(format!(
             "metadata reference uses unknown object kind {kind}"
         ))),
@@ -456,6 +458,7 @@ mod tests {
                 postproject_core::ResourceId::from_bytes([4; 16]),
             )),
             MetadataValue::reference(ObjectRef::Activity(ActivityId::from_bytes([5; 16]))),
+            MetadataValue::reference(ObjectRef::Job(JobId::from_bytes([6; 16]))),
         ];
         for value in values {
             round_trip(&value);

@@ -2910,6 +2910,10 @@ fn object_ref_view(target: ObjectRef) -> Result<ObjectRefView> {
             kind: "activity",
             id: id.to_string(),
         }),
+        ObjectRef::Job(id) => Ok(ObjectRefView {
+            kind: "job",
+            id: id.to_string(),
+        }),
         _ => bail!("object kind is not supported by this CLI"),
     }
 }

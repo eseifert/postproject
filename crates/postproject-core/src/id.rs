@@ -124,6 +124,8 @@ pub enum ObjectRef {
     Resource(ResourceId),
     /// A production activity.
     Activity(ActivityId),
+    /// A requested production job.
+    Job(JobId),
 }
 
 /// Portable reference from a host document to one production-scoped object.
@@ -176,6 +178,7 @@ impl fmt::Display for HostObjectBinding {
             ObjectRef::Representation(id) => ("representation", id.to_string()),
             ObjectRef::Resource(id) => ("resource", id.to_string()),
             ObjectRef::Activity(id) => ("activity", id.to_string()),
+            ObjectRef::Job(id) => ("job", id.to_string()),
         };
         write!(
             formatter,
@@ -210,6 +213,7 @@ impl FromStr for HostObjectBinding {
             }
             "resource" => ObjectRef::Resource(parse_canonical_id(object_id, "object UUID")?),
             "activity" => ObjectRef::Activity(parse_canonical_id(object_id, "object UUID")?),
+            "job" => ObjectRef::Job(parse_canonical_id(object_id, "object UUID")?),
             _ => return Err(invalid_binding()),
         };
         Self::new(production_id, object)
@@ -289,6 +293,7 @@ mod tests {
             ObjectRef::Representation(RepresentationId::from_bytes([3; 16])),
             ObjectRef::Resource(ResourceId::from_bytes([4; 16])),
             ObjectRef::Activity(ActivityId::from_bytes([5; 16])),
+            ObjectRef::Job(JobId::from_bytes([6; 16])),
         ];
         for object in objects {
             let binding = HostObjectBinding::new(production_id, object).expect("valid binding");
