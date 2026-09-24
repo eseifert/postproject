@@ -1,11 +1,12 @@
 //! Domain-shaped contracts implemented by persistence backends.
 
 use crate::{
-    Activity, Asset, AssetId, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot,
-    MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, Production, Representation, RepresentationFingerprint, RepresentationId,
-    RepresentationImport, Resource, ResourceFingerprint, ResourceId, Result, Revision,
-    RevisionContext, RevisionEvent, RevisionId, TransactionId, TransactionState,
+    Activity, ArtifactEvaluation, ArtifactEvaluationLimits, Asset, AssetId, ExternalIdentifier,
+    IdentifierScheme, Locator, MediaRoot, MetadataAssertion, MetadataMatch, MetadataProperty,
+    MetadataValue, ObjectRef, OriginalMediaImport, Production, Representation,
+    RepresentationFingerprint, RepresentationId, RepresentationImport, Resource,
+    ResourceFingerprint, ResourceId, Result, Revision, RevisionContext, RevisionEvent, RevisionId,
+    TransactionId, TransactionState,
 };
 
 /// Read operations required from a production persistence backend.
@@ -135,6 +136,22 @@ pub trait ProductionRead {
     /// Returns a domain error when the representation is absent or persisted
     /// provenance cannot be traversed safely.
     fn descendants(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>>;
+
+    /// Evaluates whether an activity-produced representation still reflects
+    /// its recorded inputs and output snapshot.
+    ///
+    /// This operation reads production knowledge only and never resolves or
+    /// accesses media files.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the target is absent, bounds are invalid,
+    /// or stored provenance cannot be decoded safely.
+    fn evaluate_artifact(
+        &self,
+        representation_id: RepresentationId,
+        limits: ArtifactEvaluationLimits,
+    ) -> Result<ArtifactEvaluation>;
 
     /// Returns the newest durable revision, or `None` for an empty journal.
     ///

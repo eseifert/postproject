@@ -95,6 +95,16 @@ pub enum ArtifactKnowledgeReason {
         /// Current representation fingerprint value.
         current_value: Vec<u8>,
     },
+    /// A resource observation changed and its representation fingerprint has
+    /// not yet been recomputed.
+    FingerprintRecomputationPending {
+        /// Activity owning the edge.
+        activity_id: ActivityId,
+        /// Representation whose aggregate fingerprint is dirty.
+        representation_id: RepresentationId,
+        /// Whether this was an input or output edge.
+        edge: ArtifactEdgeKind,
+    },
     /// An upstream produced representation is not current.
     UpstreamNotCurrent {
         /// Immediate input that depends on the upstream result.
