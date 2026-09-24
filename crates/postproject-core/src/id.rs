@@ -94,6 +94,14 @@ strong_id!(
     ActivityId
 );
 strong_id!(
+    /// Stable identity of one requested production job.
+    JobId
+);
+strong_id!(
+    /// Capability identifying one active job claim.
+    JobClaimId
+);
+strong_id!(
     /// Stable identity of one durable production revision.
     RevisionId
 );

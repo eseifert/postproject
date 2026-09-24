@@ -35,8 +35,8 @@ pub use content::{
 };
 pub use error::{Error, ErrorKind, Result};
 pub use id::{
-    ActivityId, AssetId, HostObjectBinding, LocatorId, MediaRootId, ObjectRef, ProductionId,
-    RepresentationId, ResourceId, RevisionId, TransactionId,
+    ActivityId, AssetId, HostObjectBinding, JobClaimId, JobId, LocatorId, MediaRootId, ObjectRef,
+    ProductionId, RepresentationId, ResourceId, RevisionId, TransactionId,
 };
 pub use identifier::{
     ExternalIdentifier, IdentifierScheme, MAX_IDENTIFIER_QUALIFIER_BYTES,
