@@ -18,7 +18,8 @@ Development version: `0.4.0-alpha.1`.
   inspection of storage-captured activity-edge fingerprint snapshots.
 - Added computed artifact knowledge states with bounded transitive staleness,
   divergence explanations, and structured reproducibility reports. C ABI
-  version 17 exposes both read models through owned immutable result handles.
+  version 17 exposes both read models through owned immutable result handles,
+  with matching C++17, Python, and CLI surfaces.
 
 ### Changed
 

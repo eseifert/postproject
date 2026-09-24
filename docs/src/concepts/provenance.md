@@ -18,6 +18,11 @@ Activity kinds and edge roles are namespaced strings. Applications and studios
 can add their own vocabulary without waiting for a closed PostProject enum.
 Unknown valid identifiers remain ordinary provenance data.
 
+When an activity commits, storage captures the current representation
+fingerprints on every input and output edge. Those snapshots let callers
+evaluate [artifact knowledge and reproducibility](artifact-knowledge.md)
+without reading media files.
+
 ## Graph behavior
 
 Activities support fan-in, fan-out, and processing across assets. An activity

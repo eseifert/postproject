@@ -9,6 +9,7 @@
 - [External identifiers](concepts/external-identifiers.md)
 - [Metadata assertions](concepts/metadata.md)
 - [Production provenance](concepts/provenance.md)
+- [Artifact knowledge and reproducibility](concepts/artifact-knowledge.md)
 - [Revisions and semantic events](concepts/revisions-and-events.md)
 - [Rational time and ranges](concepts/rational-time.md)
 - [Standards boundaries](concepts/standards-boundaries.md)
