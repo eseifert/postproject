@@ -149,10 +149,14 @@ fn measure_read(
     path: &PathBuf,
     mut operation: impl FnMut(&SqliteProduction),
 ) {
-    measure(name, runs, || {
+    let mut samples = Vec::with_capacity(runs);
+    for _ in 0..runs {
         let production = SqliteProduction::open(path).expect("open fixture");
+        let started = Instant::now();
         operation(&production);
-    });
+        samples.push(started.elapsed());
+    }
+    report(name, samples);
 }
 
 fn measure(name: &str, runs: usize, mut operation: impl FnMut()) {
@@ -162,6 +166,10 @@ fn measure(name: &str, runs: usize, mut operation: impl FnMut()) {
         operation();
         samples.push(started.elapsed());
     }
+    report(name, samples);
+}
+
+fn report(name: &str, mut samples: Vec<std::time::Duration>) {
     samples.sort_unstable();
     let median = samples[samples.len() / 2].as_secs_f64() * 1_000.0;
     let minimum = samples[0].as_secs_f64() * 1_000.0;
