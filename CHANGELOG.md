@@ -16,6 +16,9 @@ Development version: `0.4.0-alpha.1`.
 - Added C ABI version 16 transaction functions for explicitly recording
   resource and structure-aware representation fingerprint observations, plus
   inspection of storage-captured activity-edge fingerprint snapshots.
+- Added computed artifact knowledge states with bounded transitive staleness,
+  divergence explanations, and structured reproducibility reports. C ABI
+  version 17 exposes both read models through owned immutable result handles.
 
 ## 0.3.0-alpha.2 - 2026-09-24
 

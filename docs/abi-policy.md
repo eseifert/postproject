@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 16 is pre-release and may change during the 0.x series, with every
+ABI version 17 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
@@ -113,6 +113,11 @@ input buffers; the transaction copies them and persists them only at commit.
 Activity-edge accessors also expose storage-captured snapshot revisions and
 fingerprints. Their returned strings and byte spans borrow the activity set;
 legacy migrated edges report an absent snapshot explicitly.
+
+ABI version 17 adds owned artifact-evaluation and reproducibility handles.
+Their reason and issue records are fixed-layout borrowed views; strings and
+fingerprint byte spans remain valid until the owning handle is released.
+Evaluation is knowledge-only and uses caller-supplied traversal bounds.
 
 ## External identifiers
 

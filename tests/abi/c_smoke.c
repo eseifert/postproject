@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     return 64;
   }
   (void)remove(argv[1]);
-  if (pp_abi_version() != UINT32_C(16)) {
+  if (pp_abi_version() != UINT32_C(17)) {
     return 1;
   }
   pp_error_code_t status =
@@ -854,6 +854,63 @@ int main(int argc, char **argv) {
     return 33;
   }
   pp_activity_set_release(activities);
+
+  pp_artifact_evaluation_t *artifact_evaluation = NULL;
+  pp_uuid_t evaluated_representation_id = {{0}};
+  pp_artifact_knowledge_state_t artifact_state = 0;
+  uint32_t visited_representations = 0;
+  uint8_t artifact_truncated = 0;
+  uint64_t artifact_reason_count = 0;
+  status = pp_production_evaluate_artifact(
+      production, &representation_id, UINT32_C(64), UINT32_C(1000),
+      &artifact_evaluation, &error);
+  if (status != PP_OK || artifact_evaluation == NULL ||
+      pp_artifact_evaluation_get(
+          artifact_evaluation, &evaluated_representation_id, &artifact_state,
+          &visited_representations, &artifact_truncated,
+          &artifact_reason_count, &error) != PP_OK ||
+      memcmp(evaluated_representation_id.bytes, representation_id.bytes,
+             sizeof(representation_id.bytes)) != 0 ||
+      artifact_state != PP_ARTIFACT_CURRENT ||
+      visited_representations != UINT32_C(1) ||
+      artifact_truncated != UINT8_C(0) || artifact_reason_count != 0) {
+    pp_artifact_evaluation_release(artifact_evaluation);
+    pp_resolution_set_release(resolutions);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 80;
+  }
+  pp_artifact_evaluation_release(artifact_evaluation);
+
+  pp_artifact_reproducibility_t *reproducibility = NULL;
+  pp_uuid_t reproducibility_representation_id = {{0}};
+  pp_uuid_t producing_activity_id = {{0}};
+  uint8_t reproducible = 0;
+  uint8_t has_producing_activity = 0;
+  const char *producing_activity_kind = NULL;
+  uint64_t reproducibility_issue_count = 0;
+  status = pp_production_artifact_reproducibility(
+      production, &representation_id, &reproducibility, &error);
+  if (status != PP_OK || reproducibility == NULL ||
+      pp_artifact_reproducibility_get(
+          reproducibility, &reproducibility_representation_id, &reproducible,
+          &has_producing_activity, &producing_activity_id,
+          &producing_activity_kind, &reproducibility_issue_count,
+          &error) != PP_OK ||
+      reproducible != UINT8_C(1) ||
+      has_producing_activity != UINT8_C(1) ||
+      memcmp(producing_activity_id.bytes, activity_id.bytes,
+             sizeof(activity_id.bytes)) != 0 ||
+      producing_activity_kind == NULL ||
+      strcmp(producing_activity_kind, "org.postproject:ingest") != 0 ||
+      reproducibility_issue_count != 0) {
+    pp_artifact_reproducibility_release(reproducibility);
+    pp_resolution_set_release(resolutions);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 81;
+  }
+  pp_artifact_reproducibility_release(reproducibility);
   pp_resolution_set_release(resolutions);
   pp_production_release(production);
   production = NULL;
