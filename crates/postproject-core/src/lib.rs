@@ -7,6 +7,7 @@
 
 mod artifact;
 mod content;
+mod dependency;
 mod error;
 mod id;
 mod identifier;
@@ -33,6 +34,10 @@ pub use content::{
     ContentStructure, ContentStructureKind, FrameRange, ImageSequenceDescriptor,
     ImageSequencePattern, MAX_CONTENT_MEMBERS, MAX_FRAME_PADDING, MAX_RESOURCE_ROLE_BYTES,
     MAX_SEQUENCE_EXCEPTIONS, MAX_SEQUENCE_PATTERN_BYTES, ResourceMember, ResourceRole,
+};
+pub use dependency::{
+    Dependency, DependencyKind, DependencyTarget, MAX_AUTHORED_REFERENCE_BYTES,
+    MAX_DEPENDENCIES_PER_SET, MAX_DEPENDENCY_KIND_BYTES,
 };
 pub use error::{Error, ErrorKind, Result};
 pub use id::{
