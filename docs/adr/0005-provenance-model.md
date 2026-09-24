@@ -20,6 +20,12 @@ Identical edges and a representation appearing on both sides are rejected.
 Timestamps, tool identity, agent identity, and edge roles are optional and
 bounded. Metadata assertions carry activity parameters.
 
+Schema version 7 adds storage-captured fingerprint and revision snapshots to
+both input and output edges. The caller still specifies only representation and
+role; persistence captures current state inside the activity transaction.
+Pre-schema-7 edges retain an absent snapshot rather than receiving fabricated
+history. See ADR 0021.
+
 SQLite schema version 2 stores activities and their edges. Creation and cycle
 validation occur inside the surrounding production transaction. Read APIs return
 deterministically ordered activities and support producing/consuming lookup plus

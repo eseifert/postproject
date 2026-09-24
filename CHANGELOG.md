@@ -5,6 +5,13 @@ All notable changes to PostProject will be documented here. The project uses
 
 ## Unreleased
 
+### Added
+
+- Added SQLite schema 7 foundations for explicit, journaled fingerprint
+  observations with retained history, representation recomputation markers,
+  and storage-captured activity input/output snapshots. Existing activities
+  migrate with absent snapshots rather than fabricated historical state.
+
 ## 0.3.0-alpha.2 - 2026-09-24
 
 ### Changed

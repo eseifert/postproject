@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    ActivityId, Error, ErrorKind, ExternalIdentifier, RepresentationId, Result, Timestamp,
-    uri::normalize_uri,
+    ActivityId, Error, ErrorKind, ExternalIdentifier, FingerprintSnapshot, RepresentationId,
+    Result, Timestamp, uri::normalize_uri,
 };
 
 /// Maximum encoded length of an activity-kind identifier.
@@ -135,6 +135,7 @@ pub struct AgentIdentity {
 pub struct ActivityInput {
     representation_id: RepresentationId,
     role: Option<ActivityRole>,
+    snapshot: Option<ActivityEdgeSnapshot>,
 }
 
 impl ActivityInput {
@@ -144,6 +145,7 @@ impl ActivityInput {
         Self {
             representation_id,
             role,
+            snapshot: None,
         }
     }
 
@@ -158,6 +160,23 @@ impl ActivityInput {
     pub const fn role(&self) -> Option<&ActivityRole> {
         self.role.as_ref()
     }
+
+    /// Returns the storage-captured input state, or `None` for a migrated edge.
+    #[must_use]
+    pub const fn snapshot(&self) -> Option<&ActivityEdgeSnapshot> {
+        self.snapshot.as_ref()
+    }
+
+    /// Attaches a snapshot loaded by a persistence backend.
+    ///
+    /// Callers do not use this when creating an activity: storage replaces any
+    /// supplied value with a snapshot taken inside the creating transaction.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_snapshot(mut self, snapshot: ActivityEdgeSnapshot) -> Self {
+        self.snapshot = Some(snapshot);
+        self
+    }
 }
 
 /// One representation produced by an activity.
@@ -165,6 +184,7 @@ impl ActivityInput {
 pub struct ActivityOutput {
     representation_id: RepresentationId,
     role: Option<ActivityRole>,
+    snapshot: Option<ActivityEdgeSnapshot>,
 }
 
 impl ActivityOutput {
@@ -174,6 +194,7 @@ impl ActivityOutput {
         Self {
             representation_id,
             role,
+            snapshot: None,
         }
     }
 
@@ -187,6 +208,73 @@ impl ActivityOutput {
     #[must_use]
     pub const fn role(&self) -> Option<&ActivityRole> {
         self.role.as_ref()
+    }
+
+    /// Returns the storage-captured output state, or `None` for a migrated edge.
+    #[must_use]
+    pub const fn snapshot(&self) -> Option<&ActivityEdgeSnapshot> {
+        self.snapshot.as_ref()
+    }
+
+    /// Attaches a snapshot loaded by a persistence backend.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_snapshot(mut self, snapshot: ActivityEdgeSnapshot) -> Self {
+        self.snapshot = Some(snapshot);
+        self
+    }
+}
+
+/// Fingerprint evidence captured for one activity edge at commit time.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ActivityEdgeSnapshot {
+    revision_sequence: u64,
+    fingerprints: Vec<FingerprintSnapshot>,
+}
+
+impl ActivityEdgeSnapshot {
+    /// Creates a canonical snapshot captured at `revision_sequence`.
+    ///
+    /// An empty fingerprint set explicitly records that the representation had
+    /// no fingerprint evidence. This differs from an absent migrated snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for sequence zero or duplicate fingerprint domains.
+    pub fn new(revision_sequence: u64, mut fingerprints: Vec<FingerprintSnapshot>) -> Result<Self> {
+        if revision_sequence == 0 {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "activity-edge snapshot revision must be greater than zero",
+            ));
+        }
+        fingerprints.sort_by(|left, right| {
+            (left.algorithm(), left.version()).cmp(&(right.algorithm(), right.version()))
+        });
+        if fingerprints.windows(2).any(|pair| {
+            (pair[0].algorithm(), pair[0].version()) == (pair[1].algorithm(), pair[1].version())
+        }) {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "activity-edge snapshot contains a duplicate fingerprint domain",
+            ));
+        }
+        Ok(Self {
+            revision_sequence,
+            fingerprints,
+        })
+    }
+
+    /// Returns the production revision current when storage captured the edge.
+    #[must_use]
+    pub const fn revision_sequence(&self) -> u64 {
+        self.revision_sequence
+    }
+
+    /// Returns captured fingerprint domains in canonical order.
+    #[must_use]
+    pub fn fingerprints(&self) -> &[FingerprintSnapshot] {
+        &self.fingerprints
     }
 }
 

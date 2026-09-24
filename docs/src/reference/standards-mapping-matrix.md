@@ -8,6 +8,7 @@ This matrix states design intent, not normative compliance.
 | IPTC VMH property | Vocabulary, property, and typed metadata value | Intended lossless for supported value shapes | Mapping package deferred |
 | W3C PROV Entity | Asset or representation, depending on context | Conceptual | Export adapter deferred |
 | W3C PROV Activity | Activity with input and output edges | Strong conceptual mapping | Export adapter deferred |
+| W3C PROV specialization | Stable representation plus a revision/fingerprint edge snapshot | Conceptual; export must mint a specialized Entity | Export adapter deferred |
 | OpenAssetIO Entity Reference | Versioned host-object binding | Manager boundary | Read-only Manager implemented |
 | OpenAssetIO locatable content | Representation, resource, and locator resolution | Strong conceptual mapping | Read-only Manager implemented |
 | OpenAssetIO-MediaCreation image collection | Image-sequence content structure and frame range | Conceptual; evolving traits require versioned adapter review | Image and frame-range traits implemented |

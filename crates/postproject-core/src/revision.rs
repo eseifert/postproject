@@ -206,6 +206,24 @@ pub enum RevisionEventKind {
         /// Optional semantic edge role.
         role: Option<ActivityRole>,
     },
+    /// A resource fingerprint domain received a new current observation.
+    ResourceFingerprintObserved {
+        /// Re-observed storage resource.
+        resource_id: ResourceId,
+        /// Fingerprint algorithm identifier.
+        algorithm: String,
+        /// Fingerprint algorithm format version.
+        version: u16,
+    },
+    /// A representation fingerprint domain received a new current observation.
+    RepresentationFingerprintObserved {
+        /// Re-observed representation.
+        representation_id: RepresentationId,
+        /// Fingerprint algorithm identifier.
+        algorithm: String,
+        /// Fingerprint algorithm format version.
+        version: u16,
+    },
 }
 
 /// One deterministically ordered semantic event within a revision.

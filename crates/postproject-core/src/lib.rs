@@ -59,8 +59,8 @@ pub use model::{
     RepresentationKind, Timestamp,
 };
 pub use provenance::{
-    Activity, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
-    MAX_ACTIVITY_EDGES, MAX_ACTIVITY_KIND_BYTES, MAX_ACTIVITY_ROLE_BYTES,
+    Activity, ActivityEdgeSnapshot, ActivityInput, ActivityKind, ActivityOutput, ActivityRole,
+    AgentIdentity, MAX_ACTIVITY_EDGES, MAX_ACTIVITY_KIND_BYTES, MAX_ACTIVITY_ROLE_BYTES,
     MAX_PROVENANCE_NAME_BYTES, MAX_PROVENANCE_URI_BYTES, MAX_TOOL_VERSION_BYTES, ToolIdentity,
 };
 pub use resolution::{
@@ -69,8 +69,8 @@ pub use resolution::{
     ResourceResolutionState,
 };
 pub use resource::{
-    FileFacts, Locator, LocatorAvailability, RepresentationFingerprint, Resource,
-    ResourceFingerprint,
+    FileFacts, FingerprintSnapshot, Locator, LocatorAvailability, RepresentationFingerprint,
+    Resource, ResourceFingerprint,
 };
 pub use revision::{
     MAX_REVISION_MESSAGE_BYTES, MAX_REVISION_PAGE_SIZE, OriginIdentity, Revision, RevisionContext,

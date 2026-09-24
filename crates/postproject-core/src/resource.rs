@@ -117,6 +117,64 @@ typed_fingerprint!(
     RepresentationFingerprint
 );
 
+/// One immutable fingerprint value captured at a semantic revision.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct FingerprintSnapshot {
+    algorithm: String,
+    version: u16,
+    value: Vec<u8>,
+    observed_revision_sequence: Option<u64>,
+}
+
+impl FingerprintSnapshot {
+    /// Creates a validated snapshot of one fingerprint domain.
+    ///
+    /// `observed_revision_sequence` is absent for fingerprints migrated from a
+    /// schema that did not record observation revisions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the fingerprint algorithm or value is invalid.
+    pub fn new(
+        algorithm: impl Into<String>,
+        version: u16,
+        value: Vec<u8>,
+        observed_revision_sequence: Option<u64>,
+    ) -> Result<Self> {
+        let fingerprint = FingerprintData::new(algorithm, version, value)?;
+        Ok(Self {
+            algorithm: fingerprint.algorithm,
+            version: fingerprint.version,
+            value: fingerprint.value,
+            observed_revision_sequence,
+        })
+    }
+
+    /// Returns the algorithm identifier.
+    #[must_use]
+    pub fn algorithm(&self) -> &str {
+        &self.algorithm
+    }
+
+    /// Returns the algorithm format version.
+    #[must_use]
+    pub const fn version(&self) -> u16 {
+        self.version
+    }
+
+    /// Returns the opaque fingerprint bytes.
+    #[must_use]
+    pub fn value(&self) -> &[u8] {
+        &self.value
+    }
+
+    /// Returns the revision that recorded this value, when known.
+    #[must_use]
+    pub const fn observed_revision_sequence(&self) -> Option<u64> {
+        self.observed_revision_sequence
+    }
+}
+
 /// A storage-level component used to realize a representation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Resource {
