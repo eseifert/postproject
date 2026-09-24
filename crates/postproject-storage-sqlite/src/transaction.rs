@@ -789,6 +789,13 @@ impl<'production> SqliteTransaction<'production> {
                 [representation_id.as_bytes().as_slice()],
             )
             .map_err(mutation_error("clear representation recomputation marker"))?;
+        transaction
+            .execute(
+                "UPDATE dependency_sets SET needs_extraction = 1
+                 WHERE source_representation_id = ?1 AND needs_extraction = 0",
+                [representation_id.as_bytes().as_slice()],
+            )
+            .map_err(mutation_error("mark dependency set for extraction"))?;
         self.pending_events
             .push(RevisionEventKind::RepresentationFingerprintObserved {
                 representation_id,

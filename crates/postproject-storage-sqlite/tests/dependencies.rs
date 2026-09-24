@@ -3,8 +3,8 @@
 use postproject_core::{
     Asset, AssetId, ContentStructure, Dependency, DependencyKind, DependencySetStatus,
     DependencyTarget, ErrorKind, Locator, LocatorAvailability, LocatorId, OriginalMediaImport,
-    Representation, RepresentationId, RepresentationKind, Resource, ResourceId, RevisionEventKind,
-    Timestamp,
+    Representation, RepresentationFingerprint, RepresentationId, RepresentationKind, Resource,
+    ResourceId, RevisionEventKind, Timestamp,
 };
 use postproject_storage_sqlite::SqliteProduction;
 
@@ -24,7 +24,10 @@ fn media(label: u8) -> OriginalMediaImport {
             asset_id,
             RepresentationKind::Original,
             ContentStructure::single_resource(resource_id),
-            Vec::new(),
+            vec![
+                RepresentationFingerprint::new("aggregate", 1, vec![label])
+                    .expect("valid representation fingerprint"),
+            ],
         ),
         vec![Resource::new(resource_id, Vec::new(), None)],
         vec![
@@ -186,5 +189,70 @@ fn invalid_dependency_references_leave_no_partial_observation() {
             .expect("latest revision")
             .sequence(),
         1
+    );
+}
+
+#[test]
+fn representation_observation_marks_dependencies_for_extraction() {
+    let directory = tempfile::tempdir().expect("create directory");
+    let path = directory.path().join("dependency-extraction.pproj");
+    let mut production = SqliteProduction::create(&path, None).expect("create production");
+    let source = media(5);
+    let target = media(6);
+    let dependency = Dependency::new(
+        None,
+        DependencyKind::new("org.postproject:requires").expect("kind"),
+        DependencyTarget::Representation(target.representation().id()),
+        None,
+        true,
+        "target.mov",
+    )
+    .expect("dependency");
+    {
+        let mut transaction = production.begin_transaction().expect("begin setup");
+        transaction.import_original(&source).expect("import source");
+        transaction.import_original(&target).expect("import target");
+        transaction
+            .record_dependency_set(
+                source.representation().id(),
+                std::slice::from_ref(&dependency),
+            )
+            .expect("record dependencies");
+        transaction.commit().expect("commit setup");
+    }
+
+    let changed = RepresentationFingerprint::new("aggregate", 1, vec![9]).expect("fingerprint");
+    {
+        let mut transaction = production.begin_transaction().expect("begin observation");
+        transaction
+            .record_representation_fingerprint(source.representation().id(), &changed)
+            .expect("record changed fingerprint");
+        transaction.commit().expect("commit observation");
+    }
+    let dirty = production
+        .dependency_set(source.representation().id())
+        .expect("read dirty dependency set")
+        .expect("dependency set");
+    assert_eq!(dirty.status(), DependencySetStatus::NeedsExtraction);
+    assert_eq!(dirty.recorded_at_revision(), 1);
+
+    let mut transaction = production.begin_transaction().expect("begin extraction");
+    assert!(
+        transaction
+            .record_dependency_set(
+                source.representation().id(),
+                std::slice::from_ref(&dependency)
+            )
+            .expect("replace extracted set")
+    );
+    transaction.commit().expect("commit extraction");
+    drop(transaction);
+    assert_eq!(
+        production
+            .dependency_set(source.representation().id())
+            .expect("read current dependency set")
+            .expect("dependency set")
+            .status(),
+        DependencySetStatus::Current
     );
 }
