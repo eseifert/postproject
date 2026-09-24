@@ -2,7 +2,7 @@
 
 use crate::{
     Activity, ArtifactEvaluation, ArtifactEvaluationLimits, ArtifactReproducibilityReport, Asset,
-    AssetId, DependencySet, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot,
+    AssetId, Dependency, DependencySet, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot,
     MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
     OriginalMediaImport, Production, Representation, RepresentationFingerprint, RepresentationId,
     RepresentationImport, Resource, ResourceFingerprint, ResourceId, Result, Revision,
@@ -344,6 +344,21 @@ pub trait ProductionStoreTransaction {
     /// representation is absent, the activity already exists, its edges would
     /// create a provenance cycle, or persistence fails.
     fn create_activity(&mut self, activity: &Activity) -> Result<()>;
+
+    /// Replaces one representation's complete ordered dependency observation.
+    ///
+    /// Returns `true` when state changed and `false` for an identical current
+    /// observation. An empty slice explicitly records a known empty set.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, a referenced
+    /// object is absent or inconsistent, or persistence fails.
+    fn record_dependency_set(
+        &mut self,
+        representation_id: RepresentationId,
+        dependencies: &[Dependency],
+    ) -> Result<bool>;
 
     /// Records a resource fingerprint as the current observation in its domain.
     ///

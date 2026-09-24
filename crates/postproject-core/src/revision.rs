@@ -224,6 +224,11 @@ pub enum RevisionEventKind {
         /// Fingerprint algorithm format version.
         version: u16,
     },
+    /// A representation's complete dependency observation was replaced.
+    DependencySetRecorded {
+        /// Representation whose authored dependency set changed.
+        representation_id: RepresentationId,
+    },
 }
 
 /// One deterministically ordered semantic event within a revision.

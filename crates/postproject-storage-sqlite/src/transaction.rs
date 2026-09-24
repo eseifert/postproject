@@ -1,19 +1,22 @@
 //! Explicit SQLite-backed domain transactions.
 
 use postproject_core::{
-    Activity, ContentStructure, ContentStructureKind, Error, ErrorKind, ExternalIdentifier,
-    Locator, LocatorAvailability, LocatorId, MediaRoot, MediaRootId, MetadataProperty,
-    MetadataValue, ObjectRef, OriginalMediaImport, Production, ProductionStoreTransaction,
-    Representation, RepresentationFingerprint, RepresentationId, RepresentationImport,
-    RepresentationKind, Resource, ResourceFingerprint, ResourceId, Result, RevisionContext,
-    RevisionEventKind, RevisionId, Timestamp, TransactionId, TransactionLifecycle,
-    TransactionState,
+    Activity, ContentStructure, ContentStructureKind, Dependency, DependencySetStatus,
+    DependencyTarget, Error, ErrorKind, ExternalIdentifier, Locator, LocatorAvailability,
+    LocatorId, MAX_DEPENDENCIES_PER_SET, MediaRoot, MediaRootId, MetadataProperty, MetadataValue,
+    ObjectRef, OriginalMediaImport, Production, ProductionStoreTransaction, Representation,
+    RepresentationFingerprint, RepresentationId, RepresentationImport, RepresentationKind,
+    Resource, ResourceFingerprint, ResourceId, Result, RevisionContext, RevisionEventKind,
+    RevisionId, Timestamp, TransactionId, TransactionLifecycle, TransactionState,
 };
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
 };
 
-use crate::{encode_identifier_target, encode_metadata_target, metadata_codec, sqlite_error};
+use crate::{
+    encode_identifier_target, encode_metadata_target, load_dependency_set, metadata_codec,
+    sqlite_error,
+};
 
 /// An explicit production mutation transaction.
 ///
@@ -928,6 +931,58 @@ impl<'production> SqliteTransaction<'production> {
         Ok(())
     }
 
+    /// Replaces one representation's complete dependency observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] for an absent source or target, an
+    /// invalid-argument error for inconsistent source membership or resolution,
+    /// or a transaction/storage error. An identical current set is a no-op.
+    pub fn record_dependency_set(
+        &mut self,
+        representation_id: RepresentationId,
+        dependencies: &[Dependency],
+    ) -> Result<bool> {
+        if dependencies.len() > MAX_DEPENDENCIES_PER_SET {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                format!("dependency set must contain at most {MAX_DEPENDENCIES_PER_SET} edges"),
+            ));
+        }
+        let transaction = self.open_transaction()?;
+        if !representation_exists(transaction, representation_id)? {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                "dependency source representation does not exist",
+            ));
+        }
+        if load_dependency_set(transaction, representation_id)?.is_some_and(|set| {
+            set.status() == DependencySetStatus::Current && set.dependencies() == dependencies
+        }) {
+            return Ok(false);
+        }
+        for dependency in dependencies {
+            validate_dependency_references(transaction, representation_id, dependency)?;
+        }
+
+        transaction
+            .execute_batch("SAVEPOINT record_dependency_set")
+            .map_err(mutation_error("begin dependency-set replacement"))?;
+        let result = persist_dependency_set(transaction, representation_id, dependencies);
+        if let Err(error) = result {
+            transaction
+                .execute_batch("ROLLBACK TO record_dependency_set; RELEASE record_dependency_set")
+                .map_err(mutation_error("roll back dependency-set replacement"))?;
+            return Err(error);
+        }
+        transaction
+            .execute_batch("RELEASE record_dependency_set")
+            .map_err(mutation_error("finish dependency-set replacement"))?;
+        self.pending_events
+            .push(RevisionEventKind::DependencySetRecorded { representation_id });
+        Ok(true)
+    }
+
     /// Atomically commits all staged mutations.
     ///
     /// # Errors
@@ -1251,6 +1306,10 @@ fn stored_event(event: &RevisionEventKind) -> Result<StoredEvent<'_>> {
             stored.fingerprint_algorithm = Some(algorithm);
             stored.fingerprint_version = Some(i64::from(*version));
         }
+        RevisionEventKind::DependencySetRecorded { representation_id } => {
+            stored.kind = 19;
+            stored.primary_id = Some(representation_id.into_bytes().to_vec());
+        }
         _ => {
             return Err(Error::new(
                 ErrorKind::Unsupported,
@@ -1348,6 +1407,14 @@ impl ProductionStoreTransaction for SqliteTransaction<'_> {
         SqliteTransaction::create_activity(self, activity)
     }
 
+    fn record_dependency_set(
+        &mut self,
+        representation_id: RepresentationId,
+        dependencies: &[Dependency],
+    ) -> Result<bool> {
+        SqliteTransaction::record_dependency_set(self, representation_id, dependencies)
+    }
+
     fn record_resource_fingerprint(
         &mut self,
         resource_id: ResourceId,
@@ -1433,6 +1500,150 @@ fn representation_exists(
             |row| row.get(0),
         )
         .map_err(sqlite_error("check fingerprint representation"))
+}
+
+fn validate_dependency_references(
+    transaction: &Transaction<'_>,
+    source_representation_id: RepresentationId,
+    dependency: &Dependency,
+) -> Result<()> {
+    if let Some(resource_id) = dependency.source_resource_id() {
+        let is_member = transaction
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM representation_resources
+                    WHERE representation_id = ?1 AND resource_id = ?2
+                 )",
+                params![
+                    source_representation_id.as_bytes().as_slice(),
+                    resource_id.as_bytes().as_slice(),
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(mutation_error("validate dependency source resource"))?;
+        if !is_member {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "dependency source resource is not a member of its representation",
+            ));
+        }
+    }
+    match dependency.target() {
+        DependencyTarget::Asset(asset_id) => {
+            if !asset_exists(transaction, asset_id)? {
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    "dependency target asset does not exist",
+                ));
+            }
+            if let Some(resolved_id) = dependency.resolved_representation_id() {
+                let belongs = transaction
+                    .query_row(
+                        "SELECT EXISTS(
+                            SELECT 1 FROM representations
+                            WHERE id = ?1 AND asset_id = ?2
+                         )",
+                        params![
+                            resolved_id.as_bytes().as_slice(),
+                            asset_id.as_bytes().as_slice(),
+                        ],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .map_err(mutation_error(
+                        "validate resolved dependency representation",
+                    ))?;
+                if !belongs {
+                    return Err(Error::new(
+                        ErrorKind::InvalidArgument,
+                        "resolved dependency representation does not belong to target asset",
+                    ));
+                }
+            }
+        }
+        DependencyTarget::Representation(target_id) => {
+            if !representation_exists(transaction, target_id)? {
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    "dependency target representation does not exist",
+                ));
+            }
+        }
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "dependency target kind is not supported by this schema",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn persist_dependency_set(
+    transaction: &Transaction<'_>,
+    representation_id: RepresentationId,
+    dependencies: &[Dependency],
+) -> Result<()> {
+    let sequence = next_revision_sequence(transaction)?;
+    transaction
+        .execute(
+            "INSERT INTO dependency_sets (
+                source_representation_id, recorded_revision_sequence, needs_extraction
+             ) VALUES (?1, ?2, 0)
+             ON CONFLICT(source_representation_id) DO UPDATE SET
+                recorded_revision_sequence = excluded.recorded_revision_sequence,
+                needs_extraction = 0",
+            params![representation_id.as_bytes().as_slice(), sequence],
+        )
+        .map_err(mutation_error("persist dependency-set observation"))?;
+    transaction
+        .execute(
+            "DELETE FROM dependencies WHERE source_representation_id = ?1",
+            [representation_id.as_bytes().as_slice()],
+        )
+        .map_err(mutation_error("replace dependency edges"))?;
+    for (position, dependency) in dependencies.iter().enumerate() {
+        let position = i64::try_from(position).map_err(|error| {
+            Error::new(
+                ErrorKind::Unsupported,
+                format!("dependency position cannot be stored: {error}"),
+            )
+        })?;
+        let (target_kind, target_id) = match dependency.target() {
+            DependencyTarget::Asset(id) => (1_i64, id.into_bytes()),
+            DependencyTarget::Representation(id) => (2_i64, id.into_bytes()),
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::Unsupported,
+                    "dependency target kind is not supported by this schema",
+                ));
+            }
+        };
+        transaction
+            .execute(
+                "INSERT INTO dependencies (
+                    source_representation_id, position, source_resource_id, kind,
+                    target_kind, target_id, resolved_representation_id, required,
+                    authored_reference
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    representation_id.as_bytes().as_slice(),
+                    position,
+                    dependency
+                        .source_resource_id()
+                        .map(|id| id.into_bytes().to_vec()),
+                    dependency.kind().as_str(),
+                    target_kind,
+                    target_id.as_slice(),
+                    dependency
+                        .resolved_representation_id()
+                        .map(|id| id.into_bytes().to_vec()),
+                    dependency.is_required(),
+                    dependency.authored_reference(),
+                ],
+            )
+            .map_err(mutation_error("persist dependency edge"))?;
+    }
+    Ok(())
 }
 
 fn next_revision_sequence(transaction: &Transaction<'_>) -> Result<i64> {

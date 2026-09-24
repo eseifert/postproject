@@ -1805,6 +1805,9 @@ fn decode_revision_event(
                 }
             }
         }
+        19 => RevisionEventKind::DependencySetRecorded {
+            representation_id: RepresentationId::from_bytes(primary_id("representation")?),
+        },
         kind => {
             return Err(Error::new(
                 ErrorKind::Storage,
