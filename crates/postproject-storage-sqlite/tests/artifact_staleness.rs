@@ -134,6 +134,63 @@ fn changed_source_propagates_staleness_and_changed_output_diverges() {
     );
 }
 
+#[test]
+fn fifty_deep_chain_is_current_and_smaller_bounds_truncate_explicitly() {
+    let directory = tempfile::tempdir().expect("create fixture directory");
+    let production_path = directory.path().join("deep-artifacts.pproj");
+    let mut imports = Vec::new();
+    for index in 0..=50 {
+        let path = directory.path().join(format!("artifact-{index}.mov"));
+        fs::write(&path, format!("media-{index}")).expect("write media fixture");
+        imports.push(prepare_original_media(&path, None, None).expect("prepare media fixture"));
+    }
+
+    let mut production = SqliteProduction::create(&production_path, None).expect("create");
+    let mut transaction = production.begin_transaction().expect("begin imports");
+    for import in &imports {
+        transaction.import_original(import).expect("stage import");
+    }
+    transaction.commit().expect("commit imports");
+    drop(transaction);
+
+    let mut transaction = production.begin_transaction().expect("begin activities");
+    for pair in imports.windows(2) {
+        let activity = Activity::new(
+            ActivityId::new(),
+            ActivityKind::new("org.postproject:derive").expect("valid activity kind"),
+            vec![ActivityInput::new(pair[0].representation().id(), None)],
+            vec![ActivityOutput::new(pair[1].representation().id(), None)],
+        )
+        .expect("valid activity");
+        transaction
+            .create_activity(&activity)
+            .expect("stage activity");
+    }
+    transaction.commit().expect("commit activities");
+    drop(transaction);
+
+    let target = imports[50].representation().id();
+    let complete = evaluate(&production, target);
+    assert_eq!(complete.state(), ArtifactKnowledgeState::Current);
+    assert_eq!(complete.visited_representations(), 50);
+    assert!(!complete.is_truncated());
+
+    let bounded = production
+        .evaluate_artifact(
+            target,
+            ArtifactEvaluationLimits::new(10, 100).expect("valid limits"),
+        )
+        .expect("evaluate bounded chain");
+    assert_eq!(bounded.state(), ArtifactKnowledgeState::Indeterminate);
+    assert!(bounded.is_truncated());
+    assert!(
+        bounded
+            .reasons()
+            .iter()
+            .any(|reason| matches!(reason, ArtifactKnowledgeReason::TraversalTruncated { .. }))
+    );
+}
+
 fn create_activity(
     production: &mut SqliteProduction,
     input: postproject_core::RepresentationId,
