@@ -15,6 +15,9 @@ from postproject import (
     ActivityOutputAddedEvent,
     ActivitySpec,
     AgentIdentity,
+    ArtifactEdgeKind,
+    ArtifactKnowledgeState,
+    ArtifactReasonKind,
     AssetImportedEvent,
     AvailabilityIssueKind,
     ContentStructureKind,
@@ -759,6 +762,64 @@ class ProductionTests(unittest.TestCase):
             self.assertIsInstance(payloads[0], ActivityCreatedEvent)
             self.assertIsInstance(payloads[1], ActivityInputAddedEvent)
             self.assertIsInstance(payloads[2], ActivityOutputAddedEvent)
+
+    def test_artifact_knowledge_is_explainable_and_reproducible(self) -> None:
+        parameter = MetadataProperty("org.postproject.parameters", "profile")
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                source_asset = transaction.import_media(self.media_path)
+                output_asset = transaction.import_media(self.second_media_path)
+            source = production.representations[source_asset][0]
+            output = production.representations[output_asset][0]
+
+            with production.transaction() as transaction:
+                activity_id = transaction.create_activity(
+                    ActivitySpec(
+                        "org.postproject:transcode",
+                        inputs=(ActivityEdge(source.id),),
+                        outputs=(ActivityEdge(output.id),),
+                        tool=ToolIdentity("FFmpeg", "8.0", "https://ffmpeg.org/"),
+                    )
+                )
+                transaction.add_metadata(
+                    activity_id, parameter, MetadataString("editorial-proxy")
+                )
+
+            current = production.evaluate_artifact(output.id)
+            self.assertEqual(current.representation_id, output.id)
+            self.assertEqual(current.state, ArtifactKnowledgeState.CURRENT)
+            self.assertEqual(current.reasons, ())
+            self.assertFalse(current.truncated)
+            self.assertEqual(current.visited_representations, 1)
+
+            reproducibility = production.artifact_reproducibility(output.id)
+            self.assertTrue(reproducibility.reproducible)
+            self.assertEqual(reproducibility.producing_activity_id, activity_id)
+            self.assertEqual(reproducibility.activity_kind, "org.postproject:transcode")
+            self.assertEqual(reproducibility.issues, ())
+
+            source_fingerprint = source.fingerprints[0]
+            with production.transaction() as transaction:
+                transaction.record_representation_fingerprint(
+                    source.id,
+                    Fingerprint(
+                        source_fingerprint.algorithm,
+                        source_fingerprint.version,
+                        b"changed-python-fingerprint",
+                    ),
+                )
+
+            stale = production.evaluate_artifact(output.id)
+            self.assertEqual(stale.state, ArtifactKnowledgeState.STALE)
+            self.assertEqual(len(stale.reasons), 1)
+            reason = stale.reasons[0]
+            self.assertEqual(reason.kind, ArtifactReasonKind.FINGERPRINT_CHANGED)
+            self.assertEqual(reason.activity_id, activity_id)
+            self.assertEqual(reason.representation_id, source.id)
+            self.assertEqual(reason.edge_kind, ArtifactEdgeKind.INPUT)
+            self.assertEqual(reason.current_value, b"changed-python-fingerprint")
 
 
 if __name__ == "__main__":
