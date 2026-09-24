@@ -8,15 +8,17 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
-    Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, DecimalValue, EvidenceKind,
-    ExternalIdentifier, FrameRange, IdentifierScheme, ImageSequencePattern, Locator,
-    LocatorAvailability, LocatorId, MediaRoot, MediaRootId, MetadataAssertion, MetadataField,
-    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity,
-    OriginalMediaImport, ProductionId, ProductionStoreTransaction, PropertyId, RationalRate,
-    RationalValue, Representation, RepresentationAvailability, RepresentationId,
-    RepresentationKind, RepresentationResolution, ResolutionEvidence, Resource, ResourceId,
-    ResourceResolution, ResourceResolutionState, ResourceRole, Revision, RevisionContext,
-    RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity, VocabularyId,
+    ArtifactEdgeKind, ArtifactEvaluationLimits, ArtifactKnowledgeReason, ArtifactKnowledgeState,
+    ArtifactTraversalLimitKind, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind,
+    DecimalValue, EvidenceKind, ExternalIdentifier, FrameRange, IdentifierScheme,
+    ImageSequencePattern, Locator, LocatorAvailability, LocatorId, MediaRoot, MediaRootId,
+    MetadataAssertion, MetadataField, MetadataProperty, MetadataValue, MetadataValueKind,
+    ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId, ProductionStoreTransaction,
+    PropertyId, RationalRate, RationalValue, Representation, RepresentationAvailability,
+    RepresentationId, RepresentationKind, RepresentationResolution, ResolutionEvidence, Resource,
+    ResourceId, ResourceResolution, ResourceResolutionState, ResourceRole, Revision,
+    RevisionContext, RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity,
+    VocabularyId,
 };
 use postproject_media::{
     FfprobeInspector, FileResourceSource, ImageSequenceSource, InspectionOutcome,
@@ -59,6 +61,8 @@ enum Command {
     Metadata(MetadataArgs),
     /// Inspect production provenance activities.
     Activity(ActivityArgs),
+    /// Evaluate managed artifacts from recorded production knowledge.
+    Artifact(ArtifactArgs),
     /// Inspect the durable semantic change journal.
     Revisions(RevisionsArgs),
 }
@@ -503,6 +507,30 @@ struct ActivityRepresentationArgs {
 }
 
 #[derive(Debug, Args)]
+struct ArtifactArgs {
+    #[command(subcommand)]
+    command: ArtifactCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ArtifactCommand {
+    /// Evaluate whether an activity-produced representation is current.
+    Evaluate(ArtifactEvaluateArgs),
+}
+
+#[derive(Debug, Args)]
+struct ArtifactEvaluateArgs {
+    production: PathBuf,
+    representation_id: String,
+    /// Maximum number of upstream activity edges to follow.
+    #[arg(long, default_value_t = 64)]
+    max_depth: u32,
+    /// Maximum number of distinct representations to inspect.
+    #[arg(long, default_value_t = 1_000)]
+    max_representations: u32,
+}
+
+#[derive(Debug, Args)]
 struct RevisionsArgs {
     #[command(subcommand)]
     command: RevisionsCommand,
@@ -858,6 +886,63 @@ struct FingerprintSnapshotView {
 }
 
 #[derive(Debug, Serialize)]
+struct ArtifactEvaluationView {
+    representation_id: String,
+    state: &'static str,
+    visited_representations: u32,
+    truncated: bool,
+    reasons: Vec<ArtifactReasonView>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ArtifactReasonView {
+    ProducingActivityMissing {
+        representation_id: String,
+    },
+    ProducingActivityAmbiguous {
+        representation_id: String,
+        activity_count: u32,
+    },
+    SnapshotAbsent {
+        activity_id: String,
+        representation_id: String,
+        edge: &'static str,
+    },
+    FingerprintEvidenceMissing {
+        activity_id: String,
+        representation_id: String,
+        edge: &'static str,
+        fingerprint_algorithm: Option<String>,
+        fingerprint_version: Option<u16>,
+        snapshot_value_hex: Option<String>,
+        current_value_hex: Option<String>,
+    },
+    FingerprintChanged {
+        activity_id: String,
+        representation_id: String,
+        edge: &'static str,
+        fingerprint_algorithm: String,
+        fingerprint_version: u16,
+        snapshot_value_hex: String,
+        current_value_hex: String,
+    },
+    FingerprintRecomputationPending {
+        activity_id: String,
+        representation_id: String,
+        edge: &'static str,
+    },
+    UpstreamNotCurrent {
+        representation_id: String,
+        upstream_state: &'static str,
+    },
+    TraversalTruncated {
+        representation_id: String,
+        traversal_limit: &'static str,
+    },
+}
+
+#[derive(Debug, Serialize)]
 struct RevisionView {
     id: String,
     sequence: u64,
@@ -1037,6 +1122,9 @@ fn execute(cli: Cli) -> Result<()> {
             ActivityCommand::Descendants(args) => {
                 activity_relatives(&args, ProvenanceDirection::Descendants, cli.json)
             }
+        },
+        Command::Artifact(args) => match args.command {
+            ArtifactCommand::Evaluate(args) => artifact_evaluate(&args, cli.json),
         },
         Command::Revisions(args) => match args.command {
             RevisionsCommand::Latest(args) => revisions_latest(&args, cli.json),
@@ -1985,6 +2073,180 @@ fn activity_edge_snapshot_view(
                 observed_revision_sequence: fingerprint.observed_revision_sequence(),
             })
             .collect(),
+    }
+}
+
+fn artifact_evaluate(args: &ArtifactEvaluateArgs, json: bool) -> Result<()> {
+    let representation_id = parse_representation_id(&args.representation_id)?;
+    let limits = ArtifactEvaluationLimits::new(args.max_depth, args.max_representations)
+        .context("validate artifact evaluation bounds")?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let evaluation = production
+        .evaluate_artifact(representation_id, limits)
+        .context("evaluate artifact")?;
+    let view = ArtifactEvaluationView {
+        representation_id: evaluation.representation_id().to_string(),
+        state: artifact_knowledge_state_name(evaluation.state())?,
+        visited_representations: evaluation.visited_representations(),
+        truncated: evaluation.is_truncated(),
+        reasons: evaluation
+            .reasons()
+            .iter()
+            .map(artifact_reason_view)
+            .collect::<Result<Vec<_>>>()?,
+    };
+
+    if json {
+        print_json(&view)
+    } else {
+        println!(
+            "{}\t{}\t{} representation(s) visited",
+            view.representation_id, view.state, view.visited_representations
+        );
+        for reason in &view.reasons {
+            let (kind, representation_id) = artifact_reason_summary(reason);
+            println!("reason\t{kind}\t{representation_id}");
+        }
+        Ok(())
+    }
+}
+
+fn artifact_reason_view(reason: &ArtifactKnowledgeReason) -> Result<ArtifactReasonView> {
+    match reason {
+        ArtifactKnowledgeReason::ProducingActivityMissing { representation_id } => {
+            Ok(ArtifactReasonView::ProducingActivityMissing {
+                representation_id: representation_id.to_string(),
+            })
+        }
+        ArtifactKnowledgeReason::ProducingActivityAmbiguous {
+            representation_id,
+            activity_count,
+        } => Ok(ArtifactReasonView::ProducingActivityAmbiguous {
+            representation_id: representation_id.to_string(),
+            activity_count: *activity_count,
+        }),
+        ArtifactKnowledgeReason::SnapshotAbsent {
+            activity_id,
+            representation_id,
+            edge,
+        } => Ok(ArtifactReasonView::SnapshotAbsent {
+            activity_id: activity_id.to_string(),
+            representation_id: representation_id.to_string(),
+            edge: artifact_edge_name(*edge)?,
+        }),
+        ArtifactKnowledgeReason::FingerprintEvidenceMissing {
+            activity_id,
+            representation_id,
+            edge,
+            algorithm,
+            version,
+            snapshot_value,
+            current_value,
+        } => Ok(ArtifactReasonView::FingerprintEvidenceMissing {
+            activity_id: activity_id.to_string(),
+            representation_id: representation_id.to_string(),
+            edge: artifact_edge_name(*edge)?,
+            fingerprint_algorithm: algorithm.clone(),
+            fingerprint_version: *version,
+            snapshot_value_hex: snapshot_value.as_ref().map(hex::encode),
+            current_value_hex: current_value.as_ref().map(hex::encode),
+        }),
+        ArtifactKnowledgeReason::FingerprintChanged {
+            activity_id,
+            representation_id,
+            edge,
+            algorithm,
+            version,
+            snapshot_value,
+            current_value,
+        } => Ok(ArtifactReasonView::FingerprintChanged {
+            activity_id: activity_id.to_string(),
+            representation_id: representation_id.to_string(),
+            edge: artifact_edge_name(*edge)?,
+            fingerprint_algorithm: algorithm.clone(),
+            fingerprint_version: *version,
+            snapshot_value_hex: hex::encode(snapshot_value),
+            current_value_hex: hex::encode(current_value),
+        }),
+        ArtifactKnowledgeReason::FingerprintRecomputationPending {
+            activity_id,
+            representation_id,
+            edge,
+        } => Ok(ArtifactReasonView::FingerprintRecomputationPending {
+            activity_id: activity_id.to_string(),
+            representation_id: representation_id.to_string(),
+            edge: artifact_edge_name(*edge)?,
+        }),
+        ArtifactKnowledgeReason::UpstreamNotCurrent {
+            representation_id,
+            state,
+        } => Ok(ArtifactReasonView::UpstreamNotCurrent {
+            representation_id: representation_id.to_string(),
+            upstream_state: artifact_knowledge_state_name(*state)?,
+        }),
+        ArtifactKnowledgeReason::TraversalTruncated {
+            limit,
+            representation_id,
+        } => Ok(ArtifactReasonView::TraversalTruncated {
+            representation_id: representation_id.to_string(),
+            traversal_limit: artifact_traversal_limit_name(*limit)?,
+        }),
+        _ => bail!("unsupported artifact evaluation reason"),
+    }
+}
+
+fn artifact_reason_summary(reason: &ArtifactReasonView) -> (&'static str, &str) {
+    match reason {
+        ArtifactReasonView::ProducingActivityMissing { representation_id } => {
+            ("producing_activity_missing", representation_id)
+        }
+        ArtifactReasonView::ProducingActivityAmbiguous {
+            representation_id, ..
+        } => ("producing_activity_ambiguous", representation_id),
+        ArtifactReasonView::SnapshotAbsent {
+            representation_id, ..
+        } => ("snapshot_absent", representation_id),
+        ArtifactReasonView::FingerprintEvidenceMissing {
+            representation_id, ..
+        } => ("fingerprint_evidence_missing", representation_id),
+        ArtifactReasonView::FingerprintChanged {
+            representation_id, ..
+        } => ("fingerprint_changed", representation_id),
+        ArtifactReasonView::FingerprintRecomputationPending {
+            representation_id, ..
+        } => ("fingerprint_recomputation_pending", representation_id),
+        ArtifactReasonView::UpstreamNotCurrent {
+            representation_id, ..
+        } => ("upstream_not_current", representation_id),
+        ArtifactReasonView::TraversalTruncated {
+            representation_id, ..
+        } => ("traversal_truncated", representation_id),
+    }
+}
+
+fn artifact_knowledge_state_name(state: ArtifactKnowledgeState) -> Result<&'static str> {
+    match state {
+        ArtifactKnowledgeState::Current => Ok("current"),
+        ArtifactKnowledgeState::Stale => Ok("stale"),
+        ArtifactKnowledgeState::Indeterminate => Ok("indeterminate"),
+        ArtifactKnowledgeState::Diverged => Ok("diverged"),
+        _ => bail!("unsupported artifact knowledge state"),
+    }
+}
+
+fn artifact_edge_name(edge: ArtifactEdgeKind) -> Result<&'static str> {
+    match edge {
+        ArtifactEdgeKind::Input => Ok("input"),
+        ArtifactEdgeKind::Output => Ok("output"),
+        _ => bail!("unsupported artifact edge kind"),
+    }
+}
+
+fn artifact_traversal_limit_name(limit: ArtifactTraversalLimitKind) -> Result<&'static str> {
+    match limit {
+        ArtifactTraversalLimitKind::Depth => Ok("depth"),
+        ArtifactTraversalLimitKind::Representations => Ok("representations"),
+        _ => bail!("unsupported artifact traversal limit"),
     }
 }
 
