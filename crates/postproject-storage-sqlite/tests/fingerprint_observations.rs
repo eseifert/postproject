@@ -83,10 +83,18 @@ fn observations_are_journaled_and_activity_edges_snapshot_storage_state() {
         .expect("new input has snapshot");
     assert_eq!(input_snapshot.revision_sequence(), 1);
     assert_eq!(input_snapshot.fingerprints()[0].value(), [1]);
+    assert_eq!(
+        input_snapshot.fingerprints()[0].observed_revision_sequence(),
+        Some(1)
+    );
     let output_snapshot = stored_activity.outputs()[0]
         .snapshot()
         .expect("new output has snapshot");
     assert_eq!(output_snapshot.fingerprints()[0].value(), [2]);
+    assert_eq!(
+        output_snapshot.fingerprints()[0].observed_revision_sequence(),
+        Some(1)
+    );
 
     let unchanged = ResourceFingerprint::new("content", 1, vec![1]).expect("valid fingerprint");
     {

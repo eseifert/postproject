@@ -132,6 +132,7 @@ impl<'production> SqliteTransaction<'production> {
         locators: &[Locator],
     ) -> Result<()> {
         let transaction = self.open_transaction()?;
+        let observation_sequence = next_revision_sequence(transaction)?;
         transaction
             .execute(
                 "INSERT INTO representations (
@@ -149,19 +150,21 @@ impl<'production> SqliteTransaction<'production> {
             transaction
                 .execute(
                     "INSERT INTO representation_fingerprints (
-                        representation_id, algorithm, algorithm_version, value
-                     ) VALUES (?1, ?2, ?3, ?4)",
+                        representation_id, algorithm, algorithm_version, value,
+                        observed_revision_sequence
+                     ) VALUES (?1, ?2, ?3, ?4, ?5)",
                     params![
                         representation.id().as_bytes().as_slice(),
                         fingerprint.algorithm(),
                         fingerprint.version(),
                         fingerprint.value(),
+                        observation_sequence,
                     ],
                 )
                 .map_err(mutation_error("persist representation fingerprint"))?;
         }
         for resource in resources {
-            persist_resource(transaction, resource)?;
+            persist_resource(transaction, resource, observation_sequence)?;
         }
         persist_content_structure(
             transaction,
@@ -1478,7 +1481,11 @@ fn encode_availability(value: LocatorAvailability) -> Result<i64> {
     }
 }
 
-fn persist_resource(transaction: &Transaction<'_>, resource: &Resource) -> Result<()> {
+fn persist_resource(
+    transaction: &Transaction<'_>,
+    resource: &Resource,
+    observation_sequence: i64,
+) -> Result<()> {
     let size = resource
         .file_facts()
         .map(|facts| {
@@ -1505,13 +1512,15 @@ fn persist_resource(transaction: &Transaction<'_>, resource: &Resource) -> Resul
         transaction
             .execute(
                 "INSERT INTO resource_fingerprints (
-                    resource_id, algorithm, algorithm_version, value
-                 ) VALUES (?1, ?2, ?3, ?4)",
+                    resource_id, algorithm, algorithm_version, value,
+                    observed_revision_sequence
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     resource.id().as_bytes().as_slice(),
                     fingerprint.algorithm(),
                     fingerprint.version(),
                     fingerprint.value(),
+                    observation_sequence,
                 ],
             )
             .map_err(mutation_error("persist resource fingerprint"))?;
