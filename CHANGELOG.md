@@ -5,6 +5,8 @@ All notable changes to PostProject will be documented here. The project uses
 
 ## Unreleased
 
+Development version: `0.4.0-alpha.1`.
+
 ### Added
 
 - Added SQLite schema 7 foundations for explicit, journaled fingerprint
