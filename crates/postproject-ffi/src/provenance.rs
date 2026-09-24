@@ -2,7 +2,7 @@
 
 use std::ffi::CString;
 
-use postproject_core::{Activity, ActivityId, Error, RepresentationId};
+use postproject_core::{Activity, ActivityEdgeSnapshot, ActivityId, Error, RepresentationId};
 
 use crate::exact_cstring;
 
@@ -25,6 +25,19 @@ pub(crate) struct AbiActivity {
 pub(crate) struct AbiActivityEdge {
     pub(crate) representation_id: RepresentationId,
     pub(crate) role: Option<CString>,
+    pub(crate) snapshot: Option<AbiActivityEdgeSnapshot>,
+}
+
+pub(crate) struct AbiActivityEdgeSnapshot {
+    pub(crate) revision_sequence: u64,
+    pub(crate) fingerprints: Vec<AbiFingerprintSnapshot>,
+}
+
+pub(crate) struct AbiFingerprintSnapshot {
+    pub(crate) algorithm: CString,
+    pub(crate) version: u16,
+    pub(crate) value: Vec<u8>,
+    pub(crate) observed_revision_sequence: Option<u64>,
 }
 
 pub(crate) struct AbiTool {
@@ -72,6 +85,7 @@ impl TryFrom<&Activity> for AbiActivity {
                     AbiActivityEdge::new(
                         input.representation_id(),
                         input.role().map(postproject_core::ActivityRole::as_str),
+                        input.snapshot(),
                     )
                 })
                 .collect::<Result<_, _>>()?,
@@ -82,6 +96,7 @@ impl TryFrom<&Activity> for AbiActivity {
                     AbiActivityEdge::new(
                         output.representation_id(),
                         output.role().map(postproject_core::ActivityRole::as_str),
+                        output.snapshot(),
                     )
                 })
                 .collect::<Result<_, _>>()?,
@@ -90,12 +105,45 @@ impl TryFrom<&Activity> for AbiActivity {
 }
 
 impl AbiActivityEdge {
-    fn new(representation_id: RepresentationId, role: Option<&str>) -> Result<Self, Error> {
+    fn new(
+        representation_id: RepresentationId,
+        role: Option<&str>,
+        snapshot: Option<&ActivityEdgeSnapshot>,
+    ) -> Result<Self, Error> {
         Ok(Self {
             representation_id,
             role: role
                 .map(|value| exact_cstring(value, "activity edge role"))
                 .transpose()?,
+            snapshot: snapshot
+                .map(AbiActivityEdgeSnapshot::try_from)
+                .transpose()?,
+        })
+    }
+}
+
+impl TryFrom<&ActivityEdgeSnapshot> for AbiActivityEdgeSnapshot {
+    type Error = Error;
+
+    fn try_from(snapshot: &ActivityEdgeSnapshot) -> Result<Self, Self::Error> {
+        let fingerprints = snapshot
+            .fingerprints()
+            .iter()
+            .map(|fingerprint| {
+                Ok(AbiFingerprintSnapshot {
+                    algorithm: exact_cstring(
+                        fingerprint.algorithm(),
+                        "activity snapshot fingerprint algorithm",
+                    )?,
+                    version: fingerprint.version(),
+                    value: fingerprint.value().to_vec(),
+                    observed_revision_sequence: fingerprint.observed_revision_sequence(),
+                })
+            })
+            .collect::<Result<_, Error>>()?;
+        Ok(Self {
+            revision_sequence: snapshot.revision_sequence(),
+            fingerprints,
         })
     }
 }

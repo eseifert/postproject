@@ -12,7 +12,8 @@ All notable changes to PostProject will be documented here. The project uses
   and storage-captured activity input/output snapshots. Existing activities
   migrate with absent snapshots rather than fabricated historical state.
 - Added C ABI version 16 transaction functions for explicitly recording
-  resource and structure-aware representation fingerprint observations.
+  resource and structure-aware representation fingerprint observations, plus
+  inspection of storage-captured activity-edge fingerprint snapshots.
 
 ## 0.3.0-alpha.2 - 2026-09-24
 

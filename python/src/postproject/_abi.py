@@ -251,7 +251,11 @@ EXPORTED_SYMBOLS = (
     "pp_activity_set_get",
     "pp_activity_set_get_agent",
     "pp_activity_set_get_input",
+    "pp_activity_set_get_input_snapshot",
+    "pp_activity_set_get_input_snapshot_fingerprint",
     "pp_activity_set_get_output",
+    "pp_activity_set_get_output_snapshot",
+    "pp_activity_set_get_output_snapshot_fingerprint",
     "pp_activity_set_get_tool",
     "pp_activity_set_release",
     "pp_asset_set_count",
@@ -535,6 +539,14 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_activity_set_get_input.restype = ErrorCode
     lib.pp_activity_set_get_output.argtypes = [ctypes.POINTER(ActivitySet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_activity_set_get_output.restype = ErrorCode
+    lib.pp_activity_set_get_input_snapshot.argtypes = [ctypes.POINTER(ActivitySet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_activity_set_get_input_snapshot.restype = ErrorCode
+    lib.pp_activity_set_get_output_snapshot.argtypes = [ctypes.POINTER(ActivitySet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_activity_set_get_output_snapshot.restype = ErrorCode
+    lib.pp_activity_set_get_input_snapshot_fingerprint.argtypes = [ctypes.POINTER(ActivitySet), ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_activity_set_get_input_snapshot_fingerprint.restype = ErrorCode
+    lib.pp_activity_set_get_output_snapshot_fingerprint.argtypes = [ctypes.POINTER(ActivitySet), ctypes.c_uint64, ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint16), ctypes.POINTER(ctypes.POINTER(ctypes.c_uint8)), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_activity_set_get_output_snapshot_fingerprint.restype = ErrorCode
     lib.pp_activity_set_release.argtypes = [ctypes.POINTER(ActivitySet)]
     lib.pp_activity_set_release.restype = None
     lib.pp_production_latest_revision.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ctypes.POINTER(RevisionSet)), ctypes.POINTER(ctypes.POINTER(Error))]

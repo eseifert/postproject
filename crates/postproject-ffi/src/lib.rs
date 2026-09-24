@@ -46,8 +46,8 @@ use postproject_storage_sqlite::SqliteProduction;
 use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
 pub use metadata_input::PpMetadataInput;
-use provenance::AbiActivityEdge;
 pub use provenance::PpActivitySet;
+use provenance::{AbiActivityEdge, AbiActivityEdgeSnapshot, AbiFingerprintSnapshot};
 pub use representations::PpRepresentationSet;
 pub use revision_events::PpRevisionEventSet;
 pub use revisions::PpRevisionSet;
@@ -1475,6 +1475,167 @@ pub unsafe extern "C" fn pp_activity_set_get_output(
                 output_index,
                 out_representation_id,
                 out_role,
+            )
+        })
+    }
+}
+
+/// Reads the storage-captured snapshot summary for one input edge.
+///
+/// An absent snapshot is reported by a zero presence flag, revision, and count.
+///
+/// # Safety
+///
+/// `activities` must be live. Every output must be writable and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_activity_set_get_input_snapshot(
+    activities: *const PpActivitySet,
+    activity_index: u64,
+    input_index: u64,
+    out_has_snapshot: *mut u8,
+    out_revision_sequence: *mut u64,
+    out_fingerprint_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The shared helper initializes and validates every output.
+    unsafe {
+        ffi_call(out_error, || {
+            let activities = activities
+                .as_ref()
+                .ok_or_else(|| invalid_argument("activities must not be null"))?;
+            let activity = item_at(&activities.activities, activity_index, "activity")?;
+            write_activity_edge_snapshot(
+                &activity.inputs,
+                input_index,
+                out_has_snapshot,
+                out_revision_sequence,
+                out_fingerprint_count,
+            )
+        })
+    }
+}
+
+/// Reads the storage-captured snapshot summary for one output edge.
+///
+/// Pointer and absence rules match [`pp_activity_set_get_input_snapshot`].
+///
+/// # Safety
+///
+/// All pointers follow the rules documented above.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_activity_set_get_output_snapshot(
+    activities: *const PpActivitySet,
+    activity_index: u64,
+    output_index: u64,
+    out_has_snapshot: *mut u8,
+    out_revision_sequence: *mut u64,
+    out_fingerprint_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The shared helper initializes and validates every output.
+    unsafe {
+        ffi_call(out_error, || {
+            let activities = activities
+                .as_ref()
+                .ok_or_else(|| invalid_argument("activities must not be null"))?;
+            let activity = item_at(&activities.activities, activity_index, "activity")?;
+            write_activity_edge_snapshot(
+                &activity.outputs,
+                output_index,
+                out_has_snapshot,
+                out_revision_sequence,
+                out_fingerprint_count,
+            )
+        })
+    }
+}
+
+/// Reads one fingerprint from an input-edge snapshot.
+///
+/// Returned algorithm and value pointers borrow the activity set.
+///
+/// # Safety
+///
+/// `activities` must be live. Every output must be writable and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments, reason = "flat C outputs are ABI-safe")]
+pub unsafe extern "C" fn pp_activity_set_get_input_snapshot_fingerprint(
+    activities: *const PpActivitySet,
+    activity_index: u64,
+    input_index: u64,
+    fingerprint_index: u64,
+    out_algorithm: *mut *const c_char,
+    out_version: *mut u16,
+    out_value: *mut *const u8,
+    out_value_length: *mut u64,
+    out_has_observed_revision: *mut u8,
+    out_observed_revision_sequence: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The shared helper initializes and validates every output.
+    unsafe {
+        ffi_call(out_error, || {
+            let activities = activities
+                .as_ref()
+                .ok_or_else(|| invalid_argument("activities must not be null"))?;
+            let activity = item_at(&activities.activities, activity_index, "activity")?;
+            let edge = item_at(&activity.inputs, input_index, "activity input")?;
+            write_snapshot_fingerprint(
+                edge.snapshot.as_ref(),
+                fingerprint_index,
+                out_algorithm,
+                out_version,
+                out_value,
+                out_value_length,
+                out_has_observed_revision,
+                out_observed_revision_sequence,
+            )
+        })
+    }
+}
+
+/// Reads one fingerprint from an output-edge snapshot.
+///
+/// Pointer and ownership rules match
+/// [`pp_activity_set_get_input_snapshot_fingerprint`].
+///
+/// # Safety
+///
+/// All pointers follow the rules documented above.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments, reason = "flat C outputs are ABI-safe")]
+pub unsafe extern "C" fn pp_activity_set_get_output_snapshot_fingerprint(
+    activities: *const PpActivitySet,
+    activity_index: u64,
+    output_index: u64,
+    fingerprint_index: u64,
+    out_algorithm: *mut *const c_char,
+    out_version: *mut u16,
+    out_value: *mut *const u8,
+    out_value_length: *mut u64,
+    out_has_observed_revision: *mut u8,
+    out_observed_revision_sequence: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The shared helper initializes and validates every output.
+    unsafe {
+        ffi_call(out_error, || {
+            let activities = activities
+                .as_ref()
+                .ok_or_else(|| invalid_argument("activities must not be null"))?;
+            let activity = item_at(&activities.activities, activity_index, "activity")?;
+            let edge = item_at(&activity.outputs, output_index, "activity output")?;
+            write_snapshot_fingerprint(
+                edge.snapshot.as_ref(),
+                fingerprint_index,
+                out_algorithm,
+                out_version,
+                out_value,
+                out_value_length,
+                out_has_observed_revision,
+                out_observed_revision_sequence,
             )
         })
     }
@@ -3958,6 +4119,75 @@ unsafe fn write_activity_edge(
                 .as_ref()
                 .map_or(ptr::null(), |value| value.as_ptr()),
         );
+        Ok(())
+    }
+}
+
+unsafe fn write_activity_edge_snapshot(
+    edges: &[AbiActivityEdge],
+    index: u64,
+    out_has_snapshot: *mut u8,
+    out_revision_sequence: *mut u64,
+    out_fingerprint_count: *mut u64,
+) -> Result<(), Error> {
+    // SAFETY: Output validity is checked before any pointer is written.
+    unsafe {
+        initialize_value(out_has_snapshot, 0);
+        initialize_value(out_revision_sequence, 0);
+        initialize_value(out_fingerprint_count, 0);
+        require_output(out_has_snapshot, "out_has_snapshot")?;
+        require_output(out_revision_sequence, "out_revision_sequence")?;
+        require_output(out_fingerprint_count, "out_fingerprint_count")?;
+        let edge = item_at(edges, index, "activity edge")?;
+        if let Some(snapshot) = &edge.snapshot {
+            out_has_snapshot.write(1);
+            out_revision_sequence.write(snapshot.revision_sequence);
+            out_fingerprint_count.write(length_as_u64(snapshot.fingerprints.len())?);
+        }
+        Ok(())
+    }
+}
+
+#[allow(clippy::too_many_arguments, reason = "flat C outputs are ABI-safe")]
+unsafe fn write_snapshot_fingerprint(
+    snapshot: Option<&AbiActivityEdgeSnapshot>,
+    index: u64,
+    out_algorithm: *mut *const c_char,
+    out_version: *mut u16,
+    out_value: *mut *const u8,
+    out_value_length: *mut u64,
+    out_has_observed_revision: *mut u8,
+    out_observed_revision_sequence: *mut u64,
+) -> Result<(), Error> {
+    // SAFETY: Output validity is checked before any pointer is written.
+    unsafe {
+        initialize_const_output(out_algorithm);
+        initialize_value(out_version, 0);
+        initialize_const_output(out_value);
+        initialize_value(out_value_length, 0);
+        initialize_value(out_has_observed_revision, 0);
+        initialize_value(out_observed_revision_sequence, 0);
+        require_output(out_algorithm, "out_algorithm")?;
+        require_output(out_version, "out_version")?;
+        require_output(out_value, "out_value")?;
+        require_output(out_value_length, "out_value_length")?;
+        require_output(out_has_observed_revision, "out_has_observed_revision")?;
+        require_output(
+            out_observed_revision_sequence,
+            "out_observed_revision_sequence",
+        )?;
+        let snapshot = snapshot
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "activity edge snapshot is absent"))?;
+        let fingerprint: &AbiFingerprintSnapshot =
+            item_at(&snapshot.fingerprints, index, "snapshot fingerprint")?;
+        out_algorithm.write(fingerprint.algorithm.as_ptr());
+        out_version.write(fingerprint.version);
+        out_value.write(fingerprint.value.as_ptr());
+        out_value_length.write(length_as_u64(fingerprint.value.len())?);
+        if let Some(sequence) = fingerprint.observed_revision_sequence {
+            out_has_observed_revision.write(1);
+            out_observed_revision_sequence.write(sequence);
+        }
         Ok(())
     }
 }

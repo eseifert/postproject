@@ -468,6 +468,32 @@ PP_API pp_error_code_t pp_activity_set_get_output(
     const pp_activity_set_t *activities, uint64_t activity_index,
     uint64_t output_index, pp_uuid_t *out_representation_id,
     const char **out_role, pp_error_t **out_error);
+/* Edge snapshots are captured by storage at activity commit. A migrated edge
+ * may report no snapshot. Returned fingerprint bytes borrow the result set. */
+PP_API pp_error_code_t pp_activity_set_get_input_snapshot(
+    const pp_activity_set_t *activities, uint64_t activity_index,
+    uint64_t input_index, uint8_t *out_has_snapshot,
+    uint64_t *out_revision_sequence, uint64_t *out_fingerprint_count,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_activity_set_get_output_snapshot(
+    const pp_activity_set_t *activities, uint64_t activity_index,
+    uint64_t output_index, uint8_t *out_has_snapshot,
+    uint64_t *out_revision_sequence, uint64_t *out_fingerprint_count,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_activity_set_get_input_snapshot_fingerprint(
+    const pp_activity_set_t *activities, uint64_t activity_index,
+    uint64_t input_index, uint64_t fingerprint_index,
+    const char **out_algorithm, uint16_t *out_version,
+    const uint8_t **out_value, uint64_t *out_value_length,
+    uint8_t *out_has_observed_revision,
+    uint64_t *out_observed_revision_sequence, pp_error_t **out_error);
+PP_API pp_error_code_t pp_activity_set_get_output_snapshot_fingerprint(
+    const pp_activity_set_t *activities, uint64_t activity_index,
+    uint64_t output_index, uint64_t fingerprint_index,
+    const char **out_algorithm, uint16_t *out_version,
+    const uint8_t **out_value, uint64_t *out_value_length,
+    uint8_t *out_has_observed_revision,
+    uint64_t *out_observed_revision_sequence, pp_error_t **out_error);
 PP_API void pp_activity_set_release(pp_activity_set_t *activities);
 /* Revision strings are borrowed until pp_revision_set_release(). Latest
  * returns a set containing zero or one revision. */

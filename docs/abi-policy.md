@@ -110,6 +110,9 @@ with a pattern and frame domain rather than one synthetic resource per frame.
 ABI version 16 adds explicit transaction mutations for resource and
 structure-aware representation fingerprint observations. Callers retain their
 input buffers; the transaction copies them and persists them only at commit.
+Activity-edge accessors also expose storage-captured snapshot revisions and
+fingerprints. Their returned strings and byte spans borrow the activity set;
+legacy migrated edges report an absent snapshot explicitly.
 
 ## External identifiers
 

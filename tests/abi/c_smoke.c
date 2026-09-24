@@ -754,6 +754,15 @@ int main(int argc, char **argv) {
   const char *agent_qualifier = NULL;
   pp_uuid_t output_representation_id = {{0}};
   const char *output_role = NULL;
+  uint8_t has_output_snapshot = 0;
+  uint64_t output_snapshot_revision = 0;
+  uint64_t output_snapshot_fingerprint_count = 0;
+  const char *snapshot_algorithm = NULL;
+  uint16_t snapshot_version = 0;
+  const uint8_t *snapshot_value = NULL;
+  uint64_t snapshot_value_length = 0;
+  uint8_t has_observed_revision = 0;
+  uint64_t observed_revision = 0;
   if (pp_activity_set_get_tool(activities, 0, &tool_name, &tool_version,
                                &tool_uri, &error) != PP_OK ||
       tool_name == NULL || strcmp(tool_name, "C ingest") != 0 ||
@@ -772,7 +781,20 @@ int main(int argc, char **argv) {
                                  &error) != PP_OK ||
       memcmp(output_representation_id.bytes, representation_id.bytes,
              sizeof(representation_id.bytes)) != 0 ||
-      output_role == NULL || strcmp(output_role, "org.postproject:output.master") != 0) {
+      output_role == NULL ||
+      strcmp(output_role, "org.postproject:output.master") != 0 ||
+      pp_activity_set_get_output_snapshot(
+          activities, 0, 0, &has_output_snapshot, &output_snapshot_revision,
+          &output_snapshot_fingerprint_count, &error) != PP_OK ||
+      has_output_snapshot != UINT8_C(1) || output_snapshot_revision == 0 ||
+      output_snapshot_fingerprint_count < UINT64_C(1) ||
+      pp_activity_set_get_output_snapshot_fingerprint(
+          activities, 0, 0, 0, &snapshot_algorithm, &snapshot_version,
+          &snapshot_value, &snapshot_value_length, &has_observed_revision,
+          &observed_revision, &error) != PP_OK ||
+      snapshot_algorithm == NULL || snapshot_version == 0 ||
+      snapshot_value == NULL || snapshot_value_length == 0 ||
+      has_observed_revision != UINT8_C(1) || observed_revision == 0) {
     pp_activity_set_release(activities);
     pp_resolution_set_release(resolutions);
     pp_production_release(production);
