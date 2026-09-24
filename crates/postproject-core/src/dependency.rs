@@ -153,6 +153,82 @@ impl Dependency {
     }
 }
 
+/// Whether an observed dependency set still describes its source content.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum DependencySetStatus {
+    /// The set was recorded for the source's current content observation.
+    Current,
+    /// The source changed and its set must be extracted again.
+    NeedsExtraction,
+}
+
+/// One complete ordered observation of a representation's dependencies.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DependencySet {
+    source_representation_id: RepresentationId,
+    recorded_at_revision: u64,
+    status: DependencySetStatus,
+    dependencies: Vec<Dependency>,
+}
+
+impl DependencySet {
+    /// Reconstructs a bounded dependency-set observation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-argument error for revision zero or too many edges.
+    pub fn new(
+        source_representation_id: RepresentationId,
+        recorded_at_revision: u64,
+        status: DependencySetStatus,
+        dependencies: Vec<Dependency>,
+    ) -> Result<Self> {
+        if recorded_at_revision == 0 {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "dependency-set revision must be greater than zero",
+            ));
+        }
+        if dependencies.len() > MAX_DEPENDENCIES_PER_SET {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                format!("dependency set must contain at most {MAX_DEPENDENCIES_PER_SET} edges"),
+            ));
+        }
+        Ok(Self {
+            source_representation_id,
+            recorded_at_revision,
+            status,
+            dependencies,
+        })
+    }
+
+    /// Returns the representation whose content supplied the set.
+    #[must_use]
+    pub const fn source_representation_id(&self) -> RepresentationId {
+        self.source_representation_id
+    }
+
+    /// Returns the revision that committed this complete set.
+    #[must_use]
+    pub const fn recorded_at_revision(&self) -> u64 {
+        self.recorded_at_revision
+    }
+
+    /// Returns whether the set needs extraction after a source change.
+    #[must_use]
+    pub const fn status(&self) -> DependencySetStatus {
+        self.status
+    }
+
+    /// Returns dependency occurrences in authored order.
+    #[must_use]
+    pub fn dependencies(&self) -> &[Dependency] {
+        &self.dependencies
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,5 +264,26 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn dependency_sets_preserve_repeated_authored_order() {
+        let edge = Dependency::new(
+            None,
+            DependencyKind::new("org.postproject:requires").expect("kind"),
+            DependencyTarget::Asset(AssetId::from_bytes([3; 16])),
+            Some(RepresentationId::from_bytes([4; 16])),
+            true,
+            "asset://character",
+        )
+        .expect("dependency");
+        let set = DependencySet::new(
+            RepresentationId::from_bytes([1; 16]),
+            7,
+            DependencySetStatus::Current,
+            vec![edge.clone(), edge],
+        )
+        .expect("set");
+        assert_eq!(set.dependencies().len(), 2);
     }
 }
