@@ -27,5 +27,9 @@ harness = false
 name = "large_fixture"
 harness = false
 
+[[bench]]
+name = "iteration_four_baseline"
+harness = false
+
 [lints]
 workspace = true
