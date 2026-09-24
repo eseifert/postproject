@@ -70,9 +70,9 @@ machine-local and disposable; removing it changes scan cost, not results.
 
 ## Resolve an editorial reference
 
-The maintained [OpenAssetIO Manager](https://github.com/eseifert/postproject-openassetio-manager)
+The maintained [OpenAssetIO Manager](https://github.com/postproject-org/postproject-openassetio-manager)
 accepts the same versioned representation bindings exposed by PostProject. The
-[OTIO demonstration](https://github.com/eseifert/postproject-otio-demo) stores
+[OTIO demonstration](https://github.com/postproject-org/postproject-otio-demo) stores
 one in an ordinary `ExternalReference` and lets the upstream OpenAssetIO media
 linker resolve it to locatable content. Rational clip time remains owned by
 OTIO, and an image sequence remains one PostProject representation.

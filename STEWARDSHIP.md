@@ -1,7 +1,7 @@
 # Stewardship
 
 PostProject is currently stewarded by the owner and maintainers of
-[`eseifert/postproject`](https://github.com/eseifert/postproject). Maintainer
+[`postproject-org/postproject`](https://github.com/postproject-org/postproject). Maintainer
 authority is represented by repository merge and release permissions. Design,
 compatibility, and release decisions are recorded publicly in issues, pull
 requests, architecture decision records, the changelog, and acceptance reports.

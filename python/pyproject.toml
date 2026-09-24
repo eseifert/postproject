@@ -19,8 +19,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/eseifert/postproject"
-Repository = "https://github.com/eseifert/postproject"
+Homepage = "https://github.com/postproject-org/postproject"
+Repository = "https://github.com/postproject-org/postproject"
 
 [project.optional-dependencies]
 dev = [

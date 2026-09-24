@@ -6,7 +6,7 @@
 ## Decision
 
 The ecosystem, prose name, and CMake project are **PostProject**. The repository
-is `eseifert/postproject`; Rust crates are `postproject-*`; installed headers are
+is `postproject-org/postproject`; Rust crates are `postproject-*`; installed headers are
 under `postproject/`; the C ABI uses `pp_`; the C++ namespace is `postproject`;
 and the CLI is `postproject`.
 

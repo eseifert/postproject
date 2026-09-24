@@ -38,7 +38,7 @@ installed CMake package without Cargo.
   gates.
 - CI tests Rust on Linux, macOS, and Windows and builds conventional native
   packages and installed consumers on all three platforms. The implementation
-  acceptance run is [GitHub Actions run 35428079237](https://github.com/eseifert/libpostproject/actions/runs/35428079237).
+  acceptance run is [GitHub Actions run 35428079237](https://github.com/postproject-org/postproject/actions/runs/35428079237).
 
 ## Compatibility versions
 

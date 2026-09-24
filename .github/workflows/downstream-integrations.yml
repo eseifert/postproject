@@ -11,21 +11,21 @@ permissions:
 
 jobs:
   openassetio-manager:
-    uses: eseifert/postproject-openassetio/.github/workflows/ci.yml@main
+    uses: postproject-org/postproject-openassetio/.github/workflows/ci.yml@main
     with:
       postproject_ref: ${{ github.sha }}
 
   otio-openassetio:
-    uses: eseifert/postproject-otio-openassetio/.github/workflows/ci.yml@main
+    uses: postproject-org/postproject-otio-openassetio/.github/workflows/ci.yml@main
     with:
       postproject_ref: ${{ github.sha }}
 
   python-host:
-    uses: eseifert/postproject-python-host/.github/workflows/ci.yml@main
+    uses: postproject-org/postproject-python-host/.github/workflows/ci.yml@main
     with:
       postproject_ref: ${{ github.sha }}
 
   cpp-nle:
-    uses: eseifert/postproject-cpp-nle/.github/workflows/ci.yml@main
+    uses: postproject-org/postproject-cpp-nle/.github/workflows/ci.yml@main
     with:
       postproject_ref: ${{ github.sha }}

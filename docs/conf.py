@@ -50,7 +50,7 @@ html_extra_path = ["CNAME", "versions.json"]
 # a darker signal green that stays readable on a light background.
 FONT_STACK = "Inter, ui-sans-serif, system-ui, sans-serif"
 html_theme_options = {
-    "source_repository": "https://github.com/eseifert/postproject/",
+    "source_repository": "https://github.com/postproject-org/postproject/",
     "source_branch": "main",
     "source_directory": "docs/",
     "light_css_variables": {

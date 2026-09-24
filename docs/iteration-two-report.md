@@ -62,7 +62,7 @@ typed codecs preserve domain validation at the storage boundary.
   offline link checking, spelling, dependency/license policy, sanitizers, fuzz
   target builds, migration fixtures, and installed native consumers.
 - The updated acceptance workflow and installed quickstarts pass in
-  [GitHub Actions run 35832230676](https://github.com/eseifert/postproject/actions/runs/35832230676).
+  [GitHub Actions run 35832230676](https://github.com/postproject-org/postproject/actions/runs/35832230676).
 - The end-to-end fixture persists an original, sequence, ordered spans, a
   derived proxy, structured/repeated metadata, a UMID-shaped identifier, tool
   provenance, and one semantic revision batch. It then moves the source and

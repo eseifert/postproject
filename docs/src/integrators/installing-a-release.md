@@ -6,7 +6,7 @@ contains the shared and static libraries, C and C++ headers, CMake and
 `pkg-config` metadata, the `postproject` CLI, licenses, and tested examples.
 
 Download the archive for the target platform and its adjacent `.sha256` file
-from the [GitHub release](https://github.com/eseifert/postproject/releases).
+from the [GitHub release](https://github.com/postproject-org/postproject/releases).
 For example, on Linux:
 
 ```sh

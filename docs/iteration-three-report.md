@@ -30,14 +30,14 @@ release is package `0.3.0-alpha.2`, C ABI 15, and SQLite schema 6.
 Four validation repositories run against PostProject `main` and are also
 called by PostProject CI against the revision under review:
 
-- [OpenAssetIO Manager validation](https://github.com/eseifert/postproject-openassetio)
-- [OTIO-through-OpenAssetIO validation](https://github.com/eseifert/postproject-otio-openassetio)
-- [Python host validation](https://github.com/eseifert/postproject-python-host)
-- [C++ NLE validation](https://github.com/eseifert/postproject-cpp-nle)
+- [OpenAssetIO Manager validation](https://github.com/postproject-org/postproject-openassetio)
+- [OTIO-through-OpenAssetIO validation](https://github.com/postproject-org/postproject-otio-openassetio)
+- [Python host validation](https://github.com/postproject-org/postproject-python-host)
+- [C++ NLE validation](https://github.com/postproject-org/postproject-cpp-nle)
 
 Their findings informed the maintained
-[PostProject OpenAssetIO Manager](https://github.com/eseifert/postproject-openassetio-manager)
-and [OTIO demonstration](https://github.com/eseifert/postproject-otio-demo).
+[PostProject OpenAssetIO Manager](https://github.com/postproject-org/postproject-openassetio-manager)
+and [OTIO demonstration](https://github.com/postproject-org/postproject-otio-demo).
 The Manager resolves real productions and maps image-sequence structure without
 splitting a sequence into per-frame entities. The demo uses the upstream OTIO
 media linker and retains rational clip time.

@@ -20,6 +20,11 @@ Development version: `0.4.0-alpha.1`.
   divergence explanations, and structured reproducibility reports. C ABI
   version 17 exposes both read models through owned immutable result handles.
 
+### Changed
+
+- Moved the repository and its integration repositories to the
+  `postproject-org` GitHub organization; `eseifert/postproject` URLs redirect.
+
 ## 0.3.0-alpha.2 - 2026-09-24
 
 ### Changed
