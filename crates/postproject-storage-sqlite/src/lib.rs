@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 mod artifact;
+mod dependency_snapshot;
 mod metadata_codec;
 mod migrations;
 mod transaction;

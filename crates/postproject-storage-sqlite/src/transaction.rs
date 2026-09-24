@@ -14,8 +14,8 @@ use rusqlite::{
 };
 
 use crate::{
-    encode_identifier_target, encode_metadata_target, load_dependency_set, metadata_codec,
-    sqlite_error,
+    dependency_snapshot::persist_dependency_snapshot, encode_identifier_target,
+    encode_metadata_target, load_dependency_set, metadata_codec, sqlite_error,
 };
 
 /// An explicit production mutation transaction.
@@ -874,6 +874,7 @@ impl<'production> SqliteTransaction<'production> {
                     edge_id,
                     input.representation_id(),
                 )?;
+                persist_dependency_snapshot(transaction, edge_id, input.representation_id())?;
             }
             for output in activity.outputs() {
                 transaction

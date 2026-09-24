@@ -1,0 +1,223 @@
+//! Bounded capture of required dependency evidence on activity inputs.
+
+use std::collections::BTreeSet;
+
+use postproject_core::{
+    Dependency, DependencySetStatus, DependencyTarget, Error, ErrorKind, RepresentationId, Result,
+};
+use rusqlite::{Transaction, params};
+
+use crate::load_dependency_set;
+
+const MAX_DEPENDENCY_DEPTH: usize = 64;
+const MAX_DEPENDENCY_REPRESENTATIONS: usize = 1_000;
+
+#[derive(Clone)]
+struct PathEdge {
+    source_representation_id: RepresentationId,
+    dependency_position: usize,
+    dependency: Dependency,
+}
+
+struct CaptureContext<'transaction, 'connection> {
+    transaction: &'transaction Transaction<'connection>,
+    activity_input_id: i64,
+    next_path_position: i64,
+    visited: BTreeSet<RepresentationId>,
+    dependency_count: usize,
+}
+
+pub(crate) fn persist_dependency_snapshot(
+    transaction: &Transaction<'_>,
+    activity_input_id: i64,
+    input_representation_id: RepresentationId,
+) -> Result<()> {
+    transaction
+        .execute(
+            "INSERT INTO activity_input_dependency_snapshots (activity_input_id) VALUES (?1)",
+            [activity_input_id],
+        )
+        .map_err(snapshot_error("persist dependency snapshot marker"))?;
+    let mut context = CaptureContext {
+        transaction,
+        activity_input_id,
+        next_path_position: 0,
+        visited: BTreeSet::from([input_representation_id]),
+        dependency_count: 0,
+    };
+    capture_from(&mut context, input_representation_id, &[])
+}
+
+fn capture_from(
+    context: &mut CaptureContext<'_, '_>,
+    source_representation_id: RepresentationId,
+    path: &[PathEdge],
+) -> Result<()> {
+    let Some(set) = load_dependency_set(context.transaction, source_representation_id)? else {
+        return Ok(());
+    };
+    if set.status() == DependencySetStatus::NeedsExtraction {
+        persist_path(context, 1, source_representation_id, path, false)?;
+        return Ok(());
+    }
+    let required = set
+        .dependencies()
+        .iter()
+        .enumerate()
+        .filter(|(_, dependency)| dependency.is_required());
+    for (dependency_position, dependency) in required {
+        let mut next_path = path.to_vec();
+        next_path.push(PathEdge {
+            source_representation_id,
+            dependency_position,
+            dependency: dependency.clone(),
+        });
+        let target = match dependency.target() {
+            DependencyTarget::Representation(id) => Some(id),
+            DependencyTarget::Asset(_) => dependency.resolved_representation_id(),
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::Unsupported,
+                    "dependency target kind is not supported by this schema",
+                ));
+            }
+        };
+        let Some(target) = target else {
+            persist_path(context, 2, source_representation_id, &next_path, false)?;
+            continue;
+        };
+        if context.visited.contains(&target) {
+            continue;
+        }
+        if context.dependency_count == MAX_DEPENDENCY_REPRESENTATIONS {
+            persist_path(context, 4, target, &next_path, false)?;
+            continue;
+        }
+        context.visited.insert(target);
+        context.dependency_count += 1;
+
+        let target_set = load_dependency_set(context.transaction, target)?;
+        if target_set
+            .as_ref()
+            .is_some_and(|set| set.status() == DependencySetStatus::NeedsExtraction)
+        {
+            persist_path(context, 1, target, &next_path, false)?;
+            continue;
+        }
+        let has_required_children = target_set
+            .as_ref()
+            .is_some_and(|set| set.dependencies().iter().any(Dependency::is_required));
+        if next_path.len() == MAX_DEPENDENCY_DEPTH && has_required_children {
+            persist_path(context, 3, target, &next_path, false)?;
+            continue;
+        }
+        persist_path(context, 0, target, &next_path, true)?;
+        capture_from(context, target, &next_path)?;
+    }
+    Ok(())
+}
+
+fn persist_path(
+    context: &mut CaptureContext<'_, '_>,
+    status: i64,
+    subject_representation_id: RepresentationId,
+    path: &[PathEdge],
+    capture_fingerprints: bool,
+) -> Result<()> {
+    context
+        .transaction
+        .execute(
+            "INSERT INTO activity_input_dependency_paths (
+                activity_input_id, position, status, subject_representation_id
+             ) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                context.activity_input_id,
+                context.next_path_position,
+                status,
+                subject_representation_id.as_bytes().as_slice(),
+            ],
+        )
+        .map_err(snapshot_error("persist dependency snapshot path"))?;
+    context.next_path_position += 1;
+    let path_id = context.transaction.last_insert_rowid();
+    for (position, edge) in path.iter().enumerate() {
+        persist_path_edge(context.transaction, path_id, position, edge)?;
+    }
+    if capture_fingerprints {
+        context
+            .transaction
+            .execute(
+                "INSERT INTO activity_input_dependency_fingerprint_snapshots (
+                    path_id, algorithm, algorithm_version, value,
+                    observed_revision_sequence
+                 )
+                 SELECT ?1, algorithm, algorithm_version, value,
+                        observed_revision_sequence
+                 FROM representation_fingerprints
+                 WHERE representation_id = ?2",
+                params![path_id, subject_representation_id.as_bytes().as_slice()],
+            )
+            .map_err(snapshot_error("persist dependency fingerprint snapshot"))?;
+    }
+    Ok(())
+}
+
+fn persist_path_edge(
+    transaction: &Transaction<'_>,
+    path_id: i64,
+    position: usize,
+    edge: &PathEdge,
+) -> Result<()> {
+    let position = i64::try_from(position).map_err(|error| {
+        Error::new(
+            ErrorKind::Unsupported,
+            format!("dependency path position cannot be stored: {error}"),
+        )
+    })?;
+    let dependency_position = i64::try_from(edge.dependency_position).map_err(|error| {
+        Error::new(
+            ErrorKind::Unsupported,
+            format!("dependency edge position cannot be stored: {error}"),
+        )
+    })?;
+    let (target_kind, target_id) = match edge.dependency.target() {
+        DependencyTarget::Asset(id) => (1_i64, id.into_bytes()),
+        DependencyTarget::Representation(id) => (2_i64, id.into_bytes()),
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                "dependency target kind is not supported by this schema",
+            ));
+        }
+    };
+    transaction
+        .execute(
+            "INSERT INTO activity_input_dependency_path_edges (
+                path_id, position, source_representation_id, dependency_position,
+                source_resource_id, kind, target_kind, target_id,
+                resolved_representation_id, authored_reference
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                path_id,
+                position,
+                edge.source_representation_id.as_bytes().as_slice(),
+                dependency_position,
+                edge.dependency
+                    .source_resource_id()
+                    .map(|id| id.into_bytes().to_vec()),
+                edge.dependency.kind().as_str(),
+                target_kind,
+                target_id.as_slice(),
+                edge.dependency
+                    .resolved_representation_id()
+                    .map(|id| id.into_bytes().to_vec()),
+                edge.dependency.authored_reference(),
+            ],
+        )
+        .map(|_| ())
+        .map_err(snapshot_error("persist dependency snapshot path edge"))
+}
+
+fn snapshot_error(context: &'static str) -> impl FnOnce(rusqlite::Error) -> Error {
+    move |error| Error::new(ErrorKind::Storage, format!("{context}: {error}"))
+}
