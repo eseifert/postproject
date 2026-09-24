@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use postproject_core::{
     Activity, ActivityEdgeSnapshot, ArtifactEdgeKind, ArtifactEvaluation, ArtifactEvaluationLimits,
-    ArtifactKnowledgeReason, ArtifactKnowledgeState, ArtifactTraversalLimitKind, Error, ErrorKind,
+    ArtifactKnowledgeReason, ArtifactKnowledgeState, ArtifactReproducibilityIssue,
+    ArtifactReproducibilityReport, ArtifactTraversalLimitKind, Error, ErrorKind, ObjectRef,
     Representation, RepresentationId, Result,
 };
 use rusqlite::params;
@@ -27,6 +28,75 @@ struct EvaluationContext {
 type FingerprintDomainDifference = (String, u16, Option<Vec<u8>>, Option<Vec<u8>>);
 
 impl SqliteProduction {
+    /// Reports whether recorded production knowledge can reproduce an artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the target representation is absent,
+    /// or a storage-domain error when persisted provenance is malformed.
+    pub fn artifact_reproducibility(
+        &self,
+        representation_id: RepresentationId,
+    ) -> Result<ArtifactReproducibilityReport> {
+        self.load_representation_by_id(representation_id)?;
+        let producers = self.activities_producing(representation_id)?;
+        match producers.as_slice() {
+            [] => Ok(ArtifactReproducibilityReport::new(
+                representation_id,
+                None,
+                None,
+                vec![ArtifactReproducibilityIssue::ProducingActivityMissing],
+            )),
+            [activity] => self.activity_reproducibility(representation_id, activity),
+            activities => Ok(ArtifactReproducibilityReport::new(
+                representation_id,
+                None,
+                None,
+                vec![ArtifactReproducibilityIssue::ProducingActivityAmbiguous {
+                    activity_count: u32::try_from(activities.len()).unwrap_or(u32::MAX),
+                }],
+            )),
+        }
+    }
+
+    fn activity_reproducibility(
+        &self,
+        representation_id: RepresentationId,
+        activity: &Activity,
+    ) -> Result<ArtifactReproducibilityReport> {
+        let mut issues = Vec::new();
+        if activity.tool().is_none() {
+            issues.push(ArtifactReproducibilityIssue::ToolIdentityMissing {
+                activity_id: activity.id(),
+            });
+        }
+        if self
+            .metadata(ObjectRef::Activity(activity.id()))?
+            .is_empty()
+        {
+            issues.push(ArtifactReproducibilityIssue::ParametersMissing {
+                activity_id: activity.id(),
+            });
+        }
+        for input in activity.inputs() {
+            if let Err(error) = self.load_representation_by_id(input.representation_id()) {
+                if error.kind() != ErrorKind::NotFound {
+                    return Err(error);
+                }
+                issues.push(ArtifactReproducibilityIssue::InputRepresentationMissing {
+                    activity_id: activity.id(),
+                    representation_id: input.representation_id(),
+                });
+            }
+        }
+        Ok(ArtifactReproducibilityReport::new(
+            representation_id,
+            Some(activity.id()),
+            Some(activity.kind().clone()),
+            issues,
+        ))
+    }
+
     /// Evaluates current, stale, indeterminate, or diverged artifact knowledge.
     ///
     /// This operation reads only production knowledge and never accesses media

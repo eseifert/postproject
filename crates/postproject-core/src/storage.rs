@@ -1,10 +1,10 @@
 //! Domain-shaped contracts implemented by persistence backends.
 
 use crate::{
-    Activity, ArtifactEvaluation, ArtifactEvaluationLimits, Asset, AssetId, ExternalIdentifier,
-    IdentifierScheme, Locator, MediaRoot, MetadataAssertion, MetadataMatch, MetadataProperty,
-    MetadataValue, ObjectRef, OriginalMediaImport, Production, Representation,
-    RepresentationFingerprint, RepresentationId, RepresentationImport, Resource,
+    Activity, ArtifactEvaluation, ArtifactEvaluationLimits, ArtifactReproducibilityReport, Asset,
+    AssetId, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot, MetadataAssertion,
+    MetadataMatch, MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, Production,
+    Representation, RepresentationFingerprint, RepresentationId, RepresentationImport, Resource,
     ResourceFingerprint, ResourceId, Result, Revision, RevisionContext, RevisionEvent, RevisionId,
     TransactionId, TransactionState,
 };
@@ -152,6 +152,17 @@ pub trait ProductionRead {
         representation_id: RepresentationId,
         limits: ArtifactEvaluationLimits,
     ) -> Result<ArtifactEvaluation>;
+
+    /// Reports whether recorded production knowledge can reproduce an artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the target is absent or stored provenance
+    /// cannot be decoded safely.
+    fn artifact_reproducibility(
+        &self,
+        representation_id: RepresentationId,
+    ) -> Result<ArtifactReproducibilityReport>;
 
     /// Returns the newest durable revision, or `None` for an empty journal.
     ///

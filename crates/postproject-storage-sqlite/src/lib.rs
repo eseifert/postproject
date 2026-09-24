@@ -19,15 +19,16 @@ use std::{
 
 use postproject_core::{
     Activity, ActivityEdgeSnapshot, ActivityId, ActivityInput, ActivityKind, ActivityOutput,
-    ActivityRole, AgentIdentity, ArtifactEvaluation, ArtifactEvaluationLimits, Asset, AssetId,
-    ContentStructure, Error, ErrorKind, ExternalIdentifier, FileFacts, FingerprintSnapshot,
-    FrameRange, IdentifierScheme, ImageSequenceDescriptor, ImageSequencePattern, Locator,
-    LocatorAvailability, LocatorId, MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId,
-    MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity,
-    Production, ProductionId, ProductionRead, ProductionStore, PropertyId, RationalRate,
-    Representation, RepresentationFingerprint, RepresentationId, RepresentationKind, Resource,
-    ResourceFingerprint, ResourceId, ResourceMember, ResourceRole, Result, Revision, RevisionEvent,
-    RevisionEventKind, RevisionId, Timestamp, ToolIdentity, TransactionId, VocabularyId,
+    ActivityRole, AgentIdentity, ArtifactEvaluation, ArtifactEvaluationLimits,
+    ArtifactReproducibilityReport, Asset, AssetId, ContentStructure, Error, ErrorKind,
+    ExternalIdentifier, FileFacts, FingerprintSnapshot, FrameRange, IdentifierScheme,
+    ImageSequenceDescriptor, ImageSequencePattern, Locator, LocatorAvailability, LocatorId,
+    MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
+    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, Production, ProductionId,
+    ProductionRead, ProductionStore, PropertyId, RationalRate, Representation,
+    RepresentationFingerprint, RepresentationId, RepresentationKind, Resource, ResourceFingerprint,
+    ResourceId, ResourceMember, ResourceRole, Result, Revision, RevisionEvent, RevisionEventKind,
+    RevisionId, Timestamp, ToolIdentity, TransactionId, VocabularyId,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
 
@@ -1192,6 +1193,13 @@ impl ProductionRead for SqliteProduction {
         limits: ArtifactEvaluationLimits,
     ) -> Result<ArtifactEvaluation> {
         SqliteProduction::evaluate_artifact(self, representation_id, limits)
+    }
+
+    fn artifact_reproducibility(
+        &self,
+        representation_id: RepresentationId,
+    ) -> Result<ArtifactReproducibilityReport> {
+        SqliteProduction::artifact_reproducibility(self, representation_id)
     }
 
     fn latest_revision(&self) -> Result<Option<Revision>> {
