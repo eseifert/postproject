@@ -55,6 +55,61 @@ fn assert_activity_snapshots(created: &Value) {
     assert_eq!(created["outputs"][0]["snapshot"]["revision_sequence"], 3);
 }
 
+fn exercise_artifact_evaluation(
+    production: &str,
+    input_asset_id: &str,
+    input_representation_id: &str,
+    input_path: &std::path::Path,
+    output_representation_id: &str,
+) {
+    let current = run_json(&["artifact", "evaluate", production, output_representation_id]);
+    assert_eq!(current["state"], "current");
+    assert_eq!(
+        current["reasons"].as_array().expect("reason array").len(),
+        0
+    );
+    let reproducibility = run_json(&[
+        "artifact",
+        "reproducibility",
+        production,
+        output_representation_id,
+    ]);
+    assert_eq!(reproducibility["reproducible"], true);
+    assert_eq!(
+        reproducibility["activity_kind"],
+        "org.postproject:transcode"
+    );
+    assert_eq!(
+        reproducibility["issues"]
+            .as_array()
+            .expect("reproducibility issue array")
+            .len(),
+        0
+    );
+
+    fs::write(input_path, b"changed provenance source fixture").expect("replace source fixture");
+    let source = run_json(&["media", "show", production, input_asset_id]);
+    let resource_id = source["representations"][0]["resources"][0]["id"]
+        .as_str()
+        .expect("source resource ID");
+    run_json(&[
+        "media",
+        "fingerprint",
+        production,
+        input_asset_id,
+        input_representation_id,
+        resource_id,
+        input_path.to_str().expect("UTF-8 source path"),
+    ]);
+    let stale = run_json(&["artifact", "evaluate", production, output_representation_id]);
+    assert_eq!(stale["state"], "stale");
+    assert_eq!(stale["reasons"][0]["kind"], "fingerprint_changed");
+    assert_eq!(
+        stale["reasons"][0]["representation_id"],
+        input_representation_id
+    );
+}
+
 fn exercise_identifiers(production: &str, asset_id: &str) {
     let identifier = run_json(&[
         "identifier",
@@ -175,11 +230,12 @@ fn inject_structured_metadata(production_path: &str, asset_id: &str) {
     assert_eq!(added["value"]["type"], "struct");
 }
 
+#[allow(clippy::too_many_lines)]
 fn exercise_provenance(
     production: &str,
     input_representation_id: &str,
     directory: &std::path::Path,
-) {
+) -> String {
     let proxy = directory.join("proxy.mov");
     fs::write(&proxy, b"derived proxy fixture media").expect("write proxy fixture");
     let imported = run_json(&[
@@ -285,6 +341,8 @@ fn exercise_provenance(
         descendants[0]["representation_id"],
         output_representation_id
     );
+
+    output_representation_id.to_owned()
 }
 
 #[test]
@@ -595,11 +653,19 @@ fn records_and_queries_provenance() {
     let representation_id = imported["representation_id"]
         .as_str()
         .expect("source representation ID");
+    let asset_id = imported["asset_id"].as_str().expect("source asset ID");
 
-    exercise_provenance(
+    let output_representation_id = exercise_provenance(
         production.to_str().expect("UTF-8 production path"),
         representation_id,
         directory.path(),
+    );
+    exercise_artifact_evaluation(
+        production.to_str().expect("UTF-8 production path"),
+        asset_id,
+        representation_id,
+        &original,
+        &output_representation_id,
     );
 }
 
