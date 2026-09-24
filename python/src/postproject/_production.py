@@ -31,6 +31,12 @@ from ._abi import (
     Uuid,
 )
 from ._abi import (
+    ArtifactEvaluation as NativeArtifactEvaluation,
+)
+from ._abi import (
+    ArtifactReproducibility as NativeArtifactReproducibility,
+)
+from ._abi import (
     FileResourceInput as NativeFileResourceInput,
 )
 from ._abi import (
@@ -51,6 +57,7 @@ from ._abi import (
 from ._abi import (
     Transaction as NativeTransaction,
 )
+from ._artifact import read_evaluation, read_reproducibility
 from ._model import (
     Activity,
     ActivityCreatedEvent,
@@ -61,6 +68,8 @@ from ._model import (
     ActivityOutputAddedEvent,
     ActivitySpec,
     AgentIdentity,
+    ArtifactEvaluation,
+    ArtifactReproducibility,
     Asset,
     AssetId,
     AssetImportedEvent,
@@ -458,6 +467,58 @@ class Production:
         """Resolve an asset using optional machine-local root mappings."""
 
         return self._resolve_asset(asset_id, root_mappings or {})
+
+    def evaluate_artifact(
+        self,
+        representation_id: RepresentationId,
+        *,
+        max_depth: int = 64,
+        max_representations: int = 1_000,
+    ) -> ArtifactEvaluation:
+        """Evaluate stored artifact evidence without accessing media files."""
+
+        self._require_open()
+        native_id = _native_uuid(representation_id.value)
+        handle = ctypes.POINTER(NativeArtifactEvaluation)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_evaluate_artifact(
+            self._handle,
+            ctypes.byref(native_id),
+            max_depth,
+            max_representations,
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native artifact evaluation returned no result")
+        try:
+            return read_evaluation(self._native, handle)
+        finally:
+            self._native.lib.pp_artifact_evaluation_release(handle)
+
+    def artifact_reproducibility(
+        self, representation_id: RepresentationId
+    ) -> ArtifactReproducibility:
+        """Report whether stored knowledge is sufficient to reproduce an artifact."""
+
+        self._require_open()
+        native_id = _native_uuid(representation_id.value)
+        handle = ctypes.POINTER(NativeArtifactReproducibility)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_artifact_reproducibility(
+            self._handle,
+            ctypes.byref(native_id),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native artifact reproducibility returned no report")
+        try:
+            return read_reproducibility(self._native, handle)
+        finally:
+            self._native.lib.pp_artifact_reproducibility_release(handle)
 
     @property
     def representations(self) -> _Representations:
