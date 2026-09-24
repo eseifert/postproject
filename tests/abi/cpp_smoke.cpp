@@ -134,6 +134,20 @@ int main(int argc, char **argv) {
         representations[0].id,
         {"cpp-smoke-tree", 1, {UINT8_C(0x30), UINT8_C(0x40)}});
     observations.commit();
+    const auto observation_revision = production.latestRevision();
+    if (!observation_revision.has_value()) {
+      return 28;
+    }
+    const auto observation_events =
+        production.revisionEvents(observation_revision->id);
+    if (observation_events.size() != 2 ||
+        !std::holds_alternative<postproject::ResourceFingerprintObservedEvent>(
+            observation_events[0].payload) ||
+        !std::holds_alternative<
+            postproject::RepresentationFingerprintObservedEvent>(
+            observation_events[1].payload)) {
+      return 29;
+    }
     const auto observed_representations = production.representations(asset_id);
     if (observed_representations[0].fingerprints.size() != 2 ||
         observed_representations[0].resources[0].fingerprints.size() != 2) {

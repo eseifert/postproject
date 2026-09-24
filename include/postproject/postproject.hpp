@@ -258,6 +258,18 @@ struct ActivityOutputAddedEvent final {
   std::optional<std::string> role;
 };
 
+struct ResourceFingerprintObservedEvent final {
+  Uuid resource_id;
+  std::string algorithm;
+  std::uint16_t version;
+};
+
+struct RepresentationFingerprintObservedEvent final {
+  Uuid representation_id;
+  std::string algorithm;
+  std::uint16_t version;
+};
+
 using RevisionEventPayload =
     std::variant<AssetImportedEvent, RepresentationAddedEvent,
                  ResourceAddedEvent, RepresentationResourceAddedEvent,
@@ -267,7 +279,8 @@ using RevisionEventPayload =
                  ExternalIdentifierRemovedEvent,
                  MetadataAddedOrReplacedEvent, MetadataRemovedEvent,
                  ActivityCreatedEvent, ActivityInputAddedEvent,
-                 ActivityOutputAddedEvent>;
+                 ActivityOutputAddedEvent, ResourceFingerprintObservedEvent,
+                 RepresentationFingerprintObservedEvent>;
 
 struct RevisionEvent final {
   std::uint32_t position;
@@ -1055,6 +1068,20 @@ inline RevisionEvent revision_event(const pp_revision_event_set_t *events,
             ActivityOutputAddedEvent{uuid(event.activity_id),
                                      uuid(event.representation_id),
                                      optional_string(event.role)}};
+  case PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED:
+    return {event.position,
+            ResourceFingerprintObservedEvent{
+                uuid(event.resource_id),
+                required_event_string(event.fingerprint_algorithm,
+                                      "fingerprint algorithm"),
+                event.fingerprint_version}};
+  case PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED:
+    return {event.position,
+            RepresentationFingerprintObservedEvent{
+                uuid(event.representation_id),
+                required_event_string(event.fingerprint_algorithm,
+                                      "fingerprint algorithm"),
+                event.fingerprint_version}};
   default:
     throw Error(ErrorCode::internal,
                 "revision event has an unknown semantic kind");
