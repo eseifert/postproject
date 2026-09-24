@@ -157,6 +157,85 @@ struct ActivitySpec final {
   std::vector<ActivityEdge> outputs;
 };
 
+enum class ArtifactKnowledgeState : std::uint32_t {
+  current = PP_ARTIFACT_CURRENT,
+  stale = PP_ARTIFACT_STALE,
+  indeterminate = PP_ARTIFACT_INDETERMINATE,
+  diverged = PP_ARTIFACT_DIVERGED,
+};
+
+enum class ArtifactEdgeKind : std::uint32_t {
+  input = PP_ARTIFACT_EDGE_INPUT,
+  output = PP_ARTIFACT_EDGE_OUTPUT,
+};
+
+enum class ArtifactReasonKind : std::uint32_t {
+  producing_activity_missing = PP_ARTIFACT_REASON_PRODUCING_ACTIVITY_MISSING,
+  producing_activity_ambiguous =
+      PP_ARTIFACT_REASON_PRODUCING_ACTIVITY_AMBIGUOUS,
+  snapshot_absent = PP_ARTIFACT_REASON_SNAPSHOT_ABSENT,
+  fingerprint_evidence_missing =
+      PP_ARTIFACT_REASON_FINGERPRINT_EVIDENCE_MISSING,
+  fingerprint_changed = PP_ARTIFACT_REASON_FINGERPRINT_CHANGED,
+  fingerprint_recomputation_pending =
+      PP_ARTIFACT_REASON_FINGERPRINT_RECOMPUTATION_PENDING,
+  upstream_not_current = PP_ARTIFACT_REASON_UPSTREAM_NOT_CURRENT,
+  traversal_truncated = PP_ARTIFACT_REASON_TRAVERSAL_TRUNCATED,
+};
+
+enum class ArtifactTraversalLimit : std::uint32_t {
+  depth = PP_ARTIFACT_TRAVERSAL_DEPTH,
+  representations = PP_ARTIFACT_TRAVERSAL_REPRESENTATIONS,
+};
+
+struct ArtifactReason final {
+  ArtifactReasonKind kind;
+  std::optional<Uuid> activity_id;
+  Uuid representation_id;
+  std::optional<ArtifactEdgeKind> edge_kind;
+  std::optional<ArtifactKnowledgeState> upstream_state;
+  std::optional<ArtifactTraversalLimit> traversal_limit;
+  std::optional<std::uint32_t> activity_count;
+  std::optional<std::string> fingerprint_algorithm;
+  std::optional<std::uint16_t> fingerprint_version;
+  std::optional<std::vector<std::uint8_t>> snapshot_value;
+  std::optional<std::vector<std::uint8_t>> current_value;
+};
+
+struct ArtifactEvaluation final {
+  Uuid representation_id;
+  ArtifactKnowledgeState state;
+  std::uint32_t visited_representations;
+  bool truncated;
+  std::vector<ArtifactReason> reasons;
+};
+
+enum class ArtifactReproducibilityIssueKind : std::uint32_t {
+  producing_activity_missing =
+      PP_ARTIFACT_REPRODUCIBILITY_PRODUCING_ACTIVITY_MISSING,
+  producing_activity_ambiguous =
+      PP_ARTIFACT_REPRODUCIBILITY_PRODUCING_ACTIVITY_AMBIGUOUS,
+  tool_identity_missing = PP_ARTIFACT_REPRODUCIBILITY_TOOL_IDENTITY_MISSING,
+  parameters_missing = PP_ARTIFACT_REPRODUCIBILITY_PARAMETERS_MISSING,
+  input_representation_missing =
+      PP_ARTIFACT_REPRODUCIBILITY_INPUT_REPRESENTATION_MISSING,
+};
+
+struct ArtifactReproducibilityIssue final {
+  ArtifactReproducibilityIssueKind kind;
+  std::optional<Uuid> activity_id;
+  std::optional<Uuid> representation_id;
+  std::optional<std::uint32_t> activity_count;
+};
+
+struct ArtifactReproducibility final {
+  Uuid representation_id;
+  bool reproducible;
+  std::optional<Uuid> producing_activity_id;
+  std::optional<std::string> activity_kind;
+  std::vector<ArtifactReproducibilityIssue> issues;
+};
+
 struct OriginIdentity final {
   std::string name;
   std::optional<std::string> version;
@@ -538,6 +617,24 @@ struct ActivitySetDeleter final {
 using ActivitySetHandle =
     std::unique_ptr<pp_activity_set_t, ActivitySetDeleter>;
 
+struct ArtifactEvaluationDeleter final {
+  void operator()(pp_artifact_evaluation_t *evaluation) const noexcept {
+    pp_artifact_evaluation_release(evaluation);
+  }
+};
+
+using ArtifactEvaluationHandle =
+    std::unique_ptr<pp_artifact_evaluation_t, ArtifactEvaluationDeleter>;
+
+struct ArtifactReproducibilityDeleter final {
+  void operator()(pp_artifact_reproducibility_t *report) const noexcept {
+    pp_artifact_reproducibility_release(report);
+  }
+};
+
+using ArtifactReproducibilityHandle = std::unique_ptr<
+    pp_artifact_reproducibility_t, ArtifactReproducibilityDeleter>;
+
 struct RevisionSetDeleter final {
   void operator()(pp_revision_set_t *revisions) const noexcept {
     pp_revision_set_release(revisions);
@@ -613,6 +710,21 @@ inline std::optional<std::string> optional_string(const char *value) {
   return value != nullptr
              ? std::optional<std::string>(std::string(value))
              : std::nullopt;
+}
+
+inline std::optional<std::vector<std::uint8_t>>
+optional_bytes(std::uint8_t present, const std::uint8_t *value,
+               std::uint64_t length) {
+  if (present == 0) {
+    return std::nullopt;
+  }
+  if (length != 0 && value == nullptr) {
+    throw Error(ErrorCode::internal, "artifact evidence bytes are null");
+  }
+  if (length == 0) {
+    return std::vector<std::uint8_t>();
+  }
+  return std::vector<std::uint8_t>(value, value + length);
 }
 
 inline std::optional<std::string>
@@ -2118,6 +2230,141 @@ public:
   descendants(const Uuid &representation_id) const {
     return provenance_relatives(representation_id,
                                 pp_production_provenance_descendants);
+  }
+
+  [[nodiscard]] ArtifactEvaluation
+  evaluateArtifact(const Uuid &representation_id,
+                   std::uint32_t max_depth = 64,
+                   std::uint32_t max_representations = 1000) const {
+    const pp_uuid_t native_id = detail::native_uuid(representation_id);
+    pp_artifact_evaluation_t *raw_evaluation = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_evaluate_artifact(
+        production_, &native_id, max_depth, max_representations,
+        &raw_evaluation, &error);
+    detail::throw_if_error(status, error);
+    detail::ArtifactEvaluationHandle evaluation(raw_evaluation);
+
+    pp_uuid_t evaluated_id{};
+    pp_artifact_knowledge_state_t state = 0;
+    std::uint32_t visited_representations = 0;
+    std::uint8_t truncated = 0;
+    std::uint64_t reason_count = 0;
+    pp_error_t *summary_error = nullptr;
+    const pp_error_code_t summary_status = pp_artifact_evaluation_get(
+        evaluation.get(), &evaluated_id, &state, &visited_representations,
+        &truncated, &reason_count, &summary_error);
+    detail::throw_if_error(summary_status, summary_error);
+
+    std::vector<ArtifactReason> reasons;
+    reasons.reserve(static_cast<std::size_t>(reason_count));
+    for (std::uint64_t index = 0; index < reason_count; ++index) {
+      pp_artifact_reason_t native{};
+      pp_error_t *reason_error = nullptr;
+      const pp_error_code_t reason_status = pp_artifact_evaluation_get_reason(
+          evaluation.get(), index, &native, &reason_error);
+      detail::throw_if_error(reason_status, reason_error);
+      const auto kind = static_cast<ArtifactReasonKind>(native.kind);
+      const bool has_activity =
+          kind == ArtifactReasonKind::snapshot_absent ||
+          kind == ArtifactReasonKind::fingerprint_evidence_missing ||
+          kind == ArtifactReasonKind::fingerprint_changed ||
+          kind == ArtifactReasonKind::fingerprint_recomputation_pending;
+      const bool has_edge = has_activity;
+      reasons.push_back(
+          {kind,
+           has_activity
+               ? std::optional<Uuid>(detail::uuid(native.activity_id))
+               : std::nullopt,
+           detail::uuid(native.representation_id),
+           has_edge ? std::optional<ArtifactEdgeKind>(
+                          static_cast<ArtifactEdgeKind>(native.edge_kind))
+                    : std::nullopt,
+           kind == ArtifactReasonKind::upstream_not_current
+               ? std::optional<ArtifactKnowledgeState>(
+                     static_cast<ArtifactKnowledgeState>(native.upstream_state))
+               : std::nullopt,
+           kind == ArtifactReasonKind::traversal_truncated
+               ? std::optional<ArtifactTraversalLimit>(
+                     static_cast<ArtifactTraversalLimit>(
+                         native.traversal_limit))
+               : std::nullopt,
+           kind == ArtifactReasonKind::producing_activity_ambiguous
+               ? std::optional<std::uint32_t>(native.activity_count)
+               : std::nullopt,
+           detail::optional_string(native.fingerprint_algorithm),
+           native.fingerprint_algorithm != nullptr
+               ? std::optional<std::uint16_t>(native.fingerprint_version)
+               : std::nullopt,
+           detail::optional_bytes(native.has_snapshot_value,
+                                  native.snapshot_value,
+                                  native.snapshot_value_length),
+           detail::optional_bytes(native.has_current_value,
+                                  native.current_value,
+                                  native.current_value_length)});
+    }
+    return {detail::uuid(evaluated_id),
+            static_cast<ArtifactKnowledgeState>(state),
+            visited_representations, truncated != 0, std::move(reasons)};
+  }
+
+  [[nodiscard]] ArtifactReproducibility
+  artifactReproducibility(const Uuid &representation_id) const {
+    const pp_uuid_t native_id = detail::native_uuid(representation_id);
+    pp_artifact_reproducibility_t *raw_report = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_artifact_reproducibility(
+        production_, &native_id, &raw_report, &error);
+    detail::throw_if_error(status, error);
+    detail::ArtifactReproducibilityHandle report(raw_report);
+
+    pp_uuid_t reported_id{};
+    std::uint8_t reproducible = 0;
+    std::uint8_t has_activity = 0;
+    pp_uuid_t activity_id{};
+    const char *activity_kind = nullptr;
+    std::uint64_t issue_count = 0;
+    pp_error_t *summary_error = nullptr;
+    const pp_error_code_t summary_status = pp_artifact_reproducibility_get(
+        report.get(), &reported_id, &reproducible, &has_activity, &activity_id,
+        &activity_kind, &issue_count, &summary_error);
+    detail::throw_if_error(summary_status, summary_error);
+
+    std::vector<ArtifactReproducibilityIssue> issues;
+    issues.reserve(static_cast<std::size_t>(issue_count));
+    for (std::uint64_t index = 0; index < issue_count; ++index) {
+      pp_artifact_reproducibility_issue_t native{};
+      pp_error_t *issue_error = nullptr;
+      const pp_error_code_t issue_status =
+          pp_artifact_reproducibility_get_issue(report.get(), index, &native,
+                                                &issue_error);
+      detail::throw_if_error(issue_status, issue_error);
+      const auto kind =
+          static_cast<ArtifactReproducibilityIssueKind>(native.kind);
+      const bool issue_has_activity =
+          kind == ArtifactReproducibilityIssueKind::tool_identity_missing ||
+          kind == ArtifactReproducibilityIssueKind::parameters_missing ||
+          kind ==
+              ArtifactReproducibilityIssueKind::input_representation_missing;
+      issues.push_back(
+          {kind,
+           issue_has_activity
+               ? std::optional<Uuid>(detail::uuid(native.activity_id))
+               : std::nullopt,
+           kind ==
+                   ArtifactReproducibilityIssueKind::input_representation_missing
+               ? std::optional<Uuid>(detail::uuid(native.representation_id))
+               : std::nullopt,
+           kind == ArtifactReproducibilityIssueKind::producing_activity_ambiguous
+               ? std::optional<std::uint32_t>(native.activity_count)
+               : std::nullopt});
+    }
+    return {detail::uuid(reported_id),
+            reproducible != 0,
+            has_activity != 0
+                ? std::optional<Uuid>(detail::uuid(activity_id))
+                : std::nullopt,
+            detail::optional_string(activity_kind), std::move(issues)};
   }
 
   [[nodiscard]] std::optional<Revision> latestRevision() const {
