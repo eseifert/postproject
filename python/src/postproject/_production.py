@@ -1039,6 +1039,50 @@ class Transaction:
         )
         self._native.check(status, error)
 
+    def record_resource_fingerprint(
+        self, resource_id: ResourceId, fingerprint: Fingerprint
+    ) -> None:
+        """Stage an explicit content-fingerprint observation for one resource."""
+
+        self._require_open()
+        native_id = _native_uuid(resource_id.value)
+        value = (ctypes.c_uint8 * len(fingerprint.value)).from_buffer_copy(
+            fingerprint.value
+        )
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_record_resource_fingerprint(
+            self._handle,
+            ctypes.byref(native_id),
+            _utf8(fingerprint.algorithm, "fingerprint algorithm"),
+            fingerprint.version,
+            value,
+            len(fingerprint.value),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
+    def record_representation_fingerprint(
+        self, representation_id: RepresentationId, fingerprint: Fingerprint
+    ) -> None:
+        """Stage a structure-aware fingerprint observation for a representation."""
+
+        self._require_open()
+        native_id = _native_uuid(representation_id.value)
+        value = (ctypes.c_uint8 * len(fingerprint.value)).from_buffer_copy(
+            fingerprint.value
+        )
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_record_representation_fingerprint(
+            self._handle,
+            ctypes.byref(native_id),
+            _utf8(fingerprint.algorithm, "fingerprint algorithm"),
+            fingerprint.version,
+            value,
+            len(fingerprint.value),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
     def add_external_identifier(
         self, target: ObjectReference, identifier: ExternalIdentifier
     ) -> None:

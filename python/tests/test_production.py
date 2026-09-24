@@ -24,6 +24,7 @@ from postproject import (
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
     FileResourceInput,
+    Fingerprint,
     HostObjectBinding,
     ImageSequenceInput,
     InvalidArgumentError,
@@ -150,6 +151,38 @@ class ProductionTests(unittest.TestCase):
         self.assertEqual(len(resource.locators), 1)
         self.assertEqual(resource.locators[0].availability, LocatorAvailability.ONLINE)
         self.assertIsNotNone(resource.locators[0].last_seen_unix_micros)
+
+    def test_fingerprint_observations_are_explicit_and_idempotent(self) -> None:
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+            representation = production.representations[asset_id][0]
+            resource_id = representation.resources[0].id
+            resource_fingerprint = Fingerprint("python-test", 1, b"resource")
+            representation_fingerprint = Fingerprint(
+                "python-test-tree", 1, b"representation"
+            )
+            with production.transaction() as transaction:
+                transaction.record_resource_fingerprint(
+                    resource_id, resource_fingerprint
+                )
+                transaction.record_representation_fingerprint(
+                    representation.id, representation_fingerprint
+                )
+
+            observed = production.representations[asset_id][0]
+            self.assertIn(resource_fingerprint, observed.resources[0].fingerprints)
+            self.assertIn(representation_fingerprint, observed.fingerprints)
+            revision = production.latest_revision
+            assert revision is not None
+
+            with production.transaction() as transaction:
+                transaction.record_resource_fingerprint(
+                    resource_id, resource_fingerprint
+                )
+            self.assertEqual(production.latest_revision, revision)
 
     def test_media_roots_and_locators_have_a_complete_lifecycle(self) -> None:
         with Production.create(
