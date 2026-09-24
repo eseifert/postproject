@@ -1,6 +1,6 @@
 //! Derived knowledge state for activity-produced representations.
 
-use crate::{ActivityId, RepresentationId};
+use crate::{ActivityId, ActivityKind, RepresentationId};
 
 /// Knowledge state of a representation produced by an activity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -230,6 +230,93 @@ impl ArtifactEvaluation {
     #[must_use]
     pub const fn is_truncated(&self) -> bool {
         self.truncated
+    }
+}
+
+/// One missing condition that prevents an artifact from being reproducible.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ArtifactReproducibilityIssue {
+    /// No activity records how the representation was produced.
+    ProducingActivityMissing,
+    /// More than one activity claims to have produced the representation.
+    ProducingActivityAmbiguous {
+        /// Number of producing activities found.
+        activity_count: u32,
+    },
+    /// The producing activity does not identify the tool that performed it.
+    ToolIdentityMissing {
+        /// Producing activity missing the condition.
+        activity_id: ActivityId,
+    },
+    /// The producing activity has no recorded parameter metadata.
+    ParametersMissing {
+        /// Producing activity missing the condition.
+        activity_id: ActivityId,
+    },
+    /// An input representation referenced by the activity is absent.
+    InputRepresentationMissing {
+        /// Producing activity referencing the input.
+        activity_id: ActivityId,
+        /// Missing input representation.
+        representation_id: RepresentationId,
+    },
+}
+
+/// Structured answer to whether production knowledge can reproduce an artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtifactReproducibilityReport {
+    representation_id: RepresentationId,
+    producing_activity_id: Option<ActivityId>,
+    activity_kind: Option<ActivityKind>,
+    issues: Vec<ArtifactReproducibilityIssue>,
+}
+
+impl ArtifactReproducibilityReport {
+    /// Creates a backend-computed reproducibility report.
+    #[must_use]
+    pub fn new(
+        representation_id: RepresentationId,
+        producing_activity_id: Option<ActivityId>,
+        activity_kind: Option<ActivityKind>,
+        issues: Vec<ArtifactReproducibilityIssue>,
+    ) -> Self {
+        Self {
+            representation_id,
+            producing_activity_id,
+            activity_kind,
+            issues,
+        }
+    }
+
+    /// Returns the artifact representation being described.
+    #[must_use]
+    pub const fn representation_id(&self) -> RepresentationId {
+        self.representation_id
+    }
+
+    /// Returns the single producing activity, when one exists unambiguously.
+    #[must_use]
+    pub const fn producing_activity_id(&self) -> Option<ActivityId> {
+        self.producing_activity_id
+    }
+
+    /// Returns the recorded open-world activity kind, when unambiguous.
+    #[must_use]
+    pub const fn activity_kind(&self) -> Option<&ActivityKind> {
+        self.activity_kind.as_ref()
+    }
+
+    /// Returns every missing reproducibility condition.
+    #[must_use]
+    pub fn issues(&self) -> &[ArtifactReproducibilityIssue] {
+        &self.issues
+    }
+
+    /// Returns whether all reproducibility conditions are recorded.
+    #[must_use]
+    pub fn is_reproducible(&self) -> bool {
+        self.issues.is_empty()
     }
 }
 

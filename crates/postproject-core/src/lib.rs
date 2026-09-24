@@ -25,7 +25,8 @@ mod uri;
 
 pub use artifact::{
     ArtifactEdgeKind, ArtifactEvaluation, ArtifactEvaluationLimits, ArtifactKnowledgeReason,
-    ArtifactKnowledgeState, ArtifactTraversalLimitKind,
+    ArtifactKnowledgeState, ArtifactReproducibilityIssue, ArtifactReproducibilityReport,
+    ArtifactTraversalLimitKind,
 };
 pub use content::{
     ContentStructure, ContentStructureKind, FrameRange, ImageSequenceDescriptor,
