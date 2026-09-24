@@ -224,6 +224,13 @@ int main(int argc, char **argv) {
             resolutions[0].representation_id ||
         activities[0].outputs[0].role !=
             std::string("org.postproject:output.master") ||
+        !activities[0].outputs[0].snapshot.has_value() ||
+        activities[0].outputs[0].snapshot->revision_sequence == 0 ||
+        activities[0].outputs[0].snapshot->fingerprints.empty() ||
+        !activities[0]
+             .outputs[0]
+             .snapshot->fingerprints[0]
+             .observed_revision_sequence.has_value() ||
         !production.ancestors(resolutions[0].representation_id).empty()) {
       return 14;
     }

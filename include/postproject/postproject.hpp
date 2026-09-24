@@ -107,9 +107,22 @@ struct ExternalIdentifier final {
   std::optional<std::string> qualifier;
 };
 
+struct FingerprintSnapshot final {
+  std::string algorithm;
+  std::uint16_t version;
+  std::vector<std::uint8_t> value;
+  std::optional<std::uint64_t> observed_revision_sequence;
+};
+
+struct ActivityEdgeSnapshot final {
+  std::uint64_t revision_sequence;
+  std::vector<FingerprintSnapshot> fingerprints;
+};
+
 struct ActivityEdge final {
   Uuid representation_id;
   std::optional<std::string> role;
+  std::optional<ActivityEdgeSnapshot> snapshot = std::nullopt;
 };
 
 struct ToolIdentity final {
@@ -784,6 +797,58 @@ inline Representation representation(
           std::move(resources)};
 }
 
+inline std::optional<ActivityEdgeSnapshot>
+activity_edge_snapshot(const pp_activity_set_t *activities,
+                       std::uint64_t activity_index, std::uint64_t edge_index,
+                       bool output) {
+  std::uint8_t has_snapshot = 0;
+  std::uint64_t revision_sequence = 0;
+  std::uint64_t fingerprint_count = 0;
+  pp_error_t *error = nullptr;
+  pp_error_code_t status =
+      output ? pp_activity_set_get_output_snapshot(
+                   activities, activity_index, edge_index, &has_snapshot,
+                   &revision_sequence, &fingerprint_count, &error)
+             : pp_activity_set_get_input_snapshot(
+                   activities, activity_index, edge_index, &has_snapshot,
+                   &revision_sequence, &fingerprint_count, &error);
+  throw_if_error(status, error);
+  if (has_snapshot == 0) {
+    return std::nullopt;
+  }
+
+  std::vector<FingerprintSnapshot> fingerprints;
+  fingerprints.reserve(static_cast<std::size_t>(fingerprint_count));
+  for (std::uint64_t index = 0; index < fingerprint_count; ++index) {
+    const char *algorithm = nullptr;
+    std::uint16_t version = 0;
+    const std::uint8_t *value = nullptr;
+    std::uint64_t value_length = 0;
+    std::uint8_t has_observed_revision = 0;
+    std::uint64_t observed_revision_sequence = 0;
+    error = nullptr;
+    status = output
+                 ? pp_activity_set_get_output_snapshot_fingerprint(
+                       activities, activity_index, edge_index, index,
+                       &algorithm, &version, &value, &value_length,
+                       &has_observed_revision, &observed_revision_sequence,
+                       &error)
+                 : pp_activity_set_get_input_snapshot_fingerprint(
+                       activities, activity_index, edge_index, index,
+                       &algorithm, &version, &value, &value_length,
+                       &has_observed_revision, &observed_revision_sequence,
+                       &error);
+    throw_if_error(status, error);
+    fingerprints.push_back(
+        {algorithm != nullptr ? std::string(algorithm) : std::string(), version,
+         std::vector<std::uint8_t>(value, value + value_length),
+         has_observed_revision != 0
+             ? std::optional<std::uint64_t>(observed_revision_sequence)
+             : std::nullopt});
+  }
+  return ActivityEdgeSnapshot{revision_sequence, std::move(fingerprints)};
+}
+
 inline Activity activity(const pp_activity_set_t *activities,
                          std::uint64_t index) {
   pp_uuid_t id{};
@@ -842,7 +907,9 @@ inline Activity activity(const pp_activity_set_t *activities,
     status = pp_activity_set_get_input(activities, index, edge_index,
                                        &representation_id, &role, &error);
     throw_if_error(status, error);
-    inputs.push_back({uuid(representation_id), optional_string(role)});
+    inputs.push_back({uuid(representation_id), optional_string(role),
+                      activity_edge_snapshot(activities, index, edge_index,
+                                             false)});
   }
   std::vector<ActivityEdge> outputs;
   outputs.reserve(static_cast<std::size_t>(output_count));
@@ -853,7 +920,9 @@ inline Activity activity(const pp_activity_set_t *activities,
     status = pp_activity_set_get_output(activities, index, edge_index,
                                         &representation_id, &role, &error);
     throw_if_error(status, error);
-    outputs.push_back({uuid(representation_id), optional_string(role)});
+    outputs.push_back({uuid(representation_id), optional_string(role),
+                       activity_edge_snapshot(activities, index, edge_index,
+                                              true)});
   }
 
   return {uuid(id),
