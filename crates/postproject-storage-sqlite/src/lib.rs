@@ -20,15 +20,16 @@ use std::{
 use postproject_core::{
     Activity, ActivityEdgeSnapshot, ActivityId, ActivityInput, ActivityKind, ActivityOutput,
     ActivityRole, AgentIdentity, ArtifactEvaluation, ArtifactEvaluationLimits,
-    ArtifactReproducibilityReport, Asset, AssetId, ContentStructure, Error, ErrorKind,
-    ExternalIdentifier, FileFacts, FingerprintSnapshot, FrameRange, IdentifierScheme,
-    ImageSequenceDescriptor, ImageSequencePattern, Locator, LocatorAvailability, LocatorId,
-    MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
-    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, Production, ProductionId,
-    ProductionRead, ProductionStore, PropertyId, RationalRate, Representation,
-    RepresentationFingerprint, RepresentationId, RepresentationKind, Resource, ResourceFingerprint,
-    ResourceId, ResourceMember, ResourceRole, Result, Revision, RevisionEvent, RevisionEventKind,
-    RevisionId, Timestamp, ToolIdentity, TransactionId, VocabularyId,
+    ArtifactReproducibilityReport, Asset, AssetId, ContentStructure, Dependency, DependencyKind,
+    DependencySet, DependencySetStatus, DependencyTarget, Error, ErrorKind, ExternalIdentifier,
+    FileFacts, FingerprintSnapshot, FrameRange, IdentifierScheme, ImageSequenceDescriptor,
+    ImageSequencePattern, Locator, LocatorAvailability, LocatorId, MAX_REVISION_PAGE_SIZE,
+    MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue,
+    ObjectRef, OriginIdentity, Production, ProductionId, ProductionRead, ProductionStore,
+    PropertyId, RationalRate, Representation, RepresentationFingerprint, RepresentationId,
+    RepresentationKind, Resource, ResourceFingerprint, ResourceId, ResourceMember, ResourceRole,
+    Result, Revision, RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity,
+    TransactionId, VocabularyId,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
 
@@ -900,6 +901,20 @@ impl SqliteProduction {
         )
     }
 
+    /// Loads the complete dependency observation for `representation_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the source representation is absent,
+    /// or a storage-domain error when persisted dependency data is malformed.
+    pub fn dependency_set(
+        &self,
+        representation_id: RepresentationId,
+    ) -> Result<Option<DependencySet>> {
+        self.ensure_representation_exists(representation_id)?;
+        load_dependency_set(&self.connection, representation_id)
+    }
+
     /// Returns the newest durable revision, if the journal is non-empty.
     ///
     /// # Errors
@@ -1185,6 +1200,10 @@ impl ProductionRead for SqliteProduction {
 
     fn descendants(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>> {
         SqliteProduction::descendants(self, representation_id)
+    }
+
+    fn dependency_set(&self, representation_id: RepresentationId) -> Result<Option<DependencySet>> {
+        SqliteProduction::dependency_set(self, representation_id)
     }
 
     fn evaluate_artifact(
@@ -1866,6 +1885,111 @@ fn decode_metadata_target(kind: i64, id: Vec<u8>) -> Result<ObjectRef> {
             format!("stored metadata target kind {kind} is invalid"),
         )),
     }
+}
+
+fn decode_dependency(
+    source_resource: Option<Vec<u8>>,
+    kind: String,
+    target_kind: i64,
+    target: Vec<u8>,
+    resolved: Option<Vec<u8>>,
+    required: i64,
+    authored_reference: String,
+) -> Result<Dependency> {
+    let source_resource_id = source_resource
+        .map(|value| id_bytes(value, "dependency source resource").map(ResourceId::from_bytes))
+        .transpose()?;
+    let target = id_bytes(target, "dependency target")?;
+    let target = match target_kind {
+        1 => DependencyTarget::Asset(AssetId::from_bytes(target)),
+        2 => DependencyTarget::Representation(RepresentationId::from_bytes(target)),
+        _ => return Err(stored_invariant("dependency target kind is invalid")),
+    };
+    let resolved_representation_id = resolved
+        .map(|value| {
+            id_bytes(value, "resolved dependency representation").map(RepresentationId::from_bytes)
+        })
+        .transpose()?;
+    let required = match required {
+        0 => false,
+        1 => true,
+        _ => return Err(stored_invariant("dependency requiredness is invalid")),
+    };
+    Dependency::new(
+        source_resource_id,
+        DependencyKind::new(kind).map_err(stored_domain_error("dependency kind"))?,
+        target,
+        resolved_representation_id,
+        required,
+        authored_reference,
+    )
+    .map_err(stored_domain_error("dependency"))
+}
+
+pub(crate) fn load_dependency_set(
+    connection: &Connection,
+    representation_id: RepresentationId,
+) -> Result<Option<DependencySet>> {
+    let header = connection
+        .query_row(
+            "SELECT recorded_revision_sequence, needs_extraction
+             FROM dependency_sets WHERE source_representation_id = ?1",
+            [representation_id.as_bytes().as_slice()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()
+        .map_err(sqlite_error("query dependency-set observation"))?;
+    let Some((revision, needs_extraction)) = header else {
+        return Ok(None);
+    };
+    let mut statement = connection
+        .prepare(
+            "SELECT source_resource_id, kind, target_kind, target_id,
+                    resolved_representation_id, required, authored_reference
+             FROM dependencies WHERE source_representation_id = ?1
+             ORDER BY position",
+        )
+        .map_err(sqlite_error("prepare dependency query"))?;
+    let dependencies = statement
+        .query_map([representation_id.as_bytes().as_slice()], |row| {
+            Ok((
+                row.get::<_, Option<Vec<u8>>>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, Option<Vec<u8>>>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, String>(6)?,
+            ))
+        })
+        .map_err(sqlite_error("query dependencies"))?
+        .map(|row| {
+            let (source_resource, kind, target_kind, target, resolved, required, authored) =
+                row.map_err(sqlite_error("read dependency row"))?;
+            decode_dependency(
+                source_resource,
+                kind,
+                target_kind,
+                target,
+                resolved,
+                required,
+                authored,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let status = match needs_extraction {
+        0 => DependencySetStatus::Current,
+        1 => DependencySetStatus::NeedsExtraction,
+        _ => return Err(stored_invariant("dependency-set status is invalid")),
+    };
+    DependencySet::new(
+        representation_id,
+        stored_u64(revision, "dependency-set revision")?,
+        status,
+        dependencies,
+    )
+    .map(Some)
+    .map_err(stored_domain_error("dependency set"))
 }
 
 pub(crate) fn id_bytes(value: Vec<u8>, label: &str) -> Result<[u8; 16]> {
