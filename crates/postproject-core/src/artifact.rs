@@ -1,6 +1,101 @@
 //! Derived knowledge state for activity-produced representations.
 
-use crate::{ActivityId, ActivityKind, RepresentationId};
+use crate::{
+    ActivityId, ActivityKind, DependencyKind, DependencyTarget, RepresentationId, ResourceId,
+};
+
+/// One authored edge in a dependency path captured for an activity input.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtifactDependencyPathSegment {
+    source_representation_id: RepresentationId,
+    dependency_position: u32,
+    source_resource_id: Option<ResourceId>,
+    kind: DependencyKind,
+    target: DependencyTarget,
+    resolved_representation_id: Option<RepresentationId>,
+    authored_reference: String,
+}
+
+impl ArtifactDependencyPathSegment {
+    /// Reconstructs one storage-captured path segment.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new(
+        source_representation_id: RepresentationId,
+        dependency_position: u32,
+        source_resource_id: Option<ResourceId>,
+        kind: DependencyKind,
+        target: DependencyTarget,
+        resolved_representation_id: Option<RepresentationId>,
+        authored_reference: String,
+    ) -> Self {
+        Self {
+            source_representation_id,
+            dependency_position,
+            source_resource_id,
+            kind,
+            target,
+            resolved_representation_id,
+            authored_reference,
+        }
+    }
+
+    /// Returns the representation containing this edge.
+    #[must_use]
+    pub const fn source_representation_id(&self) -> RepresentationId {
+        self.source_representation_id
+    }
+
+    /// Returns the edge's position in its source dependency observation.
+    #[must_use]
+    pub const fn dependency_position(&self) -> u32 {
+        self.dependency_position
+    }
+
+    /// Returns the optional resource that authored the reference.
+    #[must_use]
+    pub const fn source_resource_id(&self) -> Option<ResourceId> {
+        self.source_resource_id
+    }
+
+    /// Returns the open-world dependency kind.
+    #[must_use]
+    pub const fn kind(&self) -> &DependencyKind {
+        &self.kind
+    }
+
+    /// Returns the floating or pinned target.
+    #[must_use]
+    pub const fn target(&self) -> DependencyTarget {
+        self.target
+    }
+
+    /// Returns the representation selected for a floating target.
+    #[must_use]
+    pub const fn resolved_representation_id(&self) -> Option<RepresentationId> {
+        self.resolved_representation_id
+    }
+
+    /// Returns the exact authored reference text.
+    #[must_use]
+    pub fn authored_reference(&self) -> &str {
+        &self.authored_reference
+    }
+}
+
+/// Why captured dependency evidence cannot prove currentness.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum ArtifactDependencyIssue {
+    /// A source dependency observation must be extracted again.
+    NeedsExtraction,
+    /// A floating asset target had no resolved representation.
+    Unresolved,
+    /// Capture reached the fixed dependency-depth bound.
+    DepthTruncated,
+    /// Capture reached the fixed dependency-representation bound.
+    RepresentationsTruncated,
+}
 
 /// Knowledge state of a representation produced by an activity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -60,6 +155,73 @@ pub enum ArtifactKnowledgeReason {
         representation_id: RepresentationId,
         /// Whether this was an input or output edge.
         edge: ArtifactEdgeKind,
+    },
+    /// A legacy activity input has no dependency-closure snapshot.
+    DependencySnapshotAbsent {
+        /// Activity owning the input.
+        activity_id: ActivityId,
+        /// Input representation whose closure was not captured.
+        representation_id: RepresentationId,
+    },
+    /// Captured dependency knowledge was incomplete at activity creation.
+    DependencyKnowledgeIncomplete {
+        /// Activity owning the input.
+        activity_id: ActivityId,
+        /// Direct activity input.
+        input_representation_id: RepresentationId,
+        /// Representation at which capture became indeterminate.
+        subject_representation_id: RepresentationId,
+        /// Captured typed path to the subject or unresolved edge.
+        path: Vec<ArtifactDependencyPathSegment>,
+        /// Specific incomplete-knowledge condition.
+        issue: ArtifactDependencyIssue,
+    },
+    /// A required authored path no longer matches its captured observation.
+    DependencyPathChanged {
+        /// Activity owning the input.
+        activity_id: ActivityId,
+        /// Direct activity input.
+        input_representation_id: RepresentationId,
+        /// Captured path that changed.
+        path: Vec<ArtifactDependencyPathSegment>,
+    },
+    /// Current dependency content differs from the captured fingerprint.
+    DependencyFingerprintChanged {
+        /// Activity owning the input.
+        activity_id: ActivityId,
+        /// Direct activity input.
+        input_representation_id: RepresentationId,
+        /// Changed dependency representation.
+        representation_id: RepresentationId,
+        /// Captured typed path to the dependency.
+        path: Vec<ArtifactDependencyPathSegment>,
+        /// Fingerprint algorithm.
+        algorithm: String,
+        /// Fingerprint format version.
+        version: u16,
+        /// Captured fingerprint bytes.
+        snapshot_value: Vec<u8>,
+        /// Current fingerprint bytes.
+        current_value: Vec<u8>,
+    },
+    /// A dependency lacks comparable captured or current fingerprint evidence.
+    DependencyFingerprintEvidenceMissing {
+        /// Activity owning the input.
+        activity_id: ActivityId,
+        /// Direct activity input.
+        input_representation_id: RepresentationId,
+        /// Dependency representation lacking evidence.
+        representation_id: RepresentationId,
+        /// Captured typed path to the dependency.
+        path: Vec<ArtifactDependencyPathSegment>,
+        /// Algorithm domain, when either side supplied one.
+        algorithm: Option<String>,
+        /// Algorithm version, when either side supplied one.
+        version: Option<u16>,
+        /// Captured value, when present.
+        snapshot_value: Option<Vec<u8>>,
+        /// Current value, when present.
+        current_value: Option<Vec<u8>>,
     },
     /// The edge has no comparable fingerprint evidence.
     FingerprintEvidenceMissing {
