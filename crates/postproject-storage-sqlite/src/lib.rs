@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+mod artifact;
 mod metadata_codec;
 mod migrations;
 mod transaction;
@@ -18,15 +19,15 @@ use std::{
 
 use postproject_core::{
     Activity, ActivityEdgeSnapshot, ActivityId, ActivityInput, ActivityKind, ActivityOutput,
-    ActivityRole, AgentIdentity, Asset, AssetId, ContentStructure, Error, ErrorKind,
-    ExternalIdentifier, FileFacts, FingerprintSnapshot, FrameRange, IdentifierScheme,
-    ImageSequenceDescriptor, ImageSequencePattern, Locator, LocatorAvailability, LocatorId,
-    MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
-    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, Production, ProductionId,
-    ProductionRead, ProductionStore, PropertyId, RationalRate, Representation,
-    RepresentationFingerprint, RepresentationId, RepresentationKind, Resource, ResourceFingerprint,
-    ResourceId, ResourceMember, ResourceRole, Result, Revision, RevisionEvent, RevisionEventKind,
-    RevisionId, Timestamp, ToolIdentity, TransactionId, VocabularyId,
+    ActivityRole, AgentIdentity, ArtifactEvaluation, ArtifactEvaluationLimits, Asset, AssetId,
+    ContentStructure, Error, ErrorKind, ExternalIdentifier, FileFacts, FingerprintSnapshot,
+    FrameRange, IdentifierScheme, ImageSequenceDescriptor, ImageSequencePattern, Locator,
+    LocatorAvailability, LocatorId, MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId,
+    MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity,
+    Production, ProductionId, ProductionRead, ProductionStore, PropertyId, RationalRate,
+    Representation, RepresentationFingerprint, RepresentationId, RepresentationKind, Resource,
+    ResourceFingerprint, ResourceId, ResourceMember, ResourceRole, Result, Revision, RevisionEvent,
+    RevisionEventKind, RevisionId, Timestamp, ToolIdentity, TransactionId, VocabularyId,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
 
@@ -247,6 +248,36 @@ impl SqliteProduction {
             ))
         })
         .collect()
+    }
+
+    fn load_representation_by_id(
+        &self,
+        representation_id: RepresentationId,
+    ) -> Result<Representation> {
+        let stored = self
+            .connection
+            .query_row(
+                "SELECT asset_id, kind, structure_kind FROM representations WHERE id = ?1",
+                params![representation_id.as_bytes().as_slice()],
+                |row| {
+                    Ok((
+                        row.get::<_, Vec<u8>>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(sqlite_error("load representation"))?
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "representation does not exist"))?;
+        let asset_id = AssetId::from_bytes(id_bytes(stored.0, "asset")?);
+        Ok(Representation::new(
+            representation_id,
+            asset_id,
+            decode_representation_kind(stored.1)?,
+            self.load_content_structure(representation_id, stored.2)?,
+            self.load_representation_fingerprints(representation_id)?,
+        ))
     }
 
     /// Loads resources for `representation_id` in structural order.
@@ -1153,6 +1184,14 @@ impl ProductionRead for SqliteProduction {
 
     fn descendants(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>> {
         SqliteProduction::descendants(self, representation_id)
+    }
+
+    fn evaluate_artifact(
+        &self,
+        representation_id: RepresentationId,
+        limits: ArtifactEvaluationLimits,
+    ) -> Result<ArtifactEvaluation> {
+        SqliteProduction::evaluate_artifact(self, representation_id, limits)
     }
 
     fn latest_revision(&self) -> Result<Option<Revision>> {
