@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 15 is pre-release and may change during the 0.x series, with every
+ABI version 16 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
@@ -106,6 +106,10 @@ spans borrow the result set and remain valid until
 The C++ wrapper copies the complete snapshot into `Representation`, `Resource`,
 `Locator`, and `Fingerprint` values. Compact image sequences remain one resource
 with a pattern and frame domain rather than one synthetic resource per frame.
+
+ABI version 16 adds explicit transaction mutations for resource and
+structure-aware representation fingerprint observations. Callers retain their
+input buffers; the transaction copies them and persists them only at commit.
 
 ## External identifiers
 

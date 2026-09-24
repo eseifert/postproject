@@ -361,6 +361,8 @@ EXPORTED_SYMBOLS = (
     "pp_transaction_confirm_locator",
     "pp_transaction_create_activity",
     "pp_transaction_import_media",
+    "pp_transaction_record_representation_fingerprint",
+    "pp_transaction_record_resource_fingerprint",
     "pp_transaction_release",
     "pp_transaction_remove_external_identifier",
     "pp_transaction_remove_media_root",
@@ -599,6 +601,10 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_transaction_confirm_locator.restype = ErrorCode
     lib.pp_transaction_retire_locator.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_retire_locator.restype = ErrorCode
+    lib.pp_transaction_record_resource_fingerprint.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), ctypes.c_char_p, ctypes.c_uint16, ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint64, ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_transaction_record_resource_fingerprint.restype = ErrorCode
+    lib.pp_transaction_record_representation_fingerprint.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), ctypes.c_char_p, ctypes.c_uint16, ctypes.POINTER(ctypes.c_uint8), ctypes.c_uint64, ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_transaction_record_representation_fingerprint.restype = ErrorCode
     lib.pp_transaction_add_external_identifier.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(ObjectRef), ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_add_external_identifier.restype = ErrorCode
     lib.pp_transaction_remove_external_identifier.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(ObjectRef), ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Error))]

@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     return 64;
   }
   (void)remove(argv[1]);
-  if (pp_abi_version() != UINT32_C(15)) {
+  if (pp_abi_version() != UINT32_C(16)) {
     return 1;
   }
   pp_error_code_t status =
@@ -588,9 +588,19 @@ int main(int argc, char **argv) {
   }
 
   status = pp_production_begin_transaction(production, &transaction, &error);
+  const uint8_t observed_resource_fingerprint[] = {0x10, 0x20, 0x30};
+  const uint8_t observed_representation_fingerprint[] = {0x40, 0x50, 0x60};
   if (status != PP_OK ||
       pp_transaction_confirm_locator(transaction, &resource_id, candidate_uri,
                                      &error) != PP_OK ||
+      pp_transaction_record_resource_fingerprint(
+          transaction, &resource_id, "c-smoke", UINT16_C(1),
+          observed_resource_fingerprint,
+          sizeof(observed_resource_fingerprint), &error) != PP_OK ||
+      pp_transaction_record_representation_fingerprint(
+          transaction, &representation_id, "c-smoke-tree", UINT16_C(1),
+          observed_representation_fingerprint,
+          sizeof(observed_representation_fingerprint), &error) != PP_OK ||
       pp_transaction_set_media_root_enabled(transaction, &root_id, 0, &error) !=
           PP_OK ||
       pp_transaction_retire_locator(transaction, &locator_id, &error) != PP_OK ||

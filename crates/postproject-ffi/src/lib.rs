@@ -30,10 +30,10 @@ use postproject_core::{
     ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern,
     Locator, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS, MAX_SEQUENCE_EXCEPTIONS, MediaRoot,
     MediaRootId, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport,
-    ProductionId, PropertyId, RationalRate, RepresentationAvailability, RepresentationId,
-    RepresentationImport, RepresentationKind, RepresentationResolution, ResolutionEvidence,
-    ResourceId, ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, Timestamp,
-    ToolIdentity, TransactionLifecycle, VocabularyId,
+    ProductionId, PropertyId, RationalRate, RepresentationAvailability, RepresentationFingerprint,
+    RepresentationId, RepresentationImport, RepresentationKind, RepresentationResolution,
+    ResolutionEvidence, ResourceFingerprint, ResourceId, ResourceResolutionState, ResourceRole,
+    RevisionContext, RevisionId, Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, MediaRootMapping,
@@ -125,7 +125,7 @@ const PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED: u32 = 15;
 const PP_REVISION_MEDIA_ROOT_REMOVED: u32 = 16;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 15;
+pub const ABI_VERSION: u32 = 16;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -311,6 +311,8 @@ enum StagedMutation {
     RemoveMediaRoot(MediaRootId),
     Locator(Locator),
     RetireLocator(postproject_core::LocatorId),
+    RecordResourceFingerprint(ResourceId, ResourceFingerprint),
+    RecordRepresentationFingerprint(RepresentationId, RepresentationFingerprint),
     AddExternalIdentifier(ObjectRef, ExternalIdentifier),
     RemoveExternalIdentifier(ObjectRef, ExternalIdentifier),
     AddMetadataValue(ObjectRef, MetadataProperty, MetadataValue),
@@ -3243,6 +3245,97 @@ pub unsafe extern "C" fn pp_transaction_retire_locator(
     }
 }
 
+/// Stages a newly observed fingerprint for one resource.
+///
+/// The value is copied during this call. An identical current observation is a
+/// successful no-op when the transaction commits.
+///
+/// # Safety
+///
+/// `transaction` must be live, `resource_id` readable, `algorithm` borrowed
+/// NUL-terminated UTF-8, `value` readable for `value_length` bytes, and
+/// `out_error` null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_record_resource_fingerprint(
+    transaction: *mut PpTransaction,
+    resource_id: *const PpUuid,
+    algorithm: *const c_char,
+    version: u16,
+    value: *const u8,
+    value_length: u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated and copied before staging the mutation.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let resource_id = resource_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("resource_id must not be null"))?;
+            let fingerprint = ResourceFingerprint::new(
+                required_utf8(algorithm, "algorithm")?,
+                version,
+                required_bytes(value, value_length, "value")?.to_vec(),
+            )?;
+            transaction
+                .mutations
+                .push(StagedMutation::RecordResourceFingerprint(
+                    ResourceId::from_bytes(resource_id.bytes),
+                    fingerprint,
+                ));
+            Ok(())
+        })
+    }
+}
+
+/// Stages a newly observed structure-aware fingerprint for one representation.
+///
+/// Pointer and no-op rules match
+/// [`pp_transaction_record_resource_fingerprint`].
+///
+/// # Safety
+///
+/// All pointers follow the rules documented above, with `representation_id`
+/// naming the representation to update.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_record_representation_fingerprint(
+    transaction: *mut PpTransaction,
+    representation_id: *const PpUuid,
+    algorithm: *const c_char,
+    version: u16,
+    value: *const u8,
+    value_length: u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated and copied before staging the mutation.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let representation_id = representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+            let fingerprint = RepresentationFingerprint::new(
+                required_utf8(algorithm, "algorithm")?,
+                version,
+                required_bytes(value, value_length, "value")?.to_vec(),
+            )?;
+            transaction
+                .mutations
+                .push(StagedMutation::RecordRepresentationFingerprint(
+                    RepresentationId::from_bytes(representation_id.bytes),
+                    fingerprint,
+                ));
+            Ok(())
+        })
+    }
+}
+
 /// Stages an external identifier attachment.
 ///
 /// `qualifier` may be null; other string inputs are required borrowed
@@ -3900,6 +3993,23 @@ unsafe fn optional_utf8<'a>(value: *const c_char, label: &str) -> Result<Option<
     }
 }
 
+unsafe fn required_bytes<'a>(
+    value: *const u8,
+    length: u64,
+    label: &str,
+) -> Result<&'a [u8], Error> {
+    let length = usize::try_from(length)
+        .map_err(|_| invalid_argument(format!("{label} length is too large")))?;
+    if value.is_null() {
+        return Err(invalid_argument(format!("{label} must not be null")));
+    }
+    if length > isize::MAX as usize {
+        return Err(invalid_argument(format!("{label} length is too large")));
+    }
+    // SAFETY: The caller guarantees `length` readable contiguous bytes.
+    Ok(unsafe { std::slice::from_raw_parts(value, length) })
+}
+
 unsafe fn activity_edges_from_abi(
     edges: *const PpActivityEdge,
     count: u64,
@@ -4259,6 +4369,16 @@ impl PpTransaction {
                     StagedMutation::Locator(locator) => transaction.add_locator(locator)?,
                     StagedMutation::RetireLocator(locator_id) => {
                         transaction.retire_locator(*locator_id)?;
+                    }
+                    StagedMutation::RecordResourceFingerprint(resource_id, fingerprint) => {
+                        transaction.record_resource_fingerprint(*resource_id, fingerprint)?;
+                    }
+                    StagedMutation::RecordRepresentationFingerprint(
+                        representation_id,
+                        fingerprint,
+                    ) => {
+                        transaction
+                            .record_representation_fingerprint(*representation_id, fingerprint)?;
                     }
                     StagedMutation::AddExternalIdentifier(target, identifier) => {
                         transaction.add_external_identifier(*target, identifier)?;
