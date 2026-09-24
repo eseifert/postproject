@@ -53,6 +53,14 @@ class ActivitySet(ctypes.Structure):
     pass
 
 
+class ArtifactEvaluation(ctypes.Structure):
+    pass
+
+
+class ArtifactReproducibility(ctypes.Structure):
+    pass
+
+
 class RevisionSet(ctypes.Structure):
     pass
 
@@ -81,6 +89,14 @@ class ActivityEdge(ctypes.Structure):
     pass
 
 
+class ArtifactReason(ctypes.Structure):
+    pass
+
+
+class ArtifactReproducibilityIssue(ctypes.Structure):
+    pass
+
+
 class FileResourceInput(ctypes.Structure):
     pass
 
@@ -94,6 +110,11 @@ RepresentationKind = ctypes.c_uint32
 ContentStructureKind = ctypes.c_uint32
 LocatorAvailability = ctypes.c_uint32
 RevisionEventKind = ctypes.c_uint32
+ArtifactKnowledgeState = ctypes.c_uint32
+ArtifactEdgeKind = ctypes.c_uint32
+ArtifactReasonKind = ctypes.c_uint32
+ArtifactTraversalLimit = ctypes.c_uint32
+ArtifactReproducibilityIssueKind = ctypes.c_uint32
 MetadataValueKind = ctypes.c_uint32
 ErrorCode = ctypes.c_uint32
 RepresentationAvailability = ctypes.c_uint32
@@ -136,6 +157,27 @@ PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED = 15
 PP_REVISION_MEDIA_ROOT_REMOVED = 16
 PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED = 17
 PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED = 18
+PP_ARTIFACT_CURRENT = 1
+PP_ARTIFACT_STALE = 2
+PP_ARTIFACT_INDETERMINATE = 3
+PP_ARTIFACT_DIVERGED = 4
+PP_ARTIFACT_EDGE_INPUT = 1
+PP_ARTIFACT_EDGE_OUTPUT = 2
+PP_ARTIFACT_REASON_PRODUCING_ACTIVITY_MISSING = 1
+PP_ARTIFACT_REASON_PRODUCING_ACTIVITY_AMBIGUOUS = 2
+PP_ARTIFACT_REASON_SNAPSHOT_ABSENT = 3
+PP_ARTIFACT_REASON_FINGERPRINT_EVIDENCE_MISSING = 4
+PP_ARTIFACT_REASON_FINGERPRINT_CHANGED = 5
+PP_ARTIFACT_REASON_FINGERPRINT_RECOMPUTATION_PENDING = 6
+PP_ARTIFACT_REASON_UPSTREAM_NOT_CURRENT = 7
+PP_ARTIFACT_REASON_TRAVERSAL_TRUNCATED = 8
+PP_ARTIFACT_TRAVERSAL_DEPTH = 1
+PP_ARTIFACT_TRAVERSAL_REPRESENTATIONS = 2
+PP_ARTIFACT_REPRODUCIBILITY_PRODUCING_ACTIVITY_MISSING = 1
+PP_ARTIFACT_REPRODUCIBILITY_PRODUCING_ACTIVITY_AMBIGUOUS = 2
+PP_ARTIFACT_REPRODUCIBILITY_TOOL_IDENTITY_MISSING = 3
+PP_ARTIFACT_REPRODUCIBILITY_PARAMETERS_MISSING = 4
+PP_ARTIFACT_REPRODUCIBILITY_INPUT_REPRESENTATION_MISSING = 5
 PP_METADATA_STRING = 1
 PP_METADATA_LANG_STRING = 2
 PP_METADATA_I64 = 3
@@ -227,6 +269,31 @@ ActivityEdge._fields_ = [
     ("role", ctypes.c_char_p),
 ]
 
+ArtifactReason._fields_ = [
+    ("kind", ArtifactReasonKind),
+    ("activity_id", Uuid),
+    ("representation_id", Uuid),
+    ("edge_kind", ArtifactEdgeKind),
+    ("upstream_state", ArtifactKnowledgeState),
+    ("traversal_limit", ArtifactTraversalLimit),
+    ("activity_count", ctypes.c_uint32),
+    ("fingerprint_algorithm", ctypes.c_char_p),
+    ("fingerprint_version", ctypes.c_uint16),
+    ("has_snapshot_value", ctypes.c_uint8),
+    ("snapshot_value", ctypes.POINTER(ctypes.c_uint8)),
+    ("snapshot_value_length", ctypes.c_uint64),
+    ("has_current_value", ctypes.c_uint8),
+    ("current_value", ctypes.POINTER(ctypes.c_uint8)),
+    ("current_value_length", ctypes.c_uint64),
+]
+
+ArtifactReproducibilityIssue._fields_ = [
+    ("kind", ArtifactReproducibilityIssueKind),
+    ("activity_id", Uuid),
+    ("representation_id", Uuid),
+    ("activity_count", ctypes.c_uint32),
+]
+
 FileResourceInput._fields_ = [
     ("path", ctypes.c_char_p),
     ("role", ctypes.c_char_p),
@@ -244,6 +311,8 @@ PUBLIC_STRUCTS = {
     "pp_object_ref_t": (ObjectRef, ("kind", "id")),
     "pp_revision_event_t": (RevisionEvent, ("kind", "position", "asset_id", "representation_id", "resource_id", "locator_id", "media_root_id", "activity_id", "target", "structural_position", "enabled", "identifier_scheme", "identifier_value", "identifier_qualifier", "vocabulary", "property", "activity_kind", "role", "fingerprint_algorithm", "fingerprint_version")),
     "pp_activity_edge_t": (ActivityEdge, ("representation_id", "role")),
+    "pp_artifact_reason_t": (ArtifactReason, ("kind", "activity_id", "representation_id", "edge_kind", "upstream_state", "traversal_limit", "activity_count", "fingerprint_algorithm", "fingerprint_version", "has_snapshot_value", "snapshot_value", "snapshot_value_length", "has_current_value", "current_value", "current_value_length")),
+    "pp_artifact_reproducibility_issue_t": (ArtifactReproducibilityIssue, ("kind", "activity_id", "representation_id", "activity_count")),
     "pp_file_resource_input_t": (FileResourceInput, ("path", "role", "required")),
     "pp_media_root_mapping_t": (MediaRootMapping, ("name", "directory")),
 }
@@ -262,6 +331,12 @@ EXPORTED_SYMBOLS = (
     "pp_activity_set_get_output_snapshot_fingerprint",
     "pp_activity_set_get_tool",
     "pp_activity_set_release",
+    "pp_artifact_evaluation_get",
+    "pp_artifact_evaluation_get_reason",
+    "pp_artifact_evaluation_release",
+    "pp_artifact_reproducibility_get",
+    "pp_artifact_reproducibility_get_issue",
+    "pp_artifact_reproducibility_release",
     "pp_asset_set_count",
     "pp_asset_set_get",
     "pp_asset_set_release",
@@ -314,11 +389,13 @@ EXPORTED_SYMBOLS = (
     "pp_production_activities",
     "pp_production_activities_consuming",
     "pp_production_activities_producing",
+    "pp_production_artifact_reproducibility",
     "pp_production_asset_exists",
     "pp_production_assets",
     "pp_production_begin_transaction",
     "pp_production_changes_since",
     "pp_production_create",
+    "pp_production_evaluate_artifact",
     "pp_production_external_identifiers",
     "pp_production_find_by_external_identifier",
     "pp_production_find_metadata",
@@ -521,6 +598,22 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_metadata_input_create_struct.restype = ErrorCode
     lib.pp_metadata_input_release.argtypes = [ctypes.POINTER(MetadataInput)]
     lib.pp_metadata_input_release.restype = None
+    lib.pp_production_evaluate_artifact.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.POINTER(ArtifactEvaluation)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_evaluate_artifact.restype = ErrorCode
+    lib.pp_artifact_evaluation_get.argtypes = [ctypes.POINTER(ArtifactEvaluation), ctypes.POINTER(Uuid), ctypes.POINTER(ArtifactKnowledgeState), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_artifact_evaluation_get.restype = ErrorCode
+    lib.pp_artifact_evaluation_get_reason.argtypes = [ctypes.POINTER(ArtifactEvaluation), ctypes.c_uint64, ctypes.POINTER(ArtifactReason), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_artifact_evaluation_get_reason.restype = ErrorCode
+    lib.pp_artifact_evaluation_release.argtypes = [ctypes.POINTER(ArtifactEvaluation)]
+    lib.pp_artifact_evaluation_release.restype = None
+    lib.pp_production_artifact_reproducibility.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ArtifactReproducibility)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_artifact_reproducibility.restype = ErrorCode
+    lib.pp_artifact_reproducibility_get.argtypes = [ctypes.POINTER(ArtifactReproducibility), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_artifact_reproducibility_get.restype = ErrorCode
+    lib.pp_artifact_reproducibility_get_issue.argtypes = [ctypes.POINTER(ArtifactReproducibility), ctypes.c_uint64, ctypes.POINTER(ArtifactReproducibilityIssue), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_artifact_reproducibility_get_issue.restype = ErrorCode
+    lib.pp_artifact_reproducibility_release.argtypes = [ctypes.POINTER(ArtifactReproducibility)]
+    lib.pp_artifact_reproducibility_release.restype = None
     lib.pp_production_activities.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ctypes.POINTER(ActivitySet)), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_production_activities.restype = ErrorCode
     lib.pp_production_activities_producing.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(ActivitySet)), ctypes.POINTER(ctypes.POINTER(Error))]
