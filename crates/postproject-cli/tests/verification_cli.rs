@@ -29,6 +29,10 @@ fn verification_detects_content_replaced_at_an_online_locator() {
         media.to_str().expect("UTF-8 media path"),
     ]);
     let asset_id = imported["asset_id"].as_str().expect("asset ID");
+    let representation_id = imported["representation_id"]
+        .as_str()
+        .expect("representation ID");
+    let resource_id = imported["resource_id"].as_str().expect("resource ID");
     fs::write(&media, b"replaced").expect("replace media in place");
 
     let presence = run_json(&["media", "resolve", production, asset_id]);
@@ -40,4 +44,28 @@ fn verification_detects_content_replaced_at_an_online_locator() {
     let resource = &verified["resolutions"][0]["resources"][0];
     assert_eq!(resource["state"], "error");
     assert_eq!(resource["evidence"][0]["kind"], "fingerprint_mismatch");
+
+    let observed = run_json(&[
+        "media",
+        "fingerprint",
+        production,
+        asset_id,
+        representation_id,
+        resource_id,
+        media.to_str().expect("UTF-8 media path"),
+    ]);
+    assert_eq!(observed["resource_id"], resource_id);
+    assert_eq!(observed["representation_id"], representation_id);
+    let latest = run_json(&["revisions", "latest", production]);
+    let revision_id = latest["id"].as_str().expect("revision ID");
+    let events = run_json(&["revisions", "events", production, revision_id]);
+    assert_eq!(events.as_array().expect("event array").len(), 2);
+    assert_eq!(events[0]["kind"], "resource_fingerprint_observed");
+    assert_eq!(events[1]["kind"], "representation_fingerprint_observed");
+
+    let reverified = run_json(&["media", "resolve", production, asset_id, "--verify"]);
+    assert_eq!(
+        reverified["resolutions"][0]["resources"][0]["state"],
+        "online_at_known_locator"
+    );
 }

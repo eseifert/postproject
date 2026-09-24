@@ -22,9 +22,10 @@ use postproject_media::{
     FfprobeInspector, FileResourceSource, ImageSequenceSource, InspectionOutcome,
     InventoryCategory, InventoryReport, InventoryScanner, MediaInspector, MediaRecognizer,
     MediaResolver, MediaRootMapping, RecognizedMedia, TechnicalMetadata, VerificationMode,
-    prepare_confirmed_locator, prepare_image_sequence_representation,
-    prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
-    prepare_recognized_original_media, prepare_single_file_representation,
+    fingerprint_file, fingerprint_representation, prepare_confirmed_locator,
+    prepare_image_sequence_representation, prepare_ordered_parts_representation,
+    prepare_original_media, prepare_package_representation, prepare_recognized_original_media,
+    prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use serde::{Deserialize, Serialize};
@@ -89,6 +90,8 @@ enum MediaCommand {
     Resolve(MediaResolveArgs),
     /// Inventory known and unassociated media without changing the production.
     Inventory(MediaInventoryArgs),
+    /// Record a freshly computed resource and representation fingerprint.
+    Fingerprint(MediaFingerprintArgs),
 }
 
 #[derive(Debug, Args)]
@@ -150,6 +153,16 @@ struct MediaInventoryArgs {
     /// Machine-local disposable sidecar cache.
     #[arg(long, value_name = "PATH")]
     cache: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct MediaFingerprintArgs {
+    production: PathBuf,
+    asset_id: String,
+    representation_id: String,
+    resource_id: String,
+    /// Regular file whose content now realizes the resource.
+    path: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -613,6 +626,14 @@ struct FingerprintView {
 }
 
 #[derive(Debug, Serialize)]
+struct FingerprintObservationView {
+    representation_id: String,
+    resource_id: String,
+    resource_fingerprint: FingerprintView,
+    representation_fingerprint: FingerprintView,
+}
+
+#[derive(Debug, Serialize)]
 struct LocatorView {
     id: String,
     uri: String,
@@ -903,6 +924,16 @@ enum RevisionEventKindView {
         representation_id: String,
         role: Option<String>,
     },
+    ResourceFingerprintObserved {
+        resource_id: String,
+        algorithm: String,
+        version: u16,
+    },
+    RepresentationFingerprintObserved {
+        representation_id: String,
+        algorithm: String,
+        version: u16,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -948,6 +979,7 @@ fn execute(cli: Cli) -> Result<()> {
             MediaCommand::Show(args) => media_show(&args, cli.json),
             MediaCommand::Resolve(args) => media_resolve(args, cli.json),
             MediaCommand::Inventory(args) => media_inventory(&args, cli.json),
+            MediaCommand::Fingerprint(args) => media_fingerprint(&args, cli.json),
         },
         Command::Representation(args) => match args.command {
             RepresentationCommand::Add(args) => representation_add(&args, cli.json),
@@ -1212,6 +1244,74 @@ fn representation_add(args: &RepresentationAddArgs, json: bool) -> Result<()> {
         print_json(&view)
     } else {
         println!("added representation {}", view.representation_id);
+        Ok(())
+    }
+}
+
+fn media_fingerprint(args: &MediaFingerprintArgs, json: bool) -> Result<()> {
+    let asset_id = AssetId::from_str(&args.asset_id).context("parse asset ID")?;
+    let representation_id =
+        RepresentationId::from_str(&args.representation_id).context("parse representation ID")?;
+    let resource_id = ResourceId::from_str(&args.resource_id).context("parse resource ID")?;
+    let report = fingerprint_file(&args.path).context("fingerprint resource content")?;
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let representation = production
+        .representations(asset_id)
+        .context("load asset representations")?
+        .into_iter()
+        .find(|candidate| candidate.id() == representation_id)
+        .with_context(|| format!("representation does not exist on asset: {representation_id}"))?;
+    let mut resources = production
+        .resources(representation_id)
+        .context("load representation resources")?;
+    let resource = resources
+        .iter_mut()
+        .find(|candidate| candidate.id() == resource_id)
+        .with_context(|| format!("resource does not belong to representation: {resource_id}"))?;
+    let fingerprint = report.fingerprint().clone();
+    let mut fingerprints = resource.fingerprints().to_vec();
+    fingerprints.retain(|current| {
+        current.algorithm() != fingerprint.algorithm() || current.version() != fingerprint.version()
+    });
+    fingerprints.push(fingerprint.clone());
+    *resource = Resource::new(resource.id(), fingerprints, resource.file_facts());
+    let representation_fingerprint =
+        fingerprint_representation(representation.content_structure(), &resources)
+            .context("recompute representation fingerprint")?;
+
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin fingerprint transaction")?;
+    set_cli_revision_context(&mut transaction, "Record fingerprint observation")?;
+    transaction
+        .record_resource_fingerprint(resource_id, &fingerprint)
+        .context("stage resource fingerprint")?;
+    transaction
+        .record_representation_fingerprint(representation_id, &representation_fingerprint)
+        .context("stage representation fingerprint")?;
+    transaction.commit().context("commit fingerprints")?;
+
+    let view = FingerprintObservationView {
+        representation_id: representation_id.to_string(),
+        resource_id: resource_id.to_string(),
+        resource_fingerprint: FingerprintView {
+            algorithm: fingerprint.algorithm().to_owned(),
+            version: fingerprint.version(),
+            value_hex: hex::encode(fingerprint.value()),
+        },
+        representation_fingerprint: FingerprintView {
+            algorithm: representation_fingerprint.algorithm().to_owned(),
+            version: representation_fingerprint.version(),
+            value_hex: hex::encode(representation_fingerprint.value()),
+        },
+    };
+    if json {
+        print_json(&view)
+    } else {
+        println!(
+            "recorded fingerprints for resource {} and representation {}",
+            view.resource_id, view.representation_id
+        );
         Ok(())
     }
 }
@@ -2013,6 +2113,24 @@ fn revision_event_view(event: &RevisionEvent) -> Result<RevisionEventView> {
             activity_id: activity_id.to_string(),
             representation_id: representation_id.to_string(),
             role: role.as_ref().map(|role| role.as_str().to_owned()),
+        },
+        RevisionEventKind::ResourceFingerprintObserved {
+            resource_id,
+            algorithm,
+            version,
+        } => RevisionEventKindView::ResourceFingerprintObserved {
+            resource_id: resource_id.to_string(),
+            algorithm: algorithm.clone(),
+            version: *version,
+        },
+        RevisionEventKind::RepresentationFingerprintObserved {
+            representation_id,
+            algorithm,
+            version,
+        } => RevisionEventKindView::RepresentationFingerprintObserved {
+            representation_id: representation_id.to_string(),
+            algorithm: algorithm.clone(),
+            version: *version,
         },
         _ => bail!("revision event kind is not supported by this CLI"),
     };
