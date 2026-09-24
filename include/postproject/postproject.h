@@ -31,6 +31,8 @@ typedef struct pp_metadata_set pp_metadata_set_t;
 typedef struct pp_metadata_value pp_metadata_value_t;
 typedef struct pp_metadata_input pp_metadata_input_t;
 typedef struct pp_activity_set pp_activity_set_t;
+typedef struct pp_artifact_evaluation pp_artifact_evaluation_t;
+typedef struct pp_artifact_reproducibility pp_artifact_reproducibility_t;
 typedef struct pp_revision_set pp_revision_set_t;
 typedef struct pp_revision_event_set pp_revision_event_set_t;
 typedef struct pp_error pp_error_t;
@@ -93,6 +95,42 @@ typedef uint32_t pp_revision_event_kind_t;
 #define PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED UINT32_C(17)
 #define PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED UINT32_C(18)
 
+typedef uint32_t pp_artifact_knowledge_state_t;
+
+#define PP_ARTIFACT_CURRENT UINT32_C(1)
+#define PP_ARTIFACT_STALE UINT32_C(2)
+#define PP_ARTIFACT_INDETERMINATE UINT32_C(3)
+#define PP_ARTIFACT_DIVERGED UINT32_C(4)
+
+typedef uint32_t pp_artifact_edge_kind_t;
+
+#define PP_ARTIFACT_EDGE_INPUT UINT32_C(1)
+#define PP_ARTIFACT_EDGE_OUTPUT UINT32_C(2)
+
+typedef uint32_t pp_artifact_reason_kind_t;
+
+#define PP_ARTIFACT_REASON_PRODUCING_ACTIVITY_MISSING UINT32_C(1)
+#define PP_ARTIFACT_REASON_PRODUCING_ACTIVITY_AMBIGUOUS UINT32_C(2)
+#define PP_ARTIFACT_REASON_SNAPSHOT_ABSENT UINT32_C(3)
+#define PP_ARTIFACT_REASON_FINGERPRINT_EVIDENCE_MISSING UINT32_C(4)
+#define PP_ARTIFACT_REASON_FINGERPRINT_CHANGED UINT32_C(5)
+#define PP_ARTIFACT_REASON_FINGERPRINT_RECOMPUTATION_PENDING UINT32_C(6)
+#define PP_ARTIFACT_REASON_UPSTREAM_NOT_CURRENT UINT32_C(7)
+#define PP_ARTIFACT_REASON_TRAVERSAL_TRUNCATED UINT32_C(8)
+
+typedef uint32_t pp_artifact_traversal_limit_t;
+
+#define PP_ARTIFACT_TRAVERSAL_DEPTH UINT32_C(1)
+#define PP_ARTIFACT_TRAVERSAL_REPRESENTATIONS UINT32_C(2)
+
+typedef uint32_t pp_artifact_reproducibility_issue_kind_t;
+
+#define PP_ARTIFACT_REPRODUCIBILITY_PRODUCING_ACTIVITY_MISSING UINT32_C(1)
+#define PP_ARTIFACT_REPRODUCIBILITY_PRODUCING_ACTIVITY_AMBIGUOUS UINT32_C(2)
+#define PP_ARTIFACT_REPRODUCIBILITY_TOOL_IDENTITY_MISSING UINT32_C(3)
+#define PP_ARTIFACT_REPRODUCIBILITY_PARAMETERS_MISSING UINT32_C(4)
+#define PP_ARTIFACT_REPRODUCIBILITY_INPUT_REPRESENTATION_MISSING UINT32_C(5)
+
 typedef uint32_t pp_metadata_value_kind_t;
 
 #define PP_METADATA_STRING UINT32_C(1)
@@ -143,6 +181,33 @@ typedef struct pp_activity_edge {
   pp_uuid_t representation_id;
   const char *role;
 } pp_activity_edge_t;
+
+/* String and byte pointers borrow the owning evaluation. Fields not used by a
+ * reason kind are zero or NULL. */
+typedef struct pp_artifact_reason {
+  pp_artifact_reason_kind_t kind;
+  pp_uuid_t activity_id;
+  pp_uuid_t representation_id;
+  pp_artifact_edge_kind_t edge_kind;
+  pp_artifact_knowledge_state_t upstream_state;
+  pp_artifact_traversal_limit_t traversal_limit;
+  uint32_t activity_count;
+  const char *fingerprint_algorithm;
+  uint16_t fingerprint_version;
+  uint8_t has_snapshot_value;
+  const uint8_t *snapshot_value;
+  uint64_t snapshot_value_length;
+  uint8_t has_current_value;
+  const uint8_t *current_value;
+  uint64_t current_value_length;
+} pp_artifact_reason_t;
+
+typedef struct pp_artifact_reproducibility_issue {
+  pp_artifact_reproducibility_issue_kind_t kind;
+  pp_uuid_t activity_id;
+  pp_uuid_t representation_id;
+  uint32_t activity_count;
+} pp_artifact_reproducibility_issue_t;
 
 typedef struct pp_file_resource_input {
   const char *path;
@@ -433,6 +498,38 @@ PP_API pp_error_code_t pp_metadata_input_create_struct(
     const char **names, const pp_metadata_input_t **values, uint64_t count,
     pp_metadata_input_t **out_input, pp_error_t **out_error);
 PP_API void pp_metadata_input_release(pp_metadata_input_t *input);
+/* Artifact evaluation is knowledge-only. Returned strings and byte spans
+ * borrow their owning result handle. */
+PP_API pp_error_code_t pp_production_evaluate_artifact(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
+    uint32_t max_depth, uint32_t max_representations,
+    pp_artifact_evaluation_t **out_evaluation, pp_error_t **out_error);
+PP_API pp_error_code_t pp_artifact_evaluation_get(
+    const pp_artifact_evaluation_t *evaluation,
+    pp_uuid_t *out_representation_id,
+    pp_artifact_knowledge_state_t *out_state,
+    uint32_t *out_visited_representations, uint8_t *out_truncated,
+    uint64_t *out_reason_count, pp_error_t **out_error);
+PP_API pp_error_code_t pp_artifact_evaluation_get_reason(
+    const pp_artifact_evaluation_t *evaluation, uint64_t index,
+    pp_artifact_reason_t *out_reason, pp_error_t **out_error);
+PP_API void
+pp_artifact_evaluation_release(pp_artifact_evaluation_t *evaluation);
+PP_API pp_error_code_t pp_production_artifact_reproducibility(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
+    pp_artifact_reproducibility_t **out_report, pp_error_t **out_error);
+PP_API pp_error_code_t pp_artifact_reproducibility_get(
+    const pp_artifact_reproducibility_t *report,
+    pp_uuid_t *out_representation_id, uint8_t *out_reproducible,
+    uint8_t *out_has_producing_activity,
+    pp_uuid_t *out_producing_activity_id, const char **out_activity_kind,
+    uint64_t *out_issue_count, pp_error_t **out_error);
+PP_API pp_error_code_t pp_artifact_reproducibility_get_issue(
+    const pp_artifact_reproducibility_t *report, uint64_t index,
+    pp_artifact_reproducibility_issue_t *out_issue,
+    pp_error_t **out_error);
+PP_API void pp_artifact_reproducibility_release(
+    pp_artifact_reproducibility_t *report);
 /* Activity strings are borrowed until pp_activity_set_release(). Optional
  * timestamps use explicit presence flags and zero values when absent. */
 PP_API pp_error_code_t pp_production_activities(

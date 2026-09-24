@@ -4,6 +4,7 @@
 //! numeric codes plus owned error objects. Native consumers should include the
 //! shipped `postproject.h` rather than depending on Rust declarations.
 
+mod artifact;
 mod metadata;
 mod metadata_input;
 mod provenance;
@@ -26,14 +27,15 @@ use std::{
 
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
-    Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, Error, ErrorKind, EvidenceKind,
-    ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern,
-    Locator, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS, MAX_SEQUENCE_EXCEPTIONS, MediaRoot,
-    MediaRootId, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport,
-    ProductionId, PropertyId, RationalRate, RepresentationAvailability, RepresentationFingerprint,
-    RepresentationId, RepresentationImport, RepresentationKind, RepresentationResolution,
-    ResolutionEvidence, ResourceFingerprint, ResourceId, ResourceResolutionState, ResourceRole,
-    RevisionContext, RevisionId, Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
+    ArtifactEvaluationLimits, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, Error,
+    ErrorKind, EvidenceKind, ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme,
+    ImageSequencePattern, Locator, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS,
+    MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef,
+    OriginIdentity, OriginalMediaImport, ProductionId, PropertyId, RationalRate,
+    RepresentationAvailability, RepresentationFingerprint, RepresentationId, RepresentationImport,
+    RepresentationKind, RepresentationResolution, ResolutionEvidence, ResourceFingerprint,
+    ResourceId, ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, Timestamp,
+    ToolIdentity, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, MediaRootMapping,
@@ -43,6 +45,10 @@ use postproject_media::{
 };
 use postproject_storage_sqlite::SqliteProduction;
 
+pub use artifact::{
+    PpArtifactEvaluation, PpArtifactReason, PpArtifactReproducibility,
+    PpArtifactReproducibilityIssue,
+};
 use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
 pub use metadata_input::PpMetadataInput;
@@ -127,7 +133,7 @@ const PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED: u32 = 17;
 const PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED: u32 = 18;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 16;
+pub const ABI_VERSION: u32 = 17;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -1208,6 +1214,270 @@ pub unsafe extern "C" fn pp_metadata_set_release(metadata: *mut PpMetadataSet) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: Ownership is transferred back exactly once by contract.
         drop(unsafe { Box::from_raw(metadata) });
+    }));
+}
+
+/// Evaluates artifact knowledge without accessing media files.
+///
+/// # Safety
+///
+/// `production` and `representation_id` must be readable live values,
+/// `out_evaluation` must be writable, and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_evaluate_artifact(
+    production: *const PpProduction,
+    representation_id: *const PpUuid,
+    max_depth: u32,
+    max_representations: u32,
+    out_evaluation: *mut *mut PpArtifactEvaluation,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before use and output ownership is explicit.
+    unsafe {
+        initialize_output(out_evaluation);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            let representation_id = representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+            require_output(out_evaluation, "out_evaluation")?;
+            let limits = ArtifactEvaluationLimits::new(max_depth, max_representations)?;
+            let inner = lock_production(&production.state);
+            let evaluation = inner.evaluate_artifact(
+                RepresentationId::from_bytes(representation_id.bytes),
+                limits,
+            )?;
+            let evaluation = PpArtifactEvaluation::new(&evaluation)?;
+            out_evaluation.write(Box::into_raw(Box::new(evaluation)));
+            Ok(())
+        })
+    }
+}
+
+/// Reads the artifact-evaluation summary.
+///
+/// # Safety
+///
+/// `evaluation` must be live. Every output must be writable and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_artifact_evaluation_get(
+    evaluation: *const PpArtifactEvaluation,
+    out_representation_id: *mut PpUuid,
+    out_state: *mut u32,
+    out_visited_representations: *mut u32,
+    out_truncated: *mut u8,
+    out_reason_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_uuid(out_representation_id);
+        initialize_value(out_state, 0);
+        initialize_value(out_visited_representations, 0);
+        initialize_value(out_truncated, 0);
+        initialize_value(out_reason_count, 0);
+        ffi_call(out_error, || {
+            let evaluation = evaluation
+                .as_ref()
+                .ok_or_else(|| invalid_argument("evaluation must not be null"))?;
+            require_output(out_representation_id, "out_representation_id")?;
+            require_output(out_state, "out_state")?;
+            require_output(out_visited_representations, "out_visited_representations")?;
+            require_output(out_truncated, "out_truncated")?;
+            require_output(out_reason_count, "out_reason_count")?;
+            out_representation_id.write(PpUuid {
+                bytes: evaluation.representation_id.into_bytes(),
+            });
+            out_state.write(evaluation.state);
+            out_visited_representations.write(evaluation.visited_representations);
+            out_truncated.write(u8::from(evaluation.truncated));
+            out_reason_count.write(length_as_u64(evaluation.reasons.len())?);
+            Ok(())
+        })
+    }
+}
+
+/// Reads one borrowed artifact-evaluation reason.
+///
+/// # Safety
+///
+/// `evaluation` must be live, `out_reason` must be writable, and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_artifact_evaluation_get_reason(
+    evaluation: *const PpArtifactEvaluation,
+    index: u64,
+    out_reason: *mut PpArtifactReason,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_value(out_reason, zero_artifact_reason());
+        ffi_call(out_error, || {
+            require_output(out_reason, "out_reason")?;
+            let evaluation = evaluation
+                .as_ref()
+                .ok_or_else(|| invalid_argument("evaluation must not be null"))?;
+            let reason = item_at(&evaluation.reasons, index, "artifact reason")?;
+            out_reason.write(reason.as_abi());
+            Ok(())
+        })
+    }
+}
+
+/// Releases an artifact evaluation. Null is a no-op.
+///
+/// # Safety
+///
+/// A non-null pointer must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_artifact_evaluation_release(evaluation: *mut PpArtifactEvaluation) {
+    if evaluation.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership is transferred back exactly once by contract.
+        drop(unsafe { Box::from_raw(evaluation) });
+    }));
+}
+
+/// Reports whether production knowledge can reproduce an artifact.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_production_evaluate_artifact`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_artifact_reproducibility(
+    production: *const PpProduction,
+    representation_id: *const PpUuid,
+    out_report: *mut *mut PpArtifactReproducibility,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before use and output ownership is explicit.
+    unsafe {
+        initialize_output(out_report);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            let representation_id = representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+            require_output(out_report, "out_report")?;
+            let inner = lock_production(&production.state);
+            let report = inner
+                .artifact_reproducibility(RepresentationId::from_bytes(representation_id.bytes))?;
+            let report = PpArtifactReproducibility::new(&report)?;
+            out_report.write(Box::into_raw(Box::new(report)));
+            Ok(())
+        })
+    }
+}
+
+/// Reads an artifact-reproducibility summary.
+///
+/// # Safety
+///
+/// `report` must be live. Every output must be writable and `out_error` may be
+/// null or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments, reason = "flat C outputs are ABI-safe")]
+pub unsafe extern "C" fn pp_artifact_reproducibility_get(
+    report: *const PpArtifactReproducibility,
+    out_representation_id: *mut PpUuid,
+    out_reproducible: *mut u8,
+    out_has_producing_activity: *mut u8,
+    out_producing_activity_id: *mut PpUuid,
+    out_activity_kind: *mut *const c_char,
+    out_issue_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_uuid(out_representation_id);
+        initialize_value(out_reproducible, 0);
+        initialize_value(out_has_producing_activity, 0);
+        initialize_uuid(out_producing_activity_id);
+        initialize_const_output(out_activity_kind);
+        initialize_value(out_issue_count, 0);
+        ffi_call(out_error, || {
+            let report = report
+                .as_ref()
+                .ok_or_else(|| invalid_argument("report must not be null"))?;
+            require_output(out_representation_id, "out_representation_id")?;
+            require_output(out_reproducible, "out_reproducible")?;
+            require_output(out_has_producing_activity, "out_has_producing_activity")?;
+            require_output(out_producing_activity_id, "out_producing_activity_id")?;
+            require_output(out_activity_kind, "out_activity_kind")?;
+            require_output(out_issue_count, "out_issue_count")?;
+            out_representation_id.write(PpUuid {
+                bytes: report.representation_id.into_bytes(),
+            });
+            out_reproducible.write(u8::from(report.issues.is_empty()));
+            if let Some(activity_id) = report.producing_activity_id {
+                out_has_producing_activity.write(1);
+                out_producing_activity_id.write(PpUuid {
+                    bytes: activity_id.into_bytes(),
+                });
+            }
+            if let Some(kind) = report.activity_kind.as_ref() {
+                out_activity_kind.write(kind.as_ptr());
+            }
+            out_issue_count.write(length_as_u64(report.issues.len())?);
+            Ok(())
+        })
+    }
+}
+
+/// Reads one reproducibility issue.
+///
+/// # Safety
+///
+/// `report` must be live, `out_issue` must be writable, and `out_error` may be
+/// null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_artifact_reproducibility_get_issue(
+    report: *const PpArtifactReproducibility,
+    index: u64,
+    out_issue: *mut PpArtifactReproducibilityIssue,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_value(out_issue, zero_reproducibility_issue());
+        ffi_call(out_error, || {
+            require_output(out_issue, "out_issue")?;
+            let report = report
+                .as_ref()
+                .ok_or_else(|| invalid_argument("report must not be null"))?;
+            out_issue.write(*item_at(
+                &report.issues,
+                index,
+                "artifact reproducibility issue",
+            )?);
+            Ok(())
+        })
+    }
+}
+
+/// Releases an artifact-reproducibility report. Null is a no-op.
+///
+/// # Safety
+///
+/// A non-null pointer must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_artifact_reproducibility_release(
+    report: *mut PpArtifactReproducibility,
+) {
+    if report.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership is transferred back exactly once by contract.
+        drop(unsafe { Box::from_raw(report) });
     }));
 }
 
@@ -4071,6 +4341,35 @@ const fn empty_revision_event() -> PpRevisionEvent {
         role: ptr::null(),
         fingerprint_algorithm: ptr::null(),
         fingerprint_version: 0,
+    }
+}
+
+const fn zero_artifact_reason() -> PpArtifactReason {
+    PpArtifactReason {
+        kind: 0,
+        activity_id: PpUuid { bytes: [0; 16] },
+        representation_id: PpUuid { bytes: [0; 16] },
+        edge_kind: 0,
+        upstream_state: 0,
+        traversal_limit: 0,
+        activity_count: 0,
+        fingerprint_algorithm: ptr::null(),
+        fingerprint_version: 0,
+        has_snapshot_value: 0,
+        snapshot_value: ptr::null(),
+        snapshot_value_length: 0,
+        has_current_value: 0,
+        current_value: ptr::null(),
+        current_value_length: 0,
+    }
+}
+
+const fn zero_reproducibility_issue() -> PpArtifactReproducibilityIssue {
+    PpArtifactReproducibilityIssue {
+        kind: 0,
+        activity_id: PpUuid { bytes: [0; 16] },
+        representation_id: PpUuid { bytes: [0; 16] },
+        activity_count: 0,
     }
 }
 
