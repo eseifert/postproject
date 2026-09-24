@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
   std::remove(path.c_str());
 
   try {
-    if (postproject::abi_version() != 16) {
+    if (postproject::abi_version() != 17) {
       return 3;
     }
 
@@ -247,6 +247,19 @@ int main(int argc, char **argv) {
              .observed_revision_sequence.has_value() ||
         !production.ancestors(resolutions[0].representation_id).empty()) {
       return 14;
+    }
+    const auto artifact =
+        production.evaluateArtifact(resolutions[0].representation_id);
+    const auto reproducibility =
+        production.artifactReproducibility(resolutions[0].representation_id);
+    if (artifact.state != postproject::ArtifactKnowledgeState::current ||
+        artifact.visited_representations != 1 || artifact.truncated ||
+        !artifact.reasons.empty() || !reproducibility.reproducible ||
+        reproducibility.producing_activity_id != activity_id ||
+        reproducibility.activity_kind !=
+            std::string("org.postproject:ingest") ||
+        !reproducibility.issues.empty()) {
+      return 28;
     }
     auto confirmation = production.beginTransaction();
     confirmation.confirmLocator(
