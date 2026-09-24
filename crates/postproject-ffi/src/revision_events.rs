@@ -11,8 +11,9 @@ use crate::{
     PP_REVISION_LOCATOR_ADDED, PP_REVISION_LOCATOR_RETIRED, PP_REVISION_MEDIA_ROOT_ADDED,
     PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED, PP_REVISION_MEDIA_ROOT_REMOVED,
     PP_REVISION_METADATA_ADDED_OR_REPLACED, PP_REVISION_METADATA_REMOVED,
-    PP_REVISION_REPRESENTATION_ADDED, PP_REVISION_REPRESENTATION_RESOURCE_ADDED,
-    PP_REVISION_RESOURCE_ADDED, PpObjectRef, PpRevisionEvent, PpUuid, exact_cstring,
+    PP_REVISION_REPRESENTATION_ADDED, PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED,
+    PP_REVISION_REPRESENTATION_RESOURCE_ADDED, PP_REVISION_RESOURCE_ADDED,
+    PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED, PpObjectRef, PpRevisionEvent, PpUuid, exact_cstring,
     object_ref_to_abi,
 };
 
@@ -40,6 +41,8 @@ pub(crate) struct AbiRevisionEvent {
     property: Option<CString>,
     activity_kind: Option<CString>,
     role: Option<CString>,
+    fingerprint_algorithm: Option<CString>,
+    fingerprint_version: Option<u16>,
 }
 
 impl PpRevisionEventSet {
@@ -73,6 +76,8 @@ impl AbiRevisionEvent {
             property: c_string_ptr(self.property.as_ref()),
             activity_kind: c_string_ptr(self.activity_kind.as_ref()),
             role: c_string_ptr(self.role.as_ref()),
+            fingerprint_algorithm: c_string_ptr(self.fingerprint_algorithm.as_ref()),
+            fingerprint_version: self.fingerprint_version.unwrap_or(0),
         }
     }
 }
@@ -104,6 +109,8 @@ impl TryFrom<&RevisionEvent> for AbiRevisionEvent {
             property: None,
             activity_kind: None,
             role: None,
+            fingerprint_algorithm: None,
+            fingerprint_version: None,
         };
         match event.kind() {
             RevisionEventKind::AssetImported { asset_id } => {
@@ -236,6 +243,28 @@ impl TryFrom<&RevisionEvent> for AbiRevisionEvent {
                     .as_ref()
                     .map(|value| exact_cstring(value.as_str(), "revision activity role"))
                     .transpose()?;
+            }
+            RevisionEventKind::ResourceFingerprintObserved {
+                resource_id,
+                algorithm,
+                version,
+            } => {
+                projected.kind = PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED;
+                projected.resource_id = Some(uuid(resource_id.into_bytes()));
+                projected.fingerprint_algorithm =
+                    Some(exact_cstring(algorithm, "revision fingerprint algorithm")?);
+                projected.fingerprint_version = Some(*version);
+            }
+            RevisionEventKind::RepresentationFingerprintObserved {
+                representation_id,
+                algorithm,
+                version,
+            } => {
+                projected.kind = PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED;
+                projected.representation_id = Some(uuid(representation_id.into_bytes()));
+                projected.fingerprint_algorithm =
+                    Some(exact_cstring(algorithm, "revision fingerprint algorithm")?);
+                projected.fingerprint_version = Some(*version);
             }
             _ => {
                 return Err(postproject_core::Error::new(

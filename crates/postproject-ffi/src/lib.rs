@@ -123,6 +123,8 @@ const PP_REVISION_ACTIVITY_OUTPUT_ADDED: u32 = 13;
 const PP_REVISION_LOCATOR_RETIRED: u32 = 14;
 const PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED: u32 = 15;
 const PP_REVISION_MEDIA_ROOT_REMOVED: u32 = 16;
+const PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED: u32 = 17;
+const PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED: u32 = 18;
 
 /// Current pre-1.0 ABI version.
 pub const ABI_VERSION: u32 = 16;
@@ -217,6 +219,10 @@ pub struct PpRevisionEvent {
     pub activity_kind: *const c_char,
     /// Borrowed activity-edge role, or null when absent/not applicable.
     pub role: *const c_char,
+    /// Borrowed fingerprint algorithm, or null when not applicable.
+    pub fingerprint_algorithm: *const c_char,
+    /// Fingerprint algorithm version, or zero when not applicable.
+    pub fingerprint_version: u16,
 }
 
 /// Opaque production handle owned by the C caller.
@@ -4063,6 +4069,8 @@ const fn empty_revision_event() -> PpRevisionEvent {
         property: ptr::null(),
         activity_kind: ptr::null(),
         role: ptr::null(),
+        fingerprint_algorithm: ptr::null(),
+        fingerprint_version: 0,
     }
 }
 

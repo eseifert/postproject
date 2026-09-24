@@ -134,6 +134,8 @@ PP_REVISION_ACTIVITY_OUTPUT_ADDED = 13
 PP_REVISION_LOCATOR_RETIRED = 14
 PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED = 15
 PP_REVISION_MEDIA_ROOT_REMOVED = 16
+PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED = 17
+PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED = 18
 PP_METADATA_STRING = 1
 PP_METADATA_LANG_STRING = 2
 PP_METADATA_I64 = 3
@@ -216,6 +218,8 @@ RevisionEvent._fields_ = [
     ("property", ctypes.c_char_p),
     ("activity_kind", ctypes.c_char_p),
     ("role", ctypes.c_char_p),
+    ("fingerprint_algorithm", ctypes.c_char_p),
+    ("fingerprint_version", ctypes.c_uint16),
 ]
 
 ActivityEdge._fields_ = [
@@ -238,7 +242,7 @@ MediaRootMapping._fields_ = [
 PUBLIC_STRUCTS = {
     "pp_uuid_t": (Uuid, ("bytes",)),
     "pp_object_ref_t": (ObjectRef, ("kind", "id")),
-    "pp_revision_event_t": (RevisionEvent, ("kind", "position", "asset_id", "representation_id", "resource_id", "locator_id", "media_root_id", "activity_id", "target", "structural_position", "enabled", "identifier_scheme", "identifier_value", "identifier_qualifier", "vocabulary", "property", "activity_kind", "role")),
+    "pp_revision_event_t": (RevisionEvent, ("kind", "position", "asset_id", "representation_id", "resource_id", "locator_id", "media_root_id", "activity_id", "target", "structural_position", "enabled", "identifier_scheme", "identifier_value", "identifier_qualifier", "vocabulary", "property", "activity_kind", "role", "fingerprint_algorithm", "fingerprint_version")),
     "pp_activity_edge_t": (ActivityEdge, ("representation_id", "role")),
     "pp_file_resource_input_t": (FileResourceInput, ("path", "role", "required")),
     "pp_media_root_mapping_t": (MediaRootMapping, ("name", "directory")),

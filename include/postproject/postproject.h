@@ -90,6 +90,8 @@ typedef uint32_t pp_revision_event_kind_t;
 #define PP_REVISION_LOCATOR_RETIRED UINT32_C(14)
 #define PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED UINT32_C(15)
 #define PP_REVISION_MEDIA_ROOT_REMOVED UINT32_C(16)
+#define PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED UINT32_C(17)
+#define PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED UINT32_C(18)
 
 typedef uint32_t pp_metadata_value_kind_t;
 
@@ -133,6 +135,8 @@ typedef struct pp_revision_event {
   const char *property;
   const char *activity_kind;
   const char *role;
+  const char *fingerprint_algorithm;
+  uint16_t fingerprint_version;
 } pp_revision_event_t;
 
 typedef struct pp_activity_edge {

@@ -614,6 +614,46 @@ int main(int argc, char **argv) {
   pp_transaction_release(transaction);
   transaction = NULL;
 
+  revisions = NULL;
+  status = pp_production_latest_revision(production, &revisions, &error);
+  if (status != PP_OK || revisions == NULL ||
+      pp_revision_set_get(
+          revisions, 0, &revision_id, &revision_sequence,
+          &revision_transaction_id, &revision_committed_at,
+          &revision_origin_name, &revision_origin_version,
+          &revision_origin_uri, &revision_message, &error) != PP_OK) {
+    pp_revision_set_release(revisions);
+    pp_resolution_set_release(resolutions);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 78;
+  }
+  pp_revision_set_release(revisions);
+  revision_events = NULL;
+  status = pp_production_revision_events(production, &revision_id,
+                                         &revision_events, &error);
+  if (status != PP_OK || revision_events == NULL ||
+      pp_revision_event_set_get(revision_events, 1, &revision_event, &error) !=
+          PP_OK ||
+      revision_event.kind != PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED ||
+      revision_event.fingerprint_algorithm == NULL ||
+      strcmp(revision_event.fingerprint_algorithm, "c-smoke") != 0 ||
+      revision_event.fingerprint_version != UINT16_C(1) ||
+      pp_revision_event_set_get(revision_events, 2, &revision_event, &error) !=
+          PP_OK ||
+      revision_event.kind !=
+          PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED ||
+      revision_event.fingerprint_algorithm == NULL ||
+      strcmp(revision_event.fingerprint_algorithm, "c-smoke-tree") != 0 ||
+      revision_event.fingerprint_version != UINT16_C(1)) {
+    pp_revision_event_set_release(revision_events);
+    pp_resolution_set_release(resolutions);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 79;
+  }
+  pp_revision_event_set_release(revision_events);
+
   roots = NULL;
   status = pp_production_media_roots(production, &roots, &error);
   if (status != PP_OK || roots == NULL ||
