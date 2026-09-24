@@ -17,10 +17,11 @@ use std::{
 };
 
 use postproject_core::{
-    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
-    Asset, AssetId, ContentStructure, Error, ErrorKind, ExternalIdentifier, FileFacts, FrameRange,
-    IdentifierScheme, ImageSequenceDescriptor, ImageSequencePattern, Locator, LocatorAvailability,
-    LocatorId, MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
+    Activity, ActivityEdgeSnapshot, ActivityId, ActivityInput, ActivityKind, ActivityOutput,
+    ActivityRole, AgentIdentity, Asset, AssetId, ContentStructure, Error, ErrorKind,
+    ExternalIdentifier, FileFacts, FingerprintSnapshot, FrameRange, IdentifierScheme,
+    ImageSequenceDescriptor, ImageSequencePattern, Locator, LocatorAvailability, LocatorId,
+    MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
     MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, Production, ProductionId,
     ProductionRead, ProductionStore, PropertyId, RationalRate, Representation,
     RepresentationFingerprint, RepresentationId, RepresentationKind, Resource, ResourceFingerprint,
@@ -81,9 +82,16 @@ struct StoredRevisionEvent {
     identifier_qualifier: Option<String>,
     activity_kind: Option<String>,
     role: Option<String>,
+    fingerprint_algorithm: Option<String>,
+    fingerprint_version: Option<i64>,
 }
 
-type StoredActivityEdge = (RepresentationId, Option<ActivityRole>);
+struct StoredActivityEdge {
+    id: i64,
+    representation_id: RepresentationId,
+    role: Option<ActivityRole>,
+    snapshot_revision_sequence: Option<i64>,
+}
 type ActivityEdgesById<Edge> = BTreeMap<ActivityId, Vec<Edge>>;
 
 impl SqliteProduction {
@@ -941,7 +949,7 @@ impl SqliteProduction {
                 "SELECT position, kind, target_kind, primary_id, secondary_id,
                         structural_position, vocabulary, property,
                         identifier_scheme, identifier_value, identifier_qualifier,
-                        activity_kind, role
+                        activity_kind, role, fingerprint_algorithm, fingerprint_version
                  FROM revision_events WHERE revision_id = ?1 ORDER BY position",
             )
             .map_err(sqlite_error("prepare revision event query"))?;
@@ -1000,37 +1008,65 @@ impl SqliteProduction {
     }
 
     fn load_activity_inputs(&self) -> Result<ActivityEdgesById<ActivityInput>> {
-        Ok(load_activity_edges(
+        let snapshots = load_activity_edge_snapshots(
             &self.connection,
-            "SELECT activity_id, representation_id, role
+            "SELECT activity_input_id, algorithm, algorithm_version, value,
+                    observed_revision_sequence
+             FROM activity_input_fingerprint_snapshots
+             ORDER BY activity_input_id, algorithm, algorithm_version",
+        )?;
+        load_activity_edges(
+            &self.connection,
+            "SELECT id, activity_id, representation_id, role, snapshot_revision_sequence
              FROM activity_inputs
              ORDER BY activity_id, representation_id, role, id",
         )?
         .into_iter()
-        .fold(BTreeMap::new(), |mut result, (activity_id, edge)| {
-            result
-                .entry(activity_id)
-                .or_default()
-                .push(ActivityInput::new(edge.0, edge.1));
-            result
-        }))
+        .try_fold(
+            ActivityEdgesById::<ActivityInput>::new(),
+            |mut result, (activity_id, edge)| {
+                let mut input = ActivityInput::new(edge.representation_id, edge.role);
+                if let Some(sequence) = edge.snapshot_revision_sequence {
+                    input = input.with_snapshot(ActivityEdgeSnapshot::new(
+                        stored_u64(sequence, "activity input snapshot revision")?,
+                        snapshots.get(&edge.id).cloned().unwrap_or_default(),
+                    )?);
+                }
+                result.entry(activity_id).or_default().push(input);
+                Ok(result)
+            },
+        )
     }
 
     fn load_activity_outputs(&self) -> Result<ActivityEdgesById<ActivityOutput>> {
-        Ok(load_activity_edges(
+        let snapshots = load_activity_edge_snapshots(
             &self.connection,
-            "SELECT activity_id, representation_id, role
+            "SELECT activity_output_id, algorithm, algorithm_version, value,
+                    observed_revision_sequence
+             FROM activity_output_fingerprint_snapshots
+             ORDER BY activity_output_id, algorithm, algorithm_version",
+        )?;
+        load_activity_edges(
+            &self.connection,
+            "SELECT id, activity_id, representation_id, role, snapshot_revision_sequence
              FROM activity_outputs
              ORDER BY activity_id, representation_id, role, id",
         )?
         .into_iter()
-        .fold(BTreeMap::new(), |mut result, (activity_id, edge)| {
-            result
-                .entry(activity_id)
-                .or_default()
-                .push(ActivityOutput::new(edge.0, edge.1));
-            result
-        }))
+        .try_fold(
+            ActivityEdgesById::<ActivityOutput>::new(),
+            |mut result, (activity_id, edge)| {
+                let mut output = ActivityOutput::new(edge.representation_id, edge.role);
+                if let Some(sequence) = edge.snapshot_revision_sequence {
+                    output = output.with_snapshot(ActivityEdgeSnapshot::new(
+                        stored_u64(sequence, "activity output snapshot revision")?,
+                        snapshots.get(&edge.id).cloned().unwrap_or_default(),
+                    )?);
+                }
+                result.entry(activity_id).or_default().push(output);
+                Ok(result)
+            },
+        )
     }
 
     /// Reports whether SQLite foreign-key enforcement is active on this connection.
@@ -1361,14 +1397,16 @@ fn load_activity_edges(
     let rows = statement
         .query_map([], |row| {
             Ok((
-                row.get::<_, Vec<u8>>(0)?,
+                row.get::<_, i64>(0)?,
                 row.get::<_, Vec<u8>>(1)?,
-                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
             ))
         })
         .map_err(sqlite_error("query activity edges"))?;
     rows.map(|row| {
-        let (activity_id, representation_id, role) =
+        let (edge_id, activity_id, representation_id, role, snapshot_revision_sequence) =
             row.map_err(sqlite_error("read activity-edge row"))?;
         let activity_id = ActivityId::from_bytes(id_bytes(activity_id, "activity edge")?);
         let representation_id =
@@ -1377,9 +1415,57 @@ fn load_activity_edges(
             .map(ActivityRole::new)
             .transpose()
             .map_err(stored_domain_error("activity role"))?;
-        Ok((activity_id, (representation_id, role)))
+        Ok((
+            activity_id,
+            StoredActivityEdge {
+                id: edge_id,
+                representation_id,
+                role,
+                snapshot_revision_sequence,
+            },
+        ))
     })
     .collect()
+}
+
+fn load_activity_edge_snapshots(
+    connection: &Connection,
+    query: &'static str,
+) -> Result<BTreeMap<i64, Vec<FingerprintSnapshot>>> {
+    let mut statement = connection
+        .prepare(query)
+        .map_err(sqlite_error("prepare activity snapshot query"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+            ))
+        })
+        .map_err(sqlite_error("query activity snapshots"))?;
+    rows.map(|row| {
+        let (edge_id, algorithm, version, value, observed_sequence) =
+            row.map_err(sqlite_error("read activity snapshot row"))?;
+        let version = u16::try_from(version)
+            .map_err(|_| stored_invariant("activity snapshot version is outside u16"))?;
+        let observed_sequence = observed_sequence
+            .map(|sequence| stored_u64(sequence, "fingerprint observation revision"))
+            .transpose()?;
+        let fingerprint = FingerprintSnapshot::new(algorithm, version, value, observed_sequence)
+            .map_err(stored_domain_error("activity fingerprint snapshot"))?;
+        Ok((edge_id, fingerprint))
+    })
+    .try_fold(
+        BTreeMap::<i64, Vec<FingerprintSnapshot>>::new(),
+        |mut result, row| {
+            let (edge_id, fingerprint) = row?;
+            result.entry(edge_id).or_default().push(fingerprint);
+            Ok(result)
+        },
+    )
 }
 
 fn decode_activity(
@@ -1479,6 +1565,8 @@ fn stored_revision_event_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Stored
         identifier_qualifier: row.get(10)?,
         activity_kind: row.get(11)?,
         role: row.get(12)?,
+        fingerprint_algorithm: row.get(13)?,
+        fingerprint_version: row.get(14)?,
     })
 }
 
@@ -1625,6 +1713,32 @@ fn decode_revision_event(
                 }
             }
         }
+        17 | 18 => {
+            let algorithm = required_stored(
+                stored.fingerprint_algorithm,
+                "revision event fingerprint algorithm",
+            )?;
+            let version = u16::try_from(required_stored(
+                stored.fingerprint_version,
+                "revision event fingerprint version",
+            )?)
+            .map_err(|_| stored_invariant("revision event fingerprint version is invalid"))?;
+            ResourceFingerprint::new(algorithm.clone(), version, vec![1])
+                .map_err(stored_domain_error("revision event fingerprint domain"))?;
+            if stored.kind == 17 {
+                RevisionEventKind::ResourceFingerprintObserved {
+                    resource_id: ResourceId::from_bytes(primary_id("resource")?),
+                    algorithm,
+                    version,
+                }
+            } else {
+                RevisionEventKind::RepresentationFingerprintObserved {
+                    representation_id: RepresentationId::from_bytes(primary_id("representation")?),
+                    algorithm,
+                    version,
+                }
+            }
+        }
         kind => {
             return Err(Error::new(
                 ErrorKind::Storage,
@@ -1718,6 +1832,15 @@ pub(crate) fn id_bytes(value: Vec<u8>, label: &str) -> Result<[u8; 16]> {
 
 fn stored_u32(value: i64, label: &str) -> Result<u32> {
     u32::try_from(value).map_err(|error| {
+        Error::new(
+            ErrorKind::Storage,
+            format!("stored {label} is invalid: {error}"),
+        )
+    })
+}
+
+fn stored_u64(value: i64, label: &str) -> Result<u64> {
+    u64::try_from(value).map_err(|error| {
         Error::new(
             ErrorKind::Storage,
             format!("stored {label} is invalid: {error}"),

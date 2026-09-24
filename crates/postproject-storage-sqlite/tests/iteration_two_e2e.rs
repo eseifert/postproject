@@ -286,12 +286,13 @@ fn assert_reopened(production_path: &Path, fixture: &Fixture, relocated: &Path) 
         reopened.ancestors(proxy_id).expect("load ancestry"),
         [original_id]
     );
-    assert_eq!(
-        reopened
-            .activities_producing(proxy_id)
-            .expect("load producing activity"),
-        std::slice::from_ref(&fixture.activity)
-    );
+    let producing = reopened
+        .activities_producing(proxy_id)
+        .expect("load producing activity");
+    assert_eq!(producing.len(), 1);
+    assert_eq!(producing[0].id(), fixture.activity.id());
+    assert!(producing[0].inputs()[0].snapshot().is_some());
+    assert!(producing[0].outputs()[0].snapshot().is_some());
     assert_eq!(
         fixture.activity.tool().expect("activity tool").version(),
         Some("8.0")

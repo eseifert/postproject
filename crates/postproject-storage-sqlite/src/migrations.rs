@@ -220,6 +220,69 @@ mod tests {
     }
 
     #[test]
+    fn schema_six_activities_migrate_without_fabricated_snapshots() {
+        let mut connection = Connection::open_in_memory().expect("open database");
+        for migration in &MIGRATIONS[..6] {
+            apply_migration(&mut connection, migration).expect("apply old migration");
+        }
+        connection
+            .execute(
+                "INSERT INTO productions (
+                    singleton, id, schema_version, created_at_micros, display_name
+                 ) VALUES (1, zeroblob(16), 6, 0, NULL)",
+                [],
+            )
+            .expect("insert production");
+        connection
+            .execute(
+                "INSERT INTO assets VALUES (?1, 0, NULL, NULL)",
+                [vec![1_u8; 16]],
+            )
+            .expect("insert asset");
+        for label in [2_u8, 3] {
+            connection
+                .execute(
+                    "INSERT INTO representations VALUES (?1, ?2, 3, 0)",
+                    params![vec![label; 16], vec![1_u8; 16]],
+                )
+                .expect("insert representation");
+        }
+        connection
+            .execute(
+                "INSERT INTO activities (id, kind) VALUES (?1, 'example:activity')",
+                [vec![4_u8; 16]],
+            )
+            .expect("insert activity");
+        connection
+            .execute(
+                "INSERT INTO activity_inputs (activity_id, representation_id)
+                 VALUES (?1, ?2)",
+                params![vec![4_u8; 16], vec![2_u8; 16]],
+            )
+            .expect("insert input");
+        connection
+            .execute(
+                "INSERT INTO activity_outputs (activity_id, representation_id)
+                 VALUES (?1, ?2)",
+                params![vec![4_u8; 16], vec![3_u8; 16]],
+            )
+            .expect("insert output");
+
+        migrate(&mut connection).expect("migrate schema six");
+
+        for table in ["activity_inputs", "activity_outputs"] {
+            let snapshot: Option<i64> = connection
+                .query_row(
+                    &format!("SELECT snapshot_revision_sequence FROM {table}"),
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("load migrated snapshot");
+            assert_eq!(snapshot, None);
+        }
+    }
+
+    #[test]
     fn newer_schema_is_rejected_without_modification() {
         let mut connection = Connection::open_in_memory().expect("open in-memory database");
         connection

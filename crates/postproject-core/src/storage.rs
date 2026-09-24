@@ -3,9 +3,9 @@
 use crate::{
     Activity, Asset, AssetId, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot,
     MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, Production, Representation, RepresentationId, RepresentationImport,
-    Resource, ResourceId, Result, Revision, RevisionContext, RevisionEvent, RevisionId,
-    TransactionId, TransactionState,
+    OriginalMediaImport, Production, Representation, RepresentationFingerprint, RepresentationId,
+    RepresentationImport, Resource, ResourceFingerprint, ResourceId, Result, Revision,
+    RevisionContext, RevisionEvent, RevisionId, TransactionId, TransactionState,
 };
 
 /// Read operations required from a production persistence backend.
@@ -305,6 +305,35 @@ pub trait ProductionStoreTransaction {
     /// representation is absent, the activity already exists, its edges would
     /// create a provenance cycle, or persistence fails.
     fn create_activity(&mut self, activity: &Activity) -> Result<()>;
+
+    /// Records a resource fingerprint as the current observation in its domain.
+    ///
+    /// Returns `true` when state changed and `false` for an identical no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, the resource is
+    /// absent, or persistence fails.
+    fn record_resource_fingerprint(
+        &mut self,
+        resource_id: ResourceId,
+        fingerprint: &ResourceFingerprint,
+    ) -> Result<bool>;
+
+    /// Records a representation fingerprint as the current observation.
+    ///
+    /// Returns `true` when state changed and `false` for an identical no-op.
+    /// A changed observation clears that representation's recomputation marker.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, the
+    /// representation is absent, or persistence fails.
+    fn record_representation_fingerprint(
+        &mut self,
+        representation_id: RepresentationId,
+        fingerprint: &RepresentationFingerprint,
+    ) -> Result<bool>;
 
     /// Atomically makes every staged mutation durable.
     ///

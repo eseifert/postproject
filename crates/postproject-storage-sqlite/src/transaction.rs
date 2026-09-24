@@ -4,7 +4,8 @@ use postproject_core::{
     Activity, ContentStructure, ContentStructureKind, Error, ErrorKind, ExternalIdentifier,
     Locator, LocatorAvailability, LocatorId, MediaRoot, MediaRootId, MetadataProperty,
     MetadataValue, ObjectRef, OriginalMediaImport, Production, ProductionStoreTransaction,
-    Representation, RepresentationImport, RepresentationKind, Resource, Result, RevisionContext,
+    Representation, RepresentationFingerprint, RepresentationId, RepresentationImport,
+    RepresentationKind, Resource, ResourceFingerprint, ResourceId, Result, RevisionContext,
     RevisionEventKind, RevisionId, Timestamp, TransactionId, TransactionLifecycle,
     TransactionState,
 };
@@ -562,6 +563,235 @@ impl<'production> SqliteTransaction<'production> {
         Ok(())
     }
 
+    /// Records a resource fingerprint observation and marks aggregate owners dirty.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] for an absent resource or a transaction/
+    /// storage error. An identical current value is a successful no-op.
+    pub fn record_resource_fingerprint(
+        &mut self,
+        resource_id: ResourceId,
+        fingerprint: &ResourceFingerprint,
+    ) -> Result<bool> {
+        let transaction = self.open_transaction()?;
+        let current = transaction
+            .query_row(
+                "SELECT value, observed_revision_sequence
+                 FROM resource_fingerprints
+                 WHERE resource_id = ?1 AND algorithm = ?2 AND algorithm_version = ?3",
+                params![
+                    resource_id.as_bytes().as_slice(),
+                    fingerprint.algorithm(),
+                    fingerprint.version(),
+                ],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Option<i64>>(1)?)),
+            )
+            .optional()
+            .map_err(mutation_error("read current resource fingerprint"))?;
+        if current
+            .as_ref()
+            .is_some_and(|(value, _)| value == fingerprint.value())
+        {
+            return Ok(false);
+        }
+        if current.is_none() && !resource_exists(transaction, resource_id)? {
+            return Err(Error::new(ErrorKind::NotFound, "resource does not exist"));
+        }
+        let sequence = next_revision_sequence(transaction)?;
+        if let Some((value, observed_sequence)) = current {
+            transaction
+                .execute(
+                    "INSERT INTO resource_fingerprint_history (
+                        resource_id, algorithm, algorithm_version, value,
+                        observed_revision_sequence, superseded_revision_sequence
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        resource_id.as_bytes().as_slice(),
+                        fingerprint.algorithm(),
+                        fingerprint.version(),
+                        value,
+                        observed_sequence,
+                        sequence,
+                    ],
+                )
+                .map_err(mutation_error("archive resource fingerprint"))?;
+            transaction
+                .execute(
+                    "UPDATE resource_fingerprints
+                     SET value = ?4, observed_revision_sequence = ?5
+                     WHERE resource_id = ?1 AND algorithm = ?2 AND algorithm_version = ?3",
+                    params![
+                        resource_id.as_bytes().as_slice(),
+                        fingerprint.algorithm(),
+                        fingerprint.version(),
+                        fingerprint.value(),
+                        sequence,
+                    ],
+                )
+                .map_err(mutation_error("update resource fingerprint"))?;
+        } else {
+            transaction
+                .execute(
+                    "INSERT INTO resource_fingerprints (
+                        resource_id, algorithm, algorithm_version, value,
+                        observed_revision_sequence
+                     ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        resource_id.as_bytes().as_slice(),
+                        fingerprint.algorithm(),
+                        fingerprint.version(),
+                        fingerprint.value(),
+                        sequence,
+                    ],
+                )
+                .map_err(mutation_error("insert resource fingerprint"))?;
+        }
+        transaction
+            .execute(
+                "INSERT INTO representation_fingerprint_recomputations (
+                    representation_id, changed_resource_id, marked_revision_sequence
+                 )
+                 SELECT representation_id, ?1, ?2
+                 FROM representation_resources WHERE resource_id = ?1
+                 ON CONFLICT(representation_id) DO UPDATE SET
+                    changed_resource_id = excluded.changed_resource_id,
+                    marked_revision_sequence = excluded.marked_revision_sequence",
+                params![resource_id.as_bytes().as_slice(), sequence],
+            )
+            .map_err(mutation_error(
+                "mark representation fingerprints for recomputation",
+            ))?;
+        self.pending_events
+            .push(RevisionEventKind::ResourceFingerprintObserved {
+                resource_id,
+                algorithm: fingerprint.algorithm().to_owned(),
+                version: fingerprint.version(),
+            });
+        Ok(true)
+    }
+
+    /// Records a representation fingerprint and clears its dirty marker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] for an absent representation or a
+    /// transaction/storage error.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the archive, current-row update, dirty-marker clear, and event are one auditable mutation"
+    )]
+    pub fn record_representation_fingerprint(
+        &mut self,
+        representation_id: RepresentationId,
+        fingerprint: &RepresentationFingerprint,
+    ) -> Result<bool> {
+        let transaction = self.open_transaction()?;
+        let current = transaction
+            .query_row(
+                "SELECT value, observed_revision_sequence
+                 FROM representation_fingerprints
+                 WHERE representation_id = ?1 AND algorithm = ?2 AND algorithm_version = ?3",
+                params![
+                    representation_id.as_bytes().as_slice(),
+                    fingerprint.algorithm(),
+                    fingerprint.version(),
+                ],
+                |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, Option<i64>>(1)?)),
+            )
+            .optional()
+            .map_err(mutation_error("read current representation fingerprint"))?;
+        let dirty = transaction
+            .query_row(
+                "SELECT EXISTS (
+                    SELECT 1 FROM representation_fingerprint_recomputations
+                    WHERE representation_id = ?1
+                 )",
+                [representation_id.as_bytes().as_slice()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(mutation_error("read representation recomputation marker"))?;
+        if current
+            .as_ref()
+            .is_some_and(|(value, _)| value == fingerprint.value())
+            && !dirty
+        {
+            return Ok(false);
+        }
+        if current.is_none() && !representation_exists(transaction, representation_id)? {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                "representation does not exist",
+            ));
+        }
+        let sequence = next_revision_sequence(transaction)?;
+        if let Some((value, observed_sequence)) = current {
+            if value != fingerprint.value() {
+                transaction
+                    .execute(
+                        "INSERT INTO representation_fingerprint_history (
+                            representation_id, algorithm, algorithm_version, value,
+                            observed_revision_sequence, superseded_revision_sequence
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        params![
+                            representation_id.as_bytes().as_slice(),
+                            fingerprint.algorithm(),
+                            fingerprint.version(),
+                            value,
+                            observed_sequence,
+                            sequence,
+                        ],
+                    )
+                    .map_err(mutation_error("archive representation fingerprint"))?;
+                transaction
+                    .execute(
+                        "UPDATE representation_fingerprints
+                         SET value = ?4, observed_revision_sequence = ?5
+                         WHERE representation_id = ?1
+                           AND algorithm = ?2 AND algorithm_version = ?3",
+                        params![
+                            representation_id.as_bytes().as_slice(),
+                            fingerprint.algorithm(),
+                            fingerprint.version(),
+                            fingerprint.value(),
+                            sequence,
+                        ],
+                    )
+                    .map_err(mutation_error("update representation fingerprint"))?;
+            }
+        } else {
+            transaction
+                .execute(
+                    "INSERT INTO representation_fingerprints (
+                        representation_id, algorithm, algorithm_version, value,
+                        observed_revision_sequence
+                     ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        representation_id.as_bytes().as_slice(),
+                        fingerprint.algorithm(),
+                        fingerprint.version(),
+                        fingerprint.value(),
+                        sequence,
+                    ],
+                )
+                .map_err(mutation_error("insert representation fingerprint"))?;
+        }
+        transaction
+            .execute(
+                "DELETE FROM representation_fingerprint_recomputations
+                 WHERE representation_id = ?1",
+                [representation_id.as_bytes().as_slice()],
+            )
+            .map_err(mutation_error("clear representation recomputation marker"))?;
+        self.pending_events
+            .push(RevisionEventKind::RepresentationFingerprintObserved {
+                representation_id,
+                algorithm: fingerprint.algorithm().to_owned(),
+                version: fingerprint.version(),
+            });
+        Ok(true)
+    }
+
     /// Stages a complete production activity and its provenance edges.
     ///
     /// # Errors
@@ -570,8 +800,13 @@ impl<'production> SqliteTransaction<'production> {
     /// representation, [`ErrorKind::AlreadyExists`] for a duplicate activity,
     /// [`ErrorKind::Conflict`] when the new edges create a cycle, or a
     /// transaction/storage error.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "activity, storage-captured edge snapshots, cycle validation, and events are one atomic mutation"
+    )]
     pub fn create_activity(&mut self, activity: &Activity) -> Result<()> {
         let transaction = self.open_transaction()?;
+        let snapshot_sequence = next_revision_sequence(transaction)?;
         let tool = activity.tool();
         let agent = activity.agent();
         let agent_identifier = agent.and_then(postproject_core::AgentIdentity::identifier);
@@ -608,29 +843,47 @@ impl<'production> SqliteTransaction<'production> {
                 transaction
                     .execute(
                         "INSERT INTO activity_inputs (
-                            activity_id, representation_id, role
-                         ) VALUES (?1, ?2, ?3)",
+                            activity_id, representation_id, role, snapshot_revision_sequence
+                         ) VALUES (?1, ?2, ?3, ?4)",
                         params![
                             activity.id().as_bytes().as_slice(),
                             input.representation_id().as_bytes().as_slice(),
                             input.role().map(postproject_core::ActivityRole::as_str),
+                            snapshot_sequence,
                         ],
                     )
                     .map_err(activity_edge_error("persist activity input"))?;
+                let edge_id = transaction.last_insert_rowid();
+                persist_edge_fingerprint_snapshot(
+                    transaction,
+                    "activity_input_fingerprint_snapshots",
+                    "activity_input_id",
+                    edge_id,
+                    input.representation_id(),
+                )?;
             }
             for output in activity.outputs() {
                 transaction
                     .execute(
                         "INSERT INTO activity_outputs (
-                            activity_id, representation_id, role
-                         ) VALUES (?1, ?2, ?3)",
+                            activity_id, representation_id, role, snapshot_revision_sequence
+                         ) VALUES (?1, ?2, ?3, ?4)",
                         params![
                             activity.id().as_bytes().as_slice(),
                             output.representation_id().as_bytes().as_slice(),
                             output.role().map(postproject_core::ActivityRole::as_str),
+                            snapshot_sequence,
                         ],
                     )
                     .map_err(activity_edge_error("persist activity output"))?;
+                let edge_id = transaction.last_insert_rowid();
+                persist_edge_fingerprint_snapshot(
+                    transaction,
+                    "activity_output_fingerprint_snapshots",
+                    "activity_output_id",
+                    edge_id,
+                    output.representation_id(),
+                )?;
             }
             Ok(())
         })();
@@ -758,6 +1011,8 @@ struct StoredEvent<'event> {
     identifier_qualifier: Option<&'event str>,
     activity_kind: Option<&'event str>,
     role: Option<&'event str>,
+    fingerprint_algorithm: Option<&'event str>,
+    fingerprint_version: Option<i64>,
 }
 
 fn persist_revision(
@@ -809,10 +1064,10 @@ fn persist_revision(
                     revision_id, position, kind, target_kind, primary_id,
                     secondary_id, structural_position, vocabulary, property,
                     identifier_scheme, identifier_value, identifier_qualifier,
-                    activity_kind, role
+                    activity_kind, role, fingerprint_algorithm, fingerprint_version
                  ) VALUES (
                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                    ?13, ?14
+                    ?13, ?14, ?15, ?16
                  )",
                 params![
                     revision_id.as_bytes().as_slice(),
@@ -829,6 +1084,8 @@ fn persist_revision(
                     event.identifier_qualifier,
                     event.activity_kind,
                     event.role,
+                    event.fingerprint_algorithm,
+                    event.fingerprint_version,
                 ],
             )
             .map(|_| ())
@@ -864,6 +1121,8 @@ fn stored_event(event: &RevisionEventKind) -> Result<StoredEvent<'_>> {
         identifier_qualifier: None,
         activity_kind: None,
         role: None,
+        fingerprint_algorithm: None,
+        fingerprint_version: None,
     };
     match event {
         RevisionEventKind::AssetImported { asset_id } => {
@@ -969,6 +1228,26 @@ fn stored_event(event: &RevisionEventKind) -> Result<StoredEvent<'_>> {
             stored.secondary_id = Some(representation_id.into_bytes().to_vec());
             stored.role = role.as_ref().map(postproject_core::ActivityRole::as_str);
         }
+        RevisionEventKind::ResourceFingerprintObserved {
+            resource_id,
+            algorithm,
+            version,
+        } => {
+            stored.kind = 17;
+            stored.primary_id = Some(resource_id.into_bytes().to_vec());
+            stored.fingerprint_algorithm = Some(algorithm);
+            stored.fingerprint_version = Some(i64::from(*version));
+        }
+        RevisionEventKind::RepresentationFingerprintObserved {
+            representation_id,
+            algorithm,
+            version,
+        } => {
+            stored.kind = 18;
+            stored.primary_id = Some(representation_id.into_bytes().to_vec());
+            stored.fingerprint_algorithm = Some(algorithm);
+            stored.fingerprint_version = Some(i64::from(*version));
+        }
         _ => {
             return Err(Error::new(
                 ErrorKind::Unsupported,
@@ -1066,6 +1345,22 @@ impl ProductionStoreTransaction for SqliteTransaction<'_> {
         SqliteTransaction::create_activity(self, activity)
     }
 
+    fn record_resource_fingerprint(
+        &mut self,
+        resource_id: ResourceId,
+        fingerprint: &ResourceFingerprint,
+    ) -> Result<bool> {
+        SqliteTransaction::record_resource_fingerprint(self, resource_id, fingerprint)
+    }
+
+    fn record_representation_fingerprint(
+        &mut self,
+        representation_id: RepresentationId,
+        fingerprint: &RepresentationFingerprint,
+    ) -> Result<bool> {
+        SqliteTransaction::record_representation_fingerprint(self, representation_id, fingerprint)
+    }
+
     fn commit(&mut self) -> Result<()> {
         SqliteTransaction::commit(self)
     }
@@ -1112,6 +1407,63 @@ fn asset_exists(
             |row| row.get(0),
         )
         .map_err(sqlite_error("check representation asset"))
+}
+
+fn resource_exists(transaction: &Transaction<'_>, resource_id: ResourceId) -> Result<bool> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM resources WHERE id = ?1)",
+            [resource_id.as_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .map_err(sqlite_error("check fingerprint resource"))
+}
+
+fn representation_exists(
+    transaction: &Transaction<'_>,
+    representation_id: RepresentationId,
+) -> Result<bool> {
+    transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM representations WHERE id = ?1)",
+            [representation_id.as_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .map_err(sqlite_error("check fingerprint representation"))
+}
+
+fn next_revision_sequence(transaction: &Transaction<'_>) -> Result<i64> {
+    transaction
+        .query_row(
+            "SELECT coalesce(max(sequence), 0) + 1 FROM revisions",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(sqlite_error("allocate observation revision sequence"))
+}
+
+fn persist_edge_fingerprint_snapshot(
+    transaction: &Transaction<'_>,
+    snapshot_table: &'static str,
+    edge_column: &'static str,
+    edge_id: i64,
+    representation_id: RepresentationId,
+) -> Result<()> {
+    let statement = format!(
+        "INSERT INTO {snapshot_table} (
+            {edge_column}, algorithm, algorithm_version, value,
+            observed_revision_sequence
+         )
+         SELECT ?1, algorithm, algorithm_version, value, observed_revision_sequence
+         FROM representation_fingerprints WHERE representation_id = ?2"
+    );
+    transaction
+        .execute(
+            &statement,
+            params![edge_id, representation_id.as_bytes().as_slice()],
+        )
+        .map(|_| ())
+        .map_err(mutation_error("capture activity-edge fingerprint snapshot"))
 }
 
 fn encode_availability(value: LocatorAvailability) -> Result<i64> {

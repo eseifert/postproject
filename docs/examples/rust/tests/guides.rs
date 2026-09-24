@@ -229,11 +229,11 @@ fn record_render(
         transaction.commit()?;
     }
 
-    assert_eq!(
-        production.activities_consuming(source_id)?,
-        vec![activity.clone()]
-    );
-    assert_eq!(production.activities_producing(render_id)?, vec![activity]);
+    let consuming = production.activities_consuming(source_id)?;
+    let producing = production.activities_producing(render_id)?;
+    assert_eq!(consuming[0].id(), activity.id());
+    assert_eq!(producing[0].id(), activity.id());
+    assert!(producing[0].inputs()[0].snapshot().is_some());
     assert_eq!(production.ancestors(render_id)?, vec![source_id]);
     assert_eq!(production.descendants(source_id)?, vec![render_id]);
     Ok(())

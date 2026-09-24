@@ -26,7 +26,11 @@ The semantic event catalog covers:
   membership, locators, and media roots;
 - added and removed external identifier attachments;
 - added/replaced and removed metadata properties; and
-- created activities plus their input and output edges.
+- created activities plus their input and output edges;
+- changed resource and representation fingerprint domains.
+
+ADR 0021 adds fingerprint-observation events. Re-observing the same bytes in
+the same domain is a no-op and does not advance the feed.
 
 The pull contract is `latest_revision`, `changes_since(sequence, limit)`, and
 `events_for_revision`. Revision pages and event lists are ordered ascending by
