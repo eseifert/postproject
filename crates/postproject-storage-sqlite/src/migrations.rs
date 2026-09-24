@@ -116,6 +116,11 @@ fn migration_error(version: u32, action: &'static str) -> impl FnOnce(rusqlite::
 #[cfg(test)]
 mod tests {
     use super::*;
+    use postproject_core::{
+        ArtifactEvaluationLimits, ArtifactKnowledgeReason, ArtifactKnowledgeState, RepresentationId,
+    };
+
+    use crate::{SqliteProduction, load_production};
 
     #[test]
     fn migrates_schema_zero_fixture_to_current() {
@@ -246,6 +251,18 @@ mod tests {
                     params![vec![label; 16], vec![1_u8; 16]],
                 )
                 .expect("insert representation");
+            connection
+                .execute(
+                    "INSERT INTO resources (id) VALUES (?1)",
+                    [vec![label + 10; 16]],
+                )
+                .expect("insert resource");
+            connection
+                .execute(
+                    "INSERT INTO representation_resources VALUES (?1, ?2, 0, NULL, 1)",
+                    params![vec![label; 16], vec![label + 10; 16]],
+                )
+                .expect("insert representation resource");
         }
         connection
             .execute(
@@ -280,6 +297,26 @@ mod tests {
                 .expect("load migrated snapshot");
             assert_eq!(snapshot, None);
         }
+
+        let production = load_production(&connection).expect("load migrated production");
+        let production = SqliteProduction {
+            path: std::path::PathBuf::new(),
+            connection,
+            production,
+        };
+        let evaluation = production
+            .evaluate_artifact(
+                RepresentationId::from_bytes([3_u8; 16]),
+                ArtifactEvaluationLimits::default(),
+            )
+            .expect("evaluate migrated activity");
+        assert_eq!(evaluation.state(), ArtifactKnowledgeState::Indeterminate);
+        assert!(
+            evaluation
+                .reasons()
+                .iter()
+                .any(|reason| matches!(reason, ArtifactKnowledgeReason::SnapshotAbsent { .. }))
+        );
     }
 
     #[test]
