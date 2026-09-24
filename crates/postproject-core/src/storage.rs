@@ -2,11 +2,11 @@
 
 use crate::{
     Activity, ArtifactEvaluation, ArtifactEvaluationLimits, ArtifactReproducibilityReport, Asset,
-    AssetId, Dependency, DependencySet, ExternalIdentifier, IdentifierScheme, Locator, MediaRoot,
-    MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, Production, Representation, RepresentationFingerprint, RepresentationId,
-    RepresentationImport, Resource, ResourceFingerprint, ResourceId, Result, Revision,
-    RevisionContext, RevisionEvent, RevisionId, TransactionId, TransactionState,
+    AssetId, Dependency, DependencySet, DependencyTarget, ExternalIdentifier, IdentifierScheme,
+    Locator, MediaRoot, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue,
+    ObjectRef, OriginalMediaImport, Production, Representation, RepresentationFingerprint,
+    RepresentationId, RepresentationImport, Resource, ResourceFingerprint, ResourceId, Result,
+    Revision, RevisionContext, RevisionEvent, RevisionId, TransactionId, TransactionState,
 };
 
 /// Read operations required from a production persistence backend.
@@ -147,6 +147,17 @@ pub trait ProductionRead {
     /// Returns a domain error when the representation is absent or persisted
     /// dependency data cannot be decoded safely.
     fn dependency_set(&self, representation_id: RepresentationId) -> Result<Option<DependencySet>>;
+
+    /// Loads direct dependent representations in stable identity order.
+    ///
+    /// A representation target includes pinned references and floating asset
+    /// references recorded as resolved to that representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the target is absent or persisted IDs cannot
+    /// be decoded safely.
+    fn dependents(&self, target: DependencyTarget) -> Result<Vec<RepresentationId>>;
 
     /// Evaluates whether an activity-produced representation still reflects
     /// its recorded inputs and output snapshot.

@@ -44,6 +44,26 @@ fn media(label: u8) -> OriginalMediaImport {
     .expect("valid media")
 }
 
+fn assert_direct_dependents(
+    production: &SqliteProduction,
+    source: RepresentationId,
+    target_asset: AssetId,
+    target_representation: RepresentationId,
+) {
+    assert_eq!(
+        production
+            .dependents(DependencyTarget::Asset(target_asset))
+            .expect("query asset dependents"),
+        [source]
+    );
+    assert_eq!(
+        production
+            .dependents(DependencyTarget::Representation(target_representation))
+            .expect("query representation dependents"),
+        [source]
+    );
+}
+
 #[test]
 fn complete_dependency_sets_replace_atomically_and_are_journaled() {
     let directory = tempfile::tempdir().expect("create directory");
@@ -101,6 +121,12 @@ fn complete_dependency_sets_replace_atomically_and_are_journaled() {
     assert_eq!(stored.status(), DependencySetStatus::Current);
     assert_eq!(stored.recorded_at_revision(), 2);
     assert_eq!(stored.dependencies(), dependencies);
+    assert_direct_dependents(
+        &production,
+        source.representation().id(),
+        target.asset().id(),
+        target.representation().id(),
+    );
     let revision = production
         .latest_revision()
         .expect("read latest revision")

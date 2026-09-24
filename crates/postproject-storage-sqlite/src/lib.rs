@@ -915,6 +915,67 @@ impl SqliteProduction {
         load_dependency_set(&self.connection, representation_id)
     }
 
+    /// Loads representations that directly depend on `target`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the target is absent, or a
+    /// storage-domain error when persisted IDs are malformed.
+    pub fn dependents(&self, target: DependencyTarget) -> Result<Vec<RepresentationId>> {
+        let (query, target_id) = match target {
+            DependencyTarget::Asset(id) => {
+                let exists = self
+                    .connection
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM assets WHERE id = ?1)",
+                        [id.as_bytes().as_slice()],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .map_err(sqlite_error("check dependency target asset"))?;
+                if !exists {
+                    return Err(Error::new(
+                        ErrorKind::NotFound,
+                        "dependency target asset does not exist",
+                    ));
+                }
+                (
+                    "SELECT DISTINCT source_representation_id FROM dependencies
+                     WHERE target_kind = 1 AND target_id = ?1
+                     ORDER BY source_representation_id",
+                    id.into_bytes(),
+                )
+            }
+            DependencyTarget::Representation(id) => {
+                self.ensure_representation_exists(id)?;
+                (
+                    "SELECT DISTINCT source_representation_id FROM dependencies
+                     WHERE (target_kind = 2 AND target_id = ?1)
+                        OR resolved_representation_id = ?1
+                     ORDER BY source_representation_id",
+                    id.into_bytes(),
+                )
+            }
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::Unsupported,
+                    "dependency target kind is not supported by this schema",
+                ));
+            }
+        };
+        let mut statement = self
+            .connection
+            .prepare(query)
+            .map_err(sqlite_error("prepare dependent query"))?;
+        statement
+            .query_map([target_id.as_slice()], |row| row.get::<_, Vec<u8>>(0))
+            .map_err(sqlite_error("query dependents"))?
+            .map(|row| {
+                let id = row.map_err(sqlite_error("read dependent row"))?;
+                id_bytes(id, "dependent representation").map(RepresentationId::from_bytes)
+            })
+            .collect()
+    }
+
     /// Returns the newest durable revision, if the journal is non-empty.
     ///
     /// # Errors
@@ -1204,6 +1265,10 @@ impl ProductionRead for SqliteProduction {
 
     fn dependency_set(&self, representation_id: RepresentationId) -> Result<Option<DependencySet>> {
         SqliteProduction::dependency_set(self, representation_id)
+    }
+
+    fn dependents(&self, target: DependencyTarget) -> Result<Vec<RepresentationId>> {
+        SqliteProduction::dependents(self, target)
     }
 
     fn evaluate_artifact(
