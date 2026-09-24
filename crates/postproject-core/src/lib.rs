@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+mod artifact;
 mod content;
 mod error;
 mod id;
@@ -22,6 +23,10 @@ mod time;
 mod transaction;
 mod uri;
 
+pub use artifact::{
+    ArtifactEdgeKind, ArtifactEvaluation, ArtifactEvaluationLimits, ArtifactKnowledgeReason,
+    ArtifactKnowledgeState, ArtifactTraversalLimitKind,
+};
 pub use content::{
     ContentStructure, ContentStructureKind, FrameRange, ImageSequenceDescriptor,
     ImageSequencePattern, MAX_CONTENT_MEMBERS, MAX_FRAME_PADDING, MAX_RESOURCE_ROLE_BYTES,
