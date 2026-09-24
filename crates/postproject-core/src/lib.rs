@@ -11,6 +11,7 @@ mod error;
 mod id;
 mod identifier;
 mod identifier_registry;
+mod job;
 mod metadata;
 mod metadata_registry;
 mod model;
@@ -46,6 +47,10 @@ pub use identifier_registry::{
     EIDR_SCHEME, IDENTIFIER_SCHEMES, ISAN_SCHEME, IdentifierSchemeDefinition,
     IdentifierValidationKind, POSTPROJECT_APPLICATION_SCHEME, SMPTE_UMID_SCHEME,
     identifier_scheme_definition, validate_known_identifier,
+};
+pub use job::{
+    Job, JobClaim, JobCompletion, JobFailure, JobKind, JobState, JobStateKind,
+    MAX_JOB_DIAGNOSTIC_BYTES, MAX_JOB_INPUTS, MAX_JOB_KIND_BYTES, RequestedJobOutput,
 };
 pub use metadata::{
     DecimalValue, MAX_LANGUAGE_TAG_BYTES, MAX_METADATA_BINARY_BYTES, MAX_METADATA_COLLECTION_ITEMS,
