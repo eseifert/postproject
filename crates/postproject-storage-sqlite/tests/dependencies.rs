@@ -1,12 +1,14 @@
 //! Complete dependency-observation persistence and journal coverage.
 
 use postproject_core::{
-    Asset, AssetId, ContentStructure, Dependency, DependencyKind, DependencySetStatus,
-    DependencyTarget, ErrorKind, Locator, LocatorAvailability, LocatorId, OriginalMediaImport,
-    Representation, RepresentationFingerprint, RepresentationId, RepresentationKind, Resource,
-    ResourceId, RevisionEventKind, Timestamp,
+    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, Asset, AssetId,
+    ContentStructure, Dependency, DependencyKind, DependencySetStatus, DependencyTarget, ErrorKind,
+    Locator, LocatorAvailability, LocatorId, OriginalMediaImport, Representation,
+    RepresentationFingerprint, RepresentationId, RepresentationKind, Resource, ResourceId,
+    RevisionEventKind, Timestamp,
 };
 use postproject_storage_sqlite::SqliteProduction;
+use rusqlite::Connection;
 
 fn media(label: u8) -> OriginalMediaImport {
     let asset_id = AssetId::from_bytes([label; 16]);
@@ -281,4 +283,88 @@ fn representation_observation_marks_dependencies_for_extraction() {
             .status(),
         DependencySetStatus::Current
     );
+}
+
+#[test]
+fn activity_inputs_capture_required_dependency_paths() {
+    let directory = tempfile::tempdir().expect("create directory");
+    let path = directory.path().join("dependency-snapshot.pproj");
+    let mut production = SqliteProduction::create(&path, None).expect("create production");
+    let source = media(7);
+    let required = media(8);
+    let optional = media(9);
+    let output = media(10);
+    let dependencies = [
+        Dependency::new(
+            None,
+            DependencyKind::new("org.postproject:requires").expect("kind"),
+            DependencyTarget::Representation(required.representation().id()),
+            None,
+            true,
+            "required.mov",
+        )
+        .expect("required dependency"),
+        Dependency::new(
+            None,
+            DependencyKind::new("org.openusd:payload").expect("kind"),
+            DependencyTarget::Representation(optional.representation().id()),
+            None,
+            false,
+            "optional.mov",
+        )
+        .expect("optional dependency"),
+    ];
+    let activity = Activity::new(
+        ActivityId::from_bytes([11; 16]),
+        ActivityKind::new("org.postproject:render").expect("kind"),
+        vec![ActivityInput::new(source.representation().id(), None)],
+        vec![ActivityOutput::new(output.representation().id(), None)],
+    )
+    .expect("activity");
+    {
+        let mut transaction = production.begin_transaction().expect("begin setup");
+        for import in [&source, &required, &optional, &output] {
+            transaction.import_original(import).expect("import media");
+        }
+        transaction
+            .record_dependency_set(source.representation().id(), &dependencies)
+            .expect("record dependencies");
+        transaction
+            .create_activity(&activity)
+            .expect("create activity");
+        transaction.commit().expect("commit setup");
+    }
+    drop(production);
+
+    let connection = Connection::open(path).expect("open database");
+    let marker_count: u32 = connection
+        .query_row(
+            "SELECT count(*) FROM activity_input_dependency_snapshots",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count snapshot markers");
+    let path_count: u32 = connection
+        .query_row(
+            "SELECT count(*) FROM activity_input_dependency_paths",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count snapshot paths");
+    let edge_count: u32 = connection
+        .query_row(
+            "SELECT count(*) FROM activity_input_dependency_path_edges",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count snapshot path edges");
+    let fingerprint: Vec<u8> = connection
+        .query_row(
+            "SELECT value FROM activity_input_dependency_fingerprint_snapshots",
+            [],
+            |row| row.get(0),
+        )
+        .expect("load dependency fingerprint");
+    assert_eq!((marker_count, path_count, edge_count), (1, 1, 1));
+    assert_eq!(fingerprint, [8]);
 }
