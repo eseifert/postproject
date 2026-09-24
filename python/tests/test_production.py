@@ -55,9 +55,11 @@ from postproject import (
     Production,
     RepresentationAddedEvent,
     RepresentationAvailability,
+    RepresentationFingerprintObservedEvent,
     RepresentationKind,
     RepresentationResourceAddedEvent,
     ResourceAddedEvent,
+    ResourceFingerprintObservedEvent,
     ResourceResolutionState,
     RevisionContext,
     RevisionId,
@@ -176,6 +178,14 @@ class ProductionTests(unittest.TestCase):
             self.assertIn(representation_fingerprint, observed.fingerprints)
             revision = production.latest_revision
             assert revision is not None
+            observation_events = production.revision_events[revision.id]
+            self.assertIsInstance(
+                observation_events[0].payload, ResourceFingerprintObservedEvent
+            )
+            self.assertIsInstance(
+                observation_events[1].payload,
+                RepresentationFingerprintObservedEvent,
+            )
 
             with production.transaction() as transaction:
                 transaction.record_resource_fingerprint(

@@ -112,6 +112,7 @@ from ._model import (
     Representation,
     RepresentationAddedEvent,
     RepresentationAvailability,
+    RepresentationFingerprintObservedEvent,
     RepresentationId,
     RepresentationKind,
     RepresentationMember,
@@ -121,6 +122,7 @@ from ._model import (
     ResolutionEvidence,
     Resource,
     ResourceAddedEvent,
+    ResourceFingerprintObservedEvent,
     ResourceId,
     ResourceResolution,
     ResourceResolutionState,
@@ -2626,6 +2628,18 @@ def _revision_event_at(
             ActivityId(_uuid(event.activity_id)),
             RepresentationId(_uuid(event.representation_id)),
             _decode_optional(event.role),
+        )
+    elif kind == _abi.PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED:
+        payload = ResourceFingerprintObservedEvent(
+            ResourceId(_uuid(event.resource_id)),
+            _decode_required(event.fingerprint_algorithm, "fingerprint algorithm"),
+            int(event.fingerprint_version),
+        )
+    elif kind == _abi.PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED:
+        payload = RepresentationFingerprintObservedEvent(
+            RepresentationId(_uuid(event.representation_id)),
+            _decode_required(event.fingerprint_algorithm, "fingerprint algorithm"),
+            int(event.fingerprint_version),
         )
     else:
         raise RuntimeError("revision event has an unknown semantic kind")

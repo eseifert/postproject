@@ -571,6 +571,20 @@ class ActivityOutputAddedEvent:
     role: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ResourceFingerprintObservedEvent:
+    resource_id: ResourceId
+    algorithm: str
+    version: int
+
+
+@dataclass(frozen=True, slots=True)
+class RepresentationFingerprintObservedEvent:
+    representation_id: RepresentationId
+    algorithm: str
+    version: int
+
+
 RevisionEventPayload: TypeAlias = (
     AssetImportedEvent
     | RepresentationAddedEvent
@@ -588,6 +602,8 @@ RevisionEventPayload: TypeAlias = (
     | ActivityCreatedEvent
     | ActivityInputAddedEvent
     | ActivityOutputAddedEvent
+    | ResourceFingerprintObservedEvent
+    | RepresentationFingerprintObservedEvent
 )
 
 
