@@ -9,16 +9,16 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     ArtifactEdgeKind, ArtifactEvaluationLimits, ArtifactKnowledgeReason, ArtifactKnowledgeState,
-    ArtifactTraversalLimitKind, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind,
-    DecimalValue, EvidenceKind, ExternalIdentifier, FrameRange, IdentifierScheme,
-    ImageSequencePattern, Locator, LocatorAvailability, LocatorId, MediaRoot, MediaRootId,
-    MetadataAssertion, MetadataField, MetadataProperty, MetadataValue, MetadataValueKind,
-    ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId, ProductionStoreTransaction,
-    PropertyId, RationalRate, RationalValue, Representation, RepresentationAvailability,
-    RepresentationId, RepresentationKind, RepresentationResolution, ResolutionEvidence, Resource,
-    ResourceId, ResourceResolution, ResourceResolutionState, ResourceRole, Revision,
-    RevisionContext, RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity,
-    VocabularyId,
+    ArtifactReproducibilityIssue, ArtifactTraversalLimitKind, Asset, AssetId, AvailabilityIssue,
+    AvailabilityIssueKind, DecimalValue, EvidenceKind, ExternalIdentifier, FrameRange,
+    IdentifierScheme, ImageSequencePattern, Locator, LocatorAvailability, LocatorId, MediaRoot,
+    MediaRootId, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
+    MetadataValueKind, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId,
+    ProductionStoreTransaction, PropertyId, RationalRate, RationalValue, Representation,
+    RepresentationAvailability, RepresentationId, RepresentationKind, RepresentationResolution,
+    ResolutionEvidence, Resource, ResourceId, ResourceResolution, ResourceResolutionState,
+    ResourceRole, Revision, RevisionContext, RevisionEvent, RevisionEventKind, RevisionId,
+    Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     FfprobeInspector, FileResourceSource, ImageSequenceSource, InspectionOutcome,
@@ -516,6 +516,8 @@ struct ArtifactArgs {
 enum ArtifactCommand {
     /// Evaluate whether an activity-produced representation is current.
     Evaluate(ArtifactEvaluateArgs),
+    /// Report whether stored knowledge can reproduce an artifact.
+    Reproducibility(ActivityRepresentationArgs),
 }
 
 #[derive(Debug, Args)]
@@ -943,6 +945,34 @@ enum ArtifactReasonView {
 }
 
 #[derive(Debug, Serialize)]
+struct ArtifactReproducibilityView {
+    representation_id: String,
+    reproducible: bool,
+    producing_activity_id: Option<String>,
+    activity_kind: Option<String>,
+    issues: Vec<ArtifactReproducibilityIssueView>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ArtifactReproducibilityIssueView {
+    ProducingActivityMissing,
+    ProducingActivityAmbiguous {
+        activity_count: u32,
+    },
+    ToolIdentityMissing {
+        activity_id: String,
+    },
+    ParametersMissing {
+        activity_id: String,
+    },
+    InputRepresentationMissing {
+        activity_id: String,
+        representation_id: String,
+    },
+}
+
+#[derive(Debug, Serialize)]
 struct RevisionView {
     id: String,
     sequence: u64,
@@ -1125,6 +1155,7 @@ fn execute(cli: Cli) -> Result<()> {
         },
         Command::Artifact(args) => match args.command {
             ArtifactCommand::Evaluate(args) => artifact_evaluate(&args, cli.json),
+            ArtifactCommand::Reproducibility(args) => artifact_reproducibility(&args, cli.json),
         },
         Command::Revisions(args) => match args.command {
             RevisionsCommand::Latest(args) => revisions_latest(&args, cli.json),
@@ -2073,6 +2104,92 @@ fn activity_edge_snapshot_view(
                 observed_revision_sequence: fingerprint.observed_revision_sequence(),
             })
             .collect(),
+    }
+}
+
+fn artifact_reproducibility(args: &ActivityRepresentationArgs, json: bool) -> Result<()> {
+    let representation_id = parse_representation_id(&args.representation_id)?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let report = production
+        .artifact_reproducibility(representation_id)
+        .context("evaluate artifact reproducibility")?;
+    let view = ArtifactReproducibilityView {
+        representation_id: report.representation_id().to_string(),
+        reproducible: report.is_reproducible(),
+        producing_activity_id: report.producing_activity_id().map(|id| id.to_string()),
+        activity_kind: report.activity_kind().map(|kind| kind.as_str().to_owned()),
+        issues: report
+            .issues()
+            .iter()
+            .map(artifact_reproducibility_issue_view)
+            .collect::<Result<Vec<_>>>()?,
+    };
+
+    if json {
+        print_json(&view)
+    } else {
+        println!(
+            "{}\t{}",
+            view.representation_id,
+            if view.reproducible {
+                "reproducible"
+            } else {
+                "not reproducible"
+            }
+        );
+        for issue in &view.issues {
+            println!("issue\t{}", artifact_reproducibility_issue_name(issue));
+        }
+        Ok(())
+    }
+}
+
+fn artifact_reproducibility_issue_view(
+    issue: &ArtifactReproducibilityIssue,
+) -> Result<ArtifactReproducibilityIssueView> {
+    match issue {
+        ArtifactReproducibilityIssue::ProducingActivityMissing => {
+            Ok(ArtifactReproducibilityIssueView::ProducingActivityMissing)
+        }
+        ArtifactReproducibilityIssue::ProducingActivityAmbiguous { activity_count } => Ok(
+            ArtifactReproducibilityIssueView::ProducingActivityAmbiguous {
+                activity_count: *activity_count,
+            },
+        ),
+        ArtifactReproducibilityIssue::ToolIdentityMissing { activity_id } => {
+            Ok(ArtifactReproducibilityIssueView::ToolIdentityMissing {
+                activity_id: activity_id.to_string(),
+            })
+        }
+        ArtifactReproducibilityIssue::ParametersMissing { activity_id } => {
+            Ok(ArtifactReproducibilityIssueView::ParametersMissing {
+                activity_id: activity_id.to_string(),
+            })
+        }
+        ArtifactReproducibilityIssue::InputRepresentationMissing {
+            activity_id,
+            representation_id,
+        } => Ok(
+            ArtifactReproducibilityIssueView::InputRepresentationMissing {
+                activity_id: activity_id.to_string(),
+                representation_id: representation_id.to_string(),
+            },
+        ),
+        _ => bail!("unsupported artifact reproducibility issue"),
+    }
+}
+
+fn artifact_reproducibility_issue_name(issue: &ArtifactReproducibilityIssueView) -> &'static str {
+    match issue {
+        ArtifactReproducibilityIssueView::ProducingActivityMissing => "producing_activity_missing",
+        ArtifactReproducibilityIssueView::ProducingActivityAmbiguous { .. } => {
+            "producing_activity_ambiguous"
+        }
+        ArtifactReproducibilityIssueView::ToolIdentityMissing { .. } => "tool_identity_missing",
+        ArtifactReproducibilityIssueView::ParametersMissing { .. } => "parameters_missing",
+        ArtifactReproducibilityIssueView::InputRepresentationMissing { .. } => {
+            "input_representation_missing"
+        }
     }
 }
 
