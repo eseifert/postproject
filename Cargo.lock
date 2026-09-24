@@ -717,6 +717,7 @@ dependencies = [
 name = "postproject-storage-sqlite"
 version = "0.3.0-alpha.2"
 dependencies = [
+ "blake3",
  "criterion",
  "postproject-core",
  "postproject-media",

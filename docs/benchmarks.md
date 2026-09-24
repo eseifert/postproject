@@ -29,6 +29,33 @@ committed. Published numbers must record the commit, Rust version, operating
 system, CPU, storage device/filesystem, power policy, and full Criterion command.
 Results are not release gates yet; they exist to make regressions measurable.
 
+## Iteration-four scale fixture
+
+The `large_fixture` benchmark target is a deterministic generator rather than
+a timed benchmark. It creates the representative production used by the
+iteration-four query, staleness, job, and revision-feed benchmarks:
+
+- 10,000 assets and 100,000 representations;
+- more than 100,000 resources and locators across single-file, sequence,
+  ordered-part, and package structures;
+- 1,000,000 typed metadata assertions;
+- fan-in, fan-out, and a provenance chain 50 activities deep;
+- 100,000 revisions with events;
+- real BLAKE3-shaped resource and representation fingerprint evidence.
+
+The seed and cache path are explicit, and fixture construction is never part of
+the measured operation:
+
+```sh
+POSTPROJECT_BENCH_SEED=postproject-i4 \
+POSTPROJECT_BENCH_FIXTURE=target/bench-fixtures/iteration-four.pproj \
+  cargo bench --locked -p postproject-storage-sqlite --bench large_fixture
+```
+
+An existing cache is validated and reused. Delete that one explicit file to
+regenerate it after the generator version or seed changes. Generation uses no
+network, locale, or wall-clock input.
+
 ## Quick baseline
 
 A smoke baseline captured on 2026-09-22 with `--quick` at commit `1e92194`
