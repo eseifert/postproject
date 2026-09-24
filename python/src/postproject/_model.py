@@ -175,6 +175,101 @@ class ActivitySpec:
     agent: AgentIdentity | None = None
 
 
+class ArtifactKnowledgeState(Enum):
+    """Knowledge-only state of an activity-produced representation."""
+
+    CURRENT = "current"
+    STALE = "stale"
+    INDETERMINATE = "indeterminate"
+    DIVERGED = "diverged"
+
+
+class ArtifactEdgeKind(Enum):
+    """Side of an activity supplying fingerprint evidence."""
+
+    INPUT = "input"
+    OUTPUT = "output"
+
+
+class ArtifactReasonKind(Enum):
+    """Machine-readable explanation of a non-current artifact state."""
+
+    PRODUCING_ACTIVITY_MISSING = "producing_activity_missing"
+    PRODUCING_ACTIVITY_AMBIGUOUS = "producing_activity_ambiguous"
+    SNAPSHOT_ABSENT = "snapshot_absent"
+    FINGERPRINT_EVIDENCE_MISSING = "fingerprint_evidence_missing"
+    FINGERPRINT_CHANGED = "fingerprint_changed"
+    FINGERPRINT_RECOMPUTATION_PENDING = "fingerprint_recomputation_pending"
+    UPSTREAM_NOT_CURRENT = "upstream_not_current"
+    TRAVERSAL_TRUNCATED = "traversal_truncated"
+
+
+class ArtifactTraversalLimit(Enum):
+    """Explicit bound that stopped artifact evaluation."""
+
+    DEPTH = "depth"
+    REPRESENTATIONS = "representations"
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactReason:
+    """One structured explanation of an artifact knowledge state."""
+
+    kind: ArtifactReasonKind
+    representation_id: RepresentationId
+    activity_id: ActivityId | None = None
+    edge_kind: ArtifactEdgeKind | None = None
+    upstream_state: ArtifactKnowledgeState | None = None
+    traversal_limit: ArtifactTraversalLimit | None = None
+    activity_count: int | None = None
+    fingerprint_algorithm: str | None = None
+    fingerprint_version: int | None = None
+    snapshot_value: bytes | None = None
+    current_value: bytes | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactEvaluation:
+    """Complete, bounded evaluation of one artifact representation."""
+
+    representation_id: RepresentationId
+    state: ArtifactKnowledgeState
+    visited_representations: int
+    truncated: bool
+    reasons: tuple[ArtifactReason, ...]
+
+
+class ArtifactReproducibilityIssueKind(Enum):
+    """Missing condition that prevents artifact reproduction."""
+
+    PRODUCING_ACTIVITY_MISSING = "producing_activity_missing"
+    PRODUCING_ACTIVITY_AMBIGUOUS = "producing_activity_ambiguous"
+    TOOL_IDENTITY_MISSING = "tool_identity_missing"
+    PARAMETERS_MISSING = "parameters_missing"
+    INPUT_REPRESENTATION_MISSING = "input_representation_missing"
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactReproducibilityIssue:
+    """One structured missing reproducibility condition."""
+
+    kind: ArtifactReproducibilityIssueKind
+    activity_id: ActivityId | None = None
+    representation_id: RepresentationId | None = None
+    activity_count: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactReproducibility:
+    """Recorded knowledge needed to reproduce an artifact."""
+
+    representation_id: RepresentationId
+    reproducible: bool
+    producing_activity_id: ActivityId | None
+    activity_kind: str | None
+    issues: tuple[ArtifactReproducibilityIssue, ...]
+
+
 class RepresentationKind(Enum):
     """Semantic role of an asset representation."""
 
