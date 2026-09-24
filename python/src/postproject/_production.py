@@ -55,6 +55,7 @@ from ._model import (
     Activity,
     ActivityCreatedEvent,
     ActivityEdge,
+    ActivityEdgeSnapshot,
     ActivityId,
     ActivityInputAddedEvent,
     ActivityOutputAddedEvent,
@@ -72,6 +73,7 @@ from ._model import (
     ExternalIdentifierRemovedEvent,
     FileResourceInput,
     Fingerprint,
+    FingerprintSnapshot,
     HostObjectBinding,
     ImageSequenceDescriptor,
     ImageSequenceInput,
@@ -1699,7 +1701,88 @@ def _activity_edge(
     )
     native.check(status, error)
     return ActivityEdge(
-        RepresentationId(_uuid(representation_id)), _decode_optional(role.value)
+        RepresentationId(_uuid(representation_id)),
+        _decode_optional(role.value),
+        _activity_edge_snapshot(native, activities, activity_index, edge_index, output),
+    )
+
+
+def _activity_edge_snapshot(
+    native: NativeLibrary,
+    activities: _Pointer[ActivitySet],
+    activity_index: int,
+    edge_index: int,
+    output: bool,
+) -> ActivityEdgeSnapshot | None:
+    has_snapshot = ctypes.c_uint8()
+    revision_sequence = ctypes.c_uint64()
+    fingerprint_count = ctypes.c_uint64()
+    error = ctypes.POINTER(Error)()
+    summary = (
+        native.lib.pp_activity_set_get_output_snapshot
+        if output
+        else native.lib.pp_activity_set_get_input_snapshot
+    )
+    status = summary(
+        activities,
+        activity_index,
+        edge_index,
+        ctypes.byref(has_snapshot),
+        ctypes.byref(revision_sequence),
+        ctypes.byref(fingerprint_count),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    if not has_snapshot.value:
+        return None
+    fingerprints = tuple(
+        _activity_snapshot_fingerprint(
+            native, activities, activity_index, edge_index, index, output
+        )
+        for index in range(int(fingerprint_count.value))
+    )
+    return ActivityEdgeSnapshot(int(revision_sequence.value), fingerprints)
+
+
+def _activity_snapshot_fingerprint(
+    native: NativeLibrary,
+    activities: _Pointer[ActivitySet],
+    activity_index: int,
+    edge_index: int,
+    fingerprint_index: int,
+    output: bool,
+) -> FingerprintSnapshot:
+    algorithm = ctypes.c_char_p()
+    version = ctypes.c_uint16()
+    value = ctypes.POINTER(ctypes.c_uint8)()
+    value_length = ctypes.c_uint64()
+    has_observed_revision = ctypes.c_uint8()
+    observed_revision_sequence = ctypes.c_uint64()
+    error = ctypes.POINTER(Error)()
+    accessor = (
+        native.lib.pp_activity_set_get_output_snapshot_fingerprint
+        if output
+        else native.lib.pp_activity_set_get_input_snapshot_fingerprint
+    )
+    status = accessor(
+        activities,
+        activity_index,
+        edge_index,
+        fingerprint_index,
+        ctypes.byref(algorithm),
+        ctypes.byref(version),
+        ctypes.byref(value),
+        ctypes.byref(value_length),
+        ctypes.byref(has_observed_revision),
+        ctypes.byref(observed_revision_sequence),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return FingerprintSnapshot(
+        _decode_required(algorithm.value, "snapshot fingerprint algorithm"),
+        int(version.value),
+        bytes(value[: value_length.value]),
+        int(observed_revision_sequence.value) if has_observed_revision.value else None,
     )
 
 

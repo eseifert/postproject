@@ -115,9 +115,28 @@ class ExternalIdentifier:
 
 
 @dataclass(frozen=True, slots=True)
+class FingerprintSnapshot:
+    """Fingerprint evidence captured at one semantic revision."""
+
+    algorithm: str
+    version: int
+    value: bytes
+    observed_revision_sequence: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityEdgeSnapshot:
+    """Storage-owned fingerprint state captured when an activity committed."""
+
+    revision_sequence: int
+    fingerprints: tuple[FingerprintSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ActivityEdge:
     representation_id: RepresentationId
     role: str | None = None
+    snapshot: ActivityEdgeSnapshot | None = None
 
 
 @dataclass(frozen=True, slots=True)

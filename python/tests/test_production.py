@@ -9,7 +9,6 @@ from pathlib import Path
 from uuid import UUID
 
 from postproject import (
-    Activity,
     ActivityCreatedEvent,
     ActivityEdge,
     ActivityInputAddedEvent,
@@ -702,15 +701,26 @@ class ProductionTests(unittest.TestCase):
             with production.transaction() as transaction:
                 activity_id = transaction.create_activity(spec)
 
-            expected = Activity(
-                activity_id,
-                spec.kind,
-                spec.started_at_unix_micros,
-                spec.finished_at_unix_micros,
-                spec.tool,
-                spec.agent,
-                spec.inputs,
-                spec.outputs,
+            expected = production.activities[0]
+            self.assertEqual(expected.id, activity_id)
+            self.assertEqual(expected.kind, spec.kind)
+            self.assertEqual(
+                expected.inputs[0].representation_id, input_edge.representation_id
+            )
+            self.assertEqual(
+                expected.outputs[0].representation_id, output_edge.representation_id
+            )
+            input_snapshot = expected.inputs[0].snapshot
+            output_snapshot = expected.outputs[0].snapshot
+            assert input_snapshot is not None
+            assert output_snapshot is not None
+            self.assertEqual(input_snapshot.revision_sequence, 3)
+            self.assertEqual(output_snapshot.revision_sequence, 3)
+            self.assertEqual(
+                input_snapshot.fingerprints[0].observed_revision_sequence, 1
+            )
+            self.assertEqual(
+                output_snapshot.fingerprints[0].observed_revision_sequence, 2
             )
             self.assertEqual(production.activities, (expected,))
             self.assertEqual(
