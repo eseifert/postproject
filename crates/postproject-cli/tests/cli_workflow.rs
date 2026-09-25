@@ -40,6 +40,68 @@ fn add_representation_from_spec(
     ])
 }
 
+fn exercise_dependencies(
+    directory: &std::path::Path,
+    production: &str,
+    asset_id: &str,
+    original_representation_id: &str,
+    proxy_id: &str,
+    representations: &[Value],
+) {
+    assert!(run_json(&["dependency", "show", production, original_representation_id,]).is_null());
+    assert_eq!(
+        run_json(&["dependency", "dependents", production, "asset", asset_id]),
+        serde_json::json!([])
+    );
+    let proxy_resource_id = representations
+        .iter()
+        .find(|representation| representation["id"] == proxy_id)
+        .expect("proxy representation")["resources"][0]["id"]
+        .as_str()
+        .expect("proxy resource ID");
+    let dependency_spec = directory.join("dependencies.json");
+    fs::write(
+        &dependency_spec,
+        serde_json::to_vec(&serde_json::json!([{
+            "source_resource_id": proxy_resource_id,
+            "kind": "org.postproject:reference.character",
+            "target": {"kind": "asset", "id": asset_id},
+            "resolved_representation_id": original_representation_id,
+            "required": true,
+            "authored_reference": "../Characters/Lead A.blend#Rig"
+        }]))
+        .expect("serialize dependency spec"),
+    )
+    .expect("write dependency spec");
+    let spec_path = dependency_spec.to_str().expect("UTF-8 dependency spec");
+    let recorded = run_json(&["dependency", "record", production, proxy_id, spec_path]);
+    assert_eq!(recorded["status"], "current");
+    assert_eq!(
+        recorded["dependencies"][0]["source_resource_id"],
+        proxy_resource_id
+    );
+    assert_eq!(recorded["dependencies"][0]["target"]["kind"], "asset");
+    assert_eq!(
+        recorded["dependencies"][0]["authored_reference"],
+        "../Characters/Lead A.blend#Rig"
+    );
+    assert_eq!(
+        run_json(&["dependency", "show", production, proxy_id]),
+        recorded
+    );
+    assert_eq!(
+        run_json(&["dependency", "dependents", production, "asset", asset_id])[0]["representation_id"],
+        proxy_id
+    );
+    fs::write(&dependency_spec, b"[]").expect("write empty dependency spec");
+    let empty = run_json(&["dependency", "record", production, proxy_id, spec_path]);
+    assert_eq!(empty["dependencies"], serde_json::json!([]));
+    assert_eq!(
+        run_json(&["dependency", "dependents", production, "asset", asset_id]),
+        serde_json::json!([])
+    );
+}
+
 fn assert_activity_snapshots(created: &Value) {
     let created_input = &created["inputs"][0];
     assert_eq!(created_input["role"], PRIMARY_INPUT_ROLE);
@@ -371,19 +433,17 @@ fn adds_every_representation_shape() {
     let original_representation_id = imported["representation_id"]
         .as_str()
         .expect("representation ID");
-    assert!(run_json(&["dependency", "show", production, original_representation_id,]).is_null());
-    assert_eq!(
-        run_json(&["dependency", "dependents", production, "asset", asset_id]),
-        serde_json::json!([])
-    );
 
-    add_representation_from_spec(
+    let proxy_added = add_representation_from_spec(
         production,
         asset_id,
         "proxy",
         &directory.path().join("single.json"),
         &serde_json::json!({"structure": "single_file", "path": proxy}),
     );
+    let proxy_id = proxy_added["representation_id"]
+        .as_str()
+        .expect("proxy representation ID");
     add_representation_from_spec(
         production,
         asset_id,
@@ -442,6 +502,14 @@ fn adds_every_representation_shape() {
     assert!(structures.contains(&"image_sequence"));
     assert!(structures.contains(&"ordered_parts"));
     assert!(structures.contains(&"package"));
+    exercise_dependencies(
+        directory.path(),
+        production,
+        asset_id,
+        original_representation_id,
+        proxy_id,
+        representations,
+    );
 }
 
 #[test]
