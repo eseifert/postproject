@@ -744,6 +744,24 @@ struct JobSetDeleter final {
 
 using JobSetHandle = std::unique_ptr<pp_job_set_t, JobSetDeleter>;
 
+struct MetadataSetDeleter final {
+  void operator()(pp_metadata_set_t *metadata) const noexcept {
+    pp_metadata_set_release(metadata);
+  }
+};
+
+using MetadataSetHandle =
+    std::unique_ptr<pp_metadata_set_t, MetadataSetDeleter>;
+
+struct RegenerationPlanSetDeleter final {
+  void operator()(pp_regeneration_plan_set_t *plans) const noexcept {
+    pp_regeneration_plan_set_release(plans);
+  }
+};
+
+using RegenerationPlanSetHandle =
+    std::unique_ptr<pp_regeneration_plan_set_t, RegenerationPlanSetDeleter>;
+
 struct ArtifactEvaluationDeleter final {
   void operator()(pp_artifact_evaluation_t *evaluation) const noexcept {
     pp_artifact_evaluation_release(evaluation);
@@ -1189,6 +1207,67 @@ inline Activity activity(const pp_activity_set_t *activities,
           std::move(outputs)};
 }
 
+inline Job job(const pp_job_set_t *jobs, std::uint64_t index) {
+  pp_job_t native{};
+  pp_error_t *error = nullptr;
+  const pp_error_code_t status =
+      pp_job_set_get(jobs, index, &native, &error);
+  throw_if_error(status, error);
+
+  std::vector<Uuid> inputs;
+  inputs.reserve(static_cast<std::size_t>(native.input_count));
+  for (std::uint64_t input_index = 0; input_index < native.input_count;
+       ++input_index) {
+    pp_uuid_t input{};
+    error = nullptr;
+    const pp_error_code_t input_status = pp_job_set_get_input(
+        jobs, index, input_index, &input, &error);
+    throw_if_error(input_status, error);
+    inputs.push_back(uuid(input));
+  }
+
+  const JobState state = static_cast<JobState>(native.state);
+  std::optional<JobClaim> claim;
+  if (state == JobState::claimed) {
+    std::optional<ExternalIdentifier> identifier;
+    if (native.claim_agent_identifier_scheme != nullptr &&
+        native.claim_agent_identifier_value != nullptr) {
+      identifier = ExternalIdentifier{
+          std::string(native.claim_agent_identifier_scheme),
+          std::string(native.claim_agent_identifier_value),
+          optional_string(native.claim_agent_identifier_qualifier)};
+    }
+    std::optional<AgentIdentity> agent;
+    if (native.claim_agent_name != nullptr || identifier.has_value()) {
+      agent = AgentIdentity{optional_string(native.claim_agent_name),
+                            std::move(identifier)};
+    }
+    claim = JobClaim{
+        uuid(native.claim_id),
+        ToolIdentity{native.claim_tool_name != nullptr
+                         ? std::string(native.claim_tool_name)
+                         : std::string(),
+                     optional_string(native.claim_tool_version),
+                     optional_string(native.claim_tool_uri)},
+        std::move(agent), native.claim_expires_at_unix_micros};
+  }
+  std::optional<JobCompletion> completion;
+  if (state == JobState::succeeded) {
+    completion = JobCompletion{uuid(native.completion_activity_id),
+                               uuid(native.completion_representation_id)};
+  }
+  return {uuid(native.id),
+          native.kind != nullptr ? std::string(native.kind) : std::string(),
+          std::move(inputs),
+          uuid(native.output_asset_id),
+          static_cast<RepresentationKind>(native.output_representation_kind),
+          optional_string(native.target_root),
+          state,
+          std::move(claim),
+          std::move(completion),
+          optional_string(native.failure_diagnostic)};
+}
+
 inline Revision revision(const pp_revision_set_t *revisions,
                          std::uint64_t index) {
   pp_uuid_t id{};
@@ -1589,6 +1668,141 @@ inline MetadataInput MetadataInput::structure(
       static_cast<std::uint64_t>(fields.size()), &input, &error);
   return checked(status, input, error);
 }
+
+struct RegenerationParameter final {
+  std::string vocabulary;
+  std::string property;
+  MetadataInput value;
+};
+
+struct RegenerationJobPlan final {
+  Uuid artifact_representation_id;
+  Job job;
+  std::vector<RegenerationParameter> parameters;
+};
+
+namespace detail {
+
+inline MetadataInput metadata_input(const pp_metadata_value_t *value) {
+  pp_error_t *error = nullptr;
+  switch (pp_metadata_value_kind(value)) {
+  case PP_METADATA_STRING:
+  case PP_METADATA_LANG_STRING: {
+    const char *text = nullptr;
+    const char *language = nullptr;
+    const pp_error_code_t status =
+        pp_metadata_value_get_string(value, &text, &language, &error);
+    throw_if_error(status, error);
+    if (language != nullptr) {
+      return MetadataInput::languageString(text, language);
+    }
+    return MetadataInput::plainString(text);
+  }
+  case PP_METADATA_I64: {
+    std::int64_t result = 0;
+    const pp_error_code_t status =
+        pp_metadata_value_get_i64(value, &result, &error);
+    throw_if_error(status, error);
+    return MetadataInput::signedInteger(result);
+  }
+  case PP_METADATA_U64: {
+    std::uint64_t result = 0;
+    const pp_error_code_t status =
+        pp_metadata_value_get_u64(value, &result, &error);
+    throw_if_error(status, error);
+    return MetadataInput::unsignedInteger(result);
+  }
+  case PP_METADATA_DECIMAL: {
+    const char *coefficient = nullptr;
+    std::uint32_t scale = 0;
+    const pp_error_code_t status = pp_metadata_value_get_decimal(
+        value, &coefficient, &scale, &error);
+    throw_if_error(status, error);
+    return MetadataInput::decimal(coefficient, scale);
+  }
+  case PP_METADATA_BOOL: {
+    std::uint8_t result = 0;
+    const pp_error_code_t status =
+        pp_metadata_value_get_bool(value, &result, &error);
+    throw_if_error(status, error);
+    return MetadataInput::boolean(result != 0);
+  }
+  case PP_METADATA_TIMESTAMP: {
+    std::int64_t result = 0;
+    const pp_error_code_t status =
+        pp_metadata_value_get_timestamp(value, &result, &error);
+    throw_if_error(status, error);
+    return MetadataInput::timestamp(result);
+  }
+  case PP_METADATA_URI: {
+    const char *result = nullptr;
+    const pp_error_code_t status =
+        pp_metadata_value_get_uri(value, &result, &error);
+    throw_if_error(status, error);
+    return MetadataInput::uri(result);
+  }
+  case PP_METADATA_BYTES: {
+    const std::uint8_t *data = nullptr;
+    std::uint64_t length = 0;
+    const pp_error_code_t status =
+        pp_metadata_value_get_bytes(value, &data, &length, &error);
+    throw_if_error(status, error);
+    std::vector<std::uint8_t> bytes;
+    if (length != 0) {
+      bytes.assign(data, data + length);
+    }
+    return MetadataInput::bytes(bytes);
+  }
+  case PP_METADATA_RATIONAL: {
+    std::int64_t numerator = 0;
+    std::uint64_t denominator = 0;
+    const pp_error_code_t status = pp_metadata_value_get_rational(
+        value, &numerator, &denominator, &error);
+    throw_if_error(status, error);
+    return MetadataInput::rational(numerator, denominator);
+  }
+  case PP_METADATA_LIST: {
+    const std::uint64_t count = pp_metadata_value_list_count(value);
+    std::vector<MetadataInput> items;
+    items.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      const pp_metadata_value_t *item = nullptr;
+      error = nullptr;
+      const pp_error_code_t status =
+          pp_metadata_value_list_get(value, index, &item, &error);
+      throw_if_error(status, error);
+      items.push_back(metadata_input(item));
+    }
+    return MetadataInput::list(items);
+  }
+  case PP_METADATA_STRUCT: {
+    const std::uint64_t count = pp_metadata_value_struct_count(value);
+    std::vector<MetadataFieldInput> fields;
+    fields.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      const char *name = nullptr;
+      const pp_metadata_value_t *field_value = nullptr;
+      error = nullptr;
+      const pp_error_code_t status = pp_metadata_value_struct_get(
+          value, index, &name, &field_value, &error);
+      throw_if_error(status, error);
+      fields.push_back({std::string(name), metadata_input(field_value)});
+    }
+    return MetadataInput::structure(fields);
+  }
+  case PP_METADATA_REFERENCE: {
+    pp_object_ref_t target{};
+    const pp_error_code_t status =
+        pp_metadata_value_get_reference(value, &target, &error);
+    throw_if_error(status, error);
+    return MetadataInput::reference(object_ref(target));
+  }
+  default:
+    throw std::runtime_error("unknown metadata value kind");
+  }
+}
+
+} // namespace detail
 
 // Move-only and caller-serialized. Do not call one Transaction concurrently.
 class Transaction final {
@@ -2613,65 +2827,68 @@ public:
     const std::uint64_t count = pp_job_set_count(jobs.get());
     result.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t index = 0; index < count; ++index) {
-      pp_job_t native{};
-      pp_error_t *item_error = nullptr;
-      const pp_error_code_t item_status =
-          pp_job_set_get(jobs.get(), index, &native, &item_error);
-      detail::throw_if_error(item_status, item_error);
+      result.push_back(detail::job(jobs.get(), index));
+    }
+    return result;
+  }
 
-      std::vector<Uuid> inputs;
-      inputs.reserve(static_cast<std::size_t>(native.input_count));
-      for (std::uint64_t input_index = 0; input_index < native.input_count;
-           ++input_index) {
-        pp_uuid_t input{};
-        pp_error_t *input_error = nullptr;
-        const pp_error_code_t input_status = pp_job_set_get_input(
-            jobs.get(), index, input_index, &input, &input_error);
-        detail::throw_if_error(input_status, input_error);
-        inputs.push_back(detail::uuid(input));
-      }
+  [[nodiscard]] std::vector<RegenerationJobPlan>
+  planRegeneration(const std::vector<Uuid> &artifact_representation_ids) const {
+    std::vector<pp_uuid_t> native_ids;
+    native_ids.reserve(artifact_representation_ids.size());
+    for (const Uuid &id : artifact_representation_ids) {
+      native_ids.push_back(detail::native_uuid(id));
+    }
+    pp_regeneration_plan_set_t *raw_plans = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_plan_regeneration(
+        production_, native_ids.empty() ? nullptr : native_ids.data(),
+        static_cast<std::uint64_t>(native_ids.size()), &raw_plans, &error);
+    detail::throw_if_error(status, error);
+    detail::RegenerationPlanSetHandle plans(raw_plans);
 
-      const JobState state = static_cast<JobState>(native.state);
-      std::optional<JobClaim> claim;
-      if (state == JobState::claimed) {
-        std::optional<ExternalIdentifier> identifier;
-        if (native.claim_agent_identifier_scheme != nullptr &&
-            native.claim_agent_identifier_value != nullptr) {
-          identifier = ExternalIdentifier{
-              std::string(native.claim_agent_identifier_scheme),
-              std::string(native.claim_agent_identifier_value),
-              detail::optional_string(
-                  native.claim_agent_identifier_qualifier)};
-        }
-        std::optional<AgentIdentity> agent;
-        if (native.claim_agent_name != nullptr || identifier.has_value()) {
-          agent = AgentIdentity{detail::optional_string(native.claim_agent_name),
-                                std::move(identifier)};
-        }
-        claim = JobClaim{
-            detail::uuid(native.claim_id),
-            ToolIdentity{
-                native.claim_tool_name != nullptr
-                    ? std::string(native.claim_tool_name)
-                    : std::string(),
-                detail::optional_string(native.claim_tool_version),
-                detail::optional_string(native.claim_tool_uri)},
-            std::move(agent), native.claim_expires_at_unix_micros};
+    std::vector<RegenerationJobPlan> result;
+    const std::uint64_t count = pp_regeneration_plan_set_count(plans.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      pp_uuid_t artifact_id{};
+      pp_job_set_t *raw_job = nullptr;
+      pp_metadata_set_t *raw_parameters = nullptr;
+      error = nullptr;
+      const pp_error_code_t item_status = pp_regeneration_plan_set_get(
+          plans.get(), index, &artifact_id, &raw_job, &raw_parameters, &error);
+      detail::throw_if_error(item_status, error);
+      detail::JobSetHandle job_set(raw_job);
+      detail::MetadataSetHandle parameters(raw_parameters);
+      if (pp_job_set_count(job_set.get()) != 1) {
+        throw std::runtime_error("regeneration plan must contain one job");
       }
-      std::optional<JobCompletion> completion;
-      if (state == JobState::succeeded) {
-        completion = JobCompletion{
-            detail::uuid(native.completion_activity_id),
-            detail::uuid(native.completion_representation_id)};
+      Job job = detail::job(job_set.get(), 0);
+      std::vector<RegenerationParameter> parameter_values;
+      const std::uint64_t parameter_count =
+          pp_metadata_set_count(parameters.get());
+      parameter_values.reserve(static_cast<std::size_t>(parameter_count));
+      for (std::uint64_t parameter_index = 0;
+           parameter_index < parameter_count; ++parameter_index) {
+        pp_object_ref_t target{};
+        const char *vocabulary = nullptr;
+        const char *property = nullptr;
+        const pp_metadata_value_t *value = nullptr;
+        error = nullptr;
+        const pp_error_code_t parameter_status = pp_metadata_set_get(
+            parameters.get(), parameter_index, &target, &vocabulary, &property,
+            &value, &error);
+        detail::throw_if_error(parameter_status, error);
+        if (target.kind != PP_OBJECT_JOB || detail::uuid(target.id) != job.id) {
+          throw std::runtime_error(
+              "regeneration parameter target does not match its job");
+        }
+        parameter_values.push_back(
+            {std::string(vocabulary), std::string(property),
+             detail::metadata_input(value)});
       }
-      result.push_back(
-          {detail::uuid(native.id),
-           native.kind != nullptr ? std::string(native.kind) : std::string(),
-           std::move(inputs), detail::uuid(native.output_asset_id),
-           static_cast<RepresentationKind>(native.output_representation_kind),
-           detail::optional_string(native.target_root), state, std::move(claim),
-           std::move(completion),
-           detail::optional_string(native.failure_diagnostic)});
+      result.push_back({detail::uuid(artifact_id), std::move(job),
+                        std::move(parameter_values)});
     }
     return result;
   }
