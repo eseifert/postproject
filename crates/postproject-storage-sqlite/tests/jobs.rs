@@ -1,12 +1,12 @@
 //! Durable job request integration coverage.
 
 use postproject_core::{
-    AgentIdentity, Asset, AssetId, ContentStructure, ErrorKind, ExternalIdentifier,
-    IdentifierScheme, Job, JobFailure, JobId, JobKind, JobState, Locator, LocatorAvailability,
-    LocatorId, MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, PropertyId, Representation, RepresentationId, RepresentationKind,
-    RequestedJobOutput, Resource, ResourceId, RevisionEventKind, Timestamp, ToolIdentity,
-    VocabularyId,
+    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, AgentIdentity, Asset,
+    AssetId, ContentStructure, ErrorKind, ExternalIdentifier, IdentifierScheme, Job, JobFailure,
+    JobId, JobKind, JobState, Locator, LocatorAvailability, LocatorId, MediaRoot, MediaRootId,
+    MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, PropertyId, Representation,
+    RepresentationId, RepresentationImport, RepresentationKind, RequestedJobOutput, Resource,
+    ResourceId, RevisionEventKind, Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use tempfile::tempdir;
@@ -57,6 +57,34 @@ fn requested_job(source: &OriginalMediaImport) -> Job {
         .expect("valid requested output"),
     )
     .expect("valid job")
+}
+
+fn proxy_import(
+    source: &OriginalMediaImport,
+    representation_id: RepresentationId,
+    resource_id: ResourceId,
+) -> RepresentationImport {
+    RepresentationImport::new(
+        Representation::new(
+            representation_id,
+            source.asset().id(),
+            RepresentationKind::Proxy,
+            ContentStructure::single_resource(resource_id),
+            Vec::new(),
+        ),
+        vec![Resource::new(resource_id, Vec::new(), None)],
+        vec![
+            Locator::new(
+                LocatorId::from_bytes([22; 16]),
+                resource_id,
+                "file:///media/proxy.mov",
+                None,
+                LocatorAvailability::Online,
+            )
+            .expect("valid proxy locator"),
+        ],
+    )
+    .expect("valid proxy import")
 }
 
 #[test]
@@ -405,4 +433,146 @@ fn cancellation_accepts_requested_and_claimed_jobs_only() {
         .cancel_job(JobId::from_bytes([11; 16]))
         .expect_err("missing job must fail");
     assert_eq!(missing.kind(), ErrorKind::NotFound);
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one scenario proves failed completion rollback and successful atomic output provenance"
+)]
+fn completion_is_atomic_and_records_output_activity_and_snapshots() {
+    let directory = tempdir().expect("create temporary directory");
+    let mut production = SqliteProduction::create(directory.path().join("production.pproj"), None)
+        .expect("create production");
+    let source = source_import();
+    let job = requested_job(&source);
+    {
+        let mut transaction = production.begin_transaction().expect("begin setup");
+        transaction.import_original(&source).expect("import source");
+        transaction
+            .add_media_root(
+                MediaRoot::new(
+                    MediaRootId::from_bytes([6; 16]),
+                    "proxies",
+                    None,
+                    None,
+                    0,
+                    true,
+                )
+                .expect("valid root"),
+            )
+            .expect("add root");
+        transaction.request_job(&job).expect("request job");
+        transaction.commit().expect("commit setup");
+    }
+    let claim = {
+        let mut transaction = production.begin_transaction().expect("begin claim");
+        let claim = transaction
+            .claim_job(
+                job.id(),
+                &ToolIdentity::new("worker", None, None).expect("valid tool"),
+                None,
+                Timestamp::from_unix_micros(100),
+                Timestamp::from_unix_micros(200),
+            )
+            .expect("claim job");
+        transaction.commit().expect("commit claim");
+        claim
+    };
+    let output_id = RepresentationId::from_bytes([20; 16]);
+    let activity_id = ActivityId::from_bytes([23; 16]);
+    let activity = Activity::new(
+        activity_id,
+        ActivityKind::new("org.postproject:transcode").expect("valid activity kind"),
+        vec![ActivityInput::new(source.representation().id(), None)],
+        vec![ActivityOutput::new(output_id, None)],
+    )
+    .expect("valid completion activity");
+
+    let revision_before_failure = production
+        .latest_revision()
+        .expect("load revision")
+        .expect("claim revision");
+    let colliding_output = proxy_import(&source, output_id, source.resources()[0].id());
+    {
+        let mut transaction = production
+            .begin_transaction()
+            .expect("begin failed completion");
+        let error = transaction
+            .complete_job(
+                job.id(),
+                claim.id(),
+                Timestamp::from_unix_micros(150),
+                &colliding_output,
+                &activity,
+            )
+            .expect_err("colliding resource must fail");
+        assert_eq!(error.kind(), ErrorKind::AlreadyExists);
+        transaction
+            .commit()
+            .expect("commit after rolled-back completion");
+    }
+    assert_eq!(
+        production
+            .latest_revision()
+            .expect("load unchanged revision")
+            .expect("claim revision")
+            .id(),
+        revision_before_failure.id()
+    );
+    assert!(matches!(
+        production.job(job.id()).expect("load claimed job").state(),
+        JobState::Claimed(stored) if stored == &claim
+    ));
+    assert_eq!(
+        production
+            .representations(source.asset().id())
+            .expect("load representations")
+            .len(),
+        1
+    );
+    assert!(production.activities().expect("load activities").is_empty());
+
+    let output = proxy_import(&source, output_id, ResourceId::from_bytes([21; 16]));
+    {
+        let mut transaction = production.begin_transaction().expect("begin completion");
+        transaction
+            .complete_job(
+                job.id(),
+                claim.id(),
+                Timestamp::from_unix_micros(150),
+                &output,
+                &activity,
+            )
+            .expect("complete job");
+        transaction.commit().expect("commit completion");
+    }
+    assert!(matches!(
+        production.job(job.id()).expect("load succeeded job").state(),
+        JobState::Succeeded(completion)
+            if completion.activity_id() == activity_id
+                && completion.representation_id() == output_id
+    ));
+    assert_eq!(
+        production
+            .representations(source.asset().id())
+            .expect("load representations")
+            .len(),
+        2
+    );
+    let activities = production.activities().expect("load activities");
+    assert_eq!(activities.len(), 1);
+    assert!(activities[0].inputs()[0].snapshot().is_some());
+    assert!(activities[0].outputs()[0].snapshot().is_some());
+    let revision = production
+        .latest_revision()
+        .expect("load revision")
+        .unwrap();
+    let events = production
+        .events_for_revision(revision.id())
+        .expect("load completion events");
+    assert!(matches!(
+        events.last().expect("job event").kind(),
+        RevisionEventKind::JobSucceeded { job_id } if *job_id == job.id()
+    ));
 }
