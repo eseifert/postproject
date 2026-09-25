@@ -1,13 +1,14 @@
 //! Domain-shaped contracts implemented by persistence backends.
 
 use crate::{
-    Activity, ArtifactEvaluation, ArtifactEvaluationLimits, ArtifactReproducibilityReport, Asset,
-    AssetId, Dependency, DependencySet, DependencyTarget, ExternalIdentifier, IdentifierScheme,
-    Job, JobId, Locator, MediaRoot, MetadataAssertion, MetadataMatch, MetadataProperty,
-    MetadataValue, ObjectRef, OriginalMediaImport, Production, Representation,
-    RepresentationFingerprint, RepresentationId, RepresentationImport, Resource,
-    ResourceFingerprint, ResourceId, Result, Revision, RevisionContext, RevisionEvent, RevisionId,
-    TransactionId, TransactionState,
+    Activity, AgentIdentity, ArtifactEvaluation, ArtifactEvaluationLimits,
+    ArtifactReproducibilityReport, Asset, AssetId, Dependency, DependencySet, DependencyTarget,
+    ExternalIdentifier, IdentifierScheme, Job, JobClaim, JobClaimId, JobFailure, JobId, Locator,
+    MediaRoot, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
+    OriginalMediaImport, Production, Representation, RepresentationFingerprint, RepresentationId,
+    RepresentationImport, Resource, ResourceFingerprint, ResourceId, Result, Revision,
+    RevisionContext, RevisionEvent, RevisionId, Timestamp, ToolIdentity, TransactionId,
+    TransactionState,
 };
 
 /// Read operations required from a production persistence backend.
@@ -425,6 +426,71 @@ pub trait ProductionStoreTransaction {
     /// is not requested, a referenced object is absent, the job already exists,
     /// or persistence fails.
     fn request_job(&mut self, job: &Job) -> Result<()>;
+
+    /// Atomically claims a requested or expired job with a new random token.
+    ///
+    /// `now` and `expires_at` are caller supplied so storage never reads the
+    /// wall clock for lease decisions.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the job is absent, not claimable, the lease
+    /// does not expire after `now`, the transaction is closed, or persistence
+    /// fails.
+    fn claim_job(
+        &mut self,
+        job_id: JobId,
+        tool: &ToolIdentity,
+        agent: Option<&AgentIdentity>,
+        now: Timestamp,
+        expires_at: Timestamp,
+    ) -> Result<JobClaim>;
+
+    /// Extends the current unexpired claim to a later caller-supplied expiry.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the job is absent, the token is not current,
+    /// the claim has expired, the new expiry is not after `now`, the transaction
+    /// is closed, or persistence fails.
+    fn renew_job_claim(
+        &mut self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now: Timestamp,
+        expires_at: Timestamp,
+    ) -> Result<()>;
+
+    /// Releases the current claim and returns the job to requested state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the job is absent, the token is not current,
+    /// the transaction is closed, or persistence fails.
+    fn release_job_claim(&mut self, job_id: JobId, claim_id: JobClaimId) -> Result<()>;
+
+    /// Fails an actively claimed job without creating output or activity facts.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the job is absent, the token is not current,
+    /// the claim has expired at `now`, the transaction is closed, or persistence
+    /// fails.
+    fn fail_job(
+        &mut self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now: Timestamp,
+        failure: &JobFailure,
+    ) -> Result<()>;
+
+    /// Cancels a requested or claimed job administratively.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the job is absent or terminal, the
+    /// transaction is closed, or persistence fails.
+    fn cancel_job(&mut self, job_id: JobId) -> Result<()>;
 
     /// Atomically makes every staged mutation durable.
     ///

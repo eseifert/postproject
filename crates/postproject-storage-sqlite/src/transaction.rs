@@ -1,14 +1,14 @@
 //! Explicit SQLite-backed domain transactions.
 
 use postproject_core::{
-    Activity, ContentStructure, ContentStructureKind, Dependency, DependencySetStatus,
-    DependencyTarget, Error, ErrorKind, ExternalIdentifier, Job, JobState, Locator,
-    LocatorAvailability, LocatorId, MAX_DEPENDENCIES_PER_SET, MediaRoot, MediaRootId,
-    MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, Production,
-    ProductionStoreTransaction, Representation, RepresentationFingerprint, RepresentationId,
-    RepresentationImport, RepresentationKind, Resource, ResourceFingerprint, ResourceId, Result,
-    RevisionContext, RevisionEventKind, RevisionId, Timestamp, TransactionId, TransactionLifecycle,
-    TransactionState,
+    Activity, AgentIdentity, ContentStructure, ContentStructureKind, Dependency,
+    DependencySetStatus, DependencyTarget, Error, ErrorKind, ExternalIdentifier, Job, JobClaim,
+    JobClaimId, JobFailure, JobId, JobState, Locator, LocatorAvailability, LocatorId,
+    MAX_DEPENDENCIES_PER_SET, MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef,
+    OriginalMediaImport, Production, ProductionStoreTransaction, Representation,
+    RepresentationFingerprint, RepresentationId, RepresentationImport, RepresentationKind,
+    Resource, ResourceFingerprint, ResourceId, Result, RevisionContext, RevisionEventKind,
+    RevisionId, Timestamp, ToolIdentity, TransactionId, TransactionLifecycle, TransactionState,
 };
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -39,7 +39,7 @@ impl<'production> SqliteTransaction<'production> {
         production: &'production mut Production,
     ) -> Result<Self> {
         let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(sqlite_error("begin domain transaction"))?;
         let pending_roots = production.media_roots().to_vec();
         Ok(Self {
@@ -208,6 +208,221 @@ impl<'production> SqliteTransaction<'production> {
         }
         self.pending_events
             .push(RevisionEventKind::JobRequested { job_id: job.id() });
+        Ok(())
+    }
+
+    /// Atomically claims a requested or expired job with a new random token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] for a non-future expiry,
+    /// [`ErrorKind::NotFound`] for an absent job, [`ErrorKind::Conflict`] when
+    /// the job is not claimable, or a transaction/storage error.
+    pub fn claim_job(
+        &mut self,
+        job_id: JobId,
+        tool: &ToolIdentity,
+        agent: Option<&AgentIdentity>,
+        now: Timestamp,
+        expires_at: Timestamp,
+    ) -> Result<JobClaim> {
+        validate_future_job_expiry(now, expires_at)?;
+        let claim_id = JobClaimId::new();
+        let agent_name = agent.and_then(AgentIdentity::name);
+        let agent_identifier = agent.and_then(AgentIdentity::identifier);
+        let transaction = self.open_transaction()?;
+        let changed = transaction
+            .execute(
+                "UPDATE jobs SET
+                    state = 2, claim_id = ?1, claim_tool_name = ?2,
+                    claim_tool_version = ?3, claim_tool_uri = ?4,
+                    claim_agent_name = ?5, claim_agent_scheme = ?6,
+                    claim_agent_value = ?7, claim_agent_qualifier = ?8,
+                    claim_expires_at_micros = ?9
+                 WHERE id = ?10
+                   AND (state = 1 OR (state = 2 AND claim_expires_at_micros <= ?11))",
+                params![
+                    claim_id.as_bytes().as_slice(),
+                    tool.name(),
+                    tool.version(),
+                    tool.uri(),
+                    agent_name,
+                    agent_identifier.map(|identifier| identifier.scheme().as_str()),
+                    agent_identifier.map(ExternalIdentifier::value),
+                    agent_identifier.and_then(ExternalIdentifier::qualifier),
+                    expires_at.as_unix_micros(),
+                    job_id.as_bytes().as_slice(),
+                    now.as_unix_micros(),
+                ],
+            )
+            .map_err(mutation_error("claim job"))?;
+        if changed == 0 {
+            return Err(job_transition_error(
+                transaction,
+                job_id,
+                "job is not claimable",
+            )?);
+        }
+        self.pending_events
+            .push(RevisionEventKind::JobClaimed { job_id });
+        Ok(JobClaim::new(
+            claim_id,
+            tool.clone(),
+            agent.cloned(),
+            expires_at,
+        ))
+    }
+
+    /// Extends the current unexpired claim to a later expiry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] for a non-future expiry,
+    /// [`ErrorKind::NotFound`] for an absent job, [`ErrorKind::Conflict`] for a
+    /// stale token, expired lease, or non-extending expiry, or a storage error.
+    pub fn renew_job_claim(
+        &mut self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now: Timestamp,
+        expires_at: Timestamp,
+    ) -> Result<()> {
+        validate_future_job_expiry(now, expires_at)?;
+        let transaction = self.open_transaction()?;
+        let changed = transaction
+            .execute(
+                "UPDATE jobs SET claim_expires_at_micros = ?1
+                 WHERE id = ?2 AND state = 2 AND claim_id = ?3
+                   AND claim_expires_at_micros > ?4
+                   AND claim_expires_at_micros < ?1",
+                params![
+                    expires_at.as_unix_micros(),
+                    job_id.as_bytes().as_slice(),
+                    claim_id.as_bytes().as_slice(),
+                    now.as_unix_micros(),
+                ],
+            )
+            .map_err(mutation_error("renew job claim"))?;
+        if changed == 0 {
+            return Err(job_transition_error(
+                transaction,
+                job_id,
+                "job claim cannot be renewed",
+            )?);
+        }
+        self.pending_events
+            .push(RevisionEventKind::JobClaimRenewed { job_id });
+        Ok(())
+    }
+
+    /// Releases the current claim and returns the job to requested state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] for an absent job,
+    /// [`ErrorKind::Conflict`] for a stale token or non-claimed job, or a
+    /// transaction/storage error.
+    pub fn release_job_claim(&mut self, job_id: JobId, claim_id: JobClaimId) -> Result<()> {
+        let transaction = self.open_transaction()?;
+        let changed = transaction
+            .execute(
+                "UPDATE jobs SET
+                    state = 1, claim_id = NULL, claim_tool_name = NULL,
+                    claim_tool_version = NULL, claim_tool_uri = NULL,
+                    claim_agent_name = NULL, claim_agent_scheme = NULL,
+                    claim_agent_value = NULL, claim_agent_qualifier = NULL,
+                    claim_expires_at_micros = NULL
+                 WHERE id = ?1 AND state = 2 AND claim_id = ?2",
+                params![job_id.as_bytes().as_slice(), claim_id.as_bytes().as_slice(),],
+            )
+            .map_err(mutation_error("release job claim"))?;
+        if changed == 0 {
+            return Err(job_transition_error(
+                transaction,
+                job_id,
+                "job claim cannot be released",
+            )?);
+        }
+        self.pending_events
+            .push(RevisionEventKind::JobClaimReleased { job_id });
+        Ok(())
+    }
+
+    /// Fails an actively claimed job without creating output or activity facts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] for an absent job,
+    /// [`ErrorKind::Conflict`] for a stale token, expired lease, or non-claimed
+    /// job, or a transaction/storage error.
+    pub fn fail_job(
+        &mut self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now: Timestamp,
+        failure: &JobFailure,
+    ) -> Result<()> {
+        let transaction = self.open_transaction()?;
+        let changed = transaction
+            .execute(
+                "UPDATE jobs SET
+                    state = 4, claim_id = NULL, claim_tool_name = NULL,
+                    claim_tool_version = NULL, claim_tool_uri = NULL,
+                    claim_agent_name = NULL, claim_agent_scheme = NULL,
+                    claim_agent_value = NULL, claim_agent_qualifier = NULL,
+                    claim_expires_at_micros = NULL, failure_diagnostic = ?1
+                 WHERE id = ?2 AND state = 2 AND claim_id = ?3
+                   AND claim_expires_at_micros > ?4",
+                params![
+                    failure.diagnostic(),
+                    job_id.as_bytes().as_slice(),
+                    claim_id.as_bytes().as_slice(),
+                    now.as_unix_micros(),
+                ],
+            )
+            .map_err(mutation_error("fail job"))?;
+        if changed == 0 {
+            return Err(job_transition_error(
+                transaction,
+                job_id,
+                "job cannot be failed by this claim",
+            )?);
+        }
+        self.pending_events
+            .push(RevisionEventKind::JobFailed { job_id });
+        Ok(())
+    }
+
+    /// Cancels a requested or claimed job administratively.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] for an absent job,
+    /// [`ErrorKind::Conflict`] for a terminal job, or a transaction/storage
+    /// error.
+    pub fn cancel_job(&mut self, job_id: JobId) -> Result<()> {
+        let transaction = self.open_transaction()?;
+        let changed = transaction
+            .execute(
+                "UPDATE jobs SET
+                    state = 5, claim_id = NULL, claim_tool_name = NULL,
+                    claim_tool_version = NULL, claim_tool_uri = NULL,
+                    claim_agent_name = NULL, claim_agent_scheme = NULL,
+                    claim_agent_value = NULL, claim_agent_qualifier = NULL,
+                    claim_expires_at_micros = NULL
+                 WHERE id = ?1 AND state IN (1, 2)",
+                [job_id.as_bytes().as_slice()],
+            )
+            .map_err(mutation_error("cancel job"))?;
+        if changed == 0 {
+            return Err(job_transition_error(
+                transaction,
+                job_id,
+                "job cannot be cancelled",
+            )?);
+        }
+        self.pending_events
+            .push(RevisionEventKind::JobCancelled { job_id });
         Ok(())
     }
 
@@ -1545,6 +1760,45 @@ impl ProductionStoreTransaction for SqliteTransaction<'_> {
         SqliteTransaction::request_job(self, job)
     }
 
+    fn claim_job(
+        &mut self,
+        job_id: JobId,
+        tool: &ToolIdentity,
+        agent: Option<&AgentIdentity>,
+        now: Timestamp,
+        expires_at: Timestamp,
+    ) -> Result<JobClaim> {
+        SqliteTransaction::claim_job(self, job_id, tool, agent, now, expires_at)
+    }
+
+    fn renew_job_claim(
+        &mut self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now: Timestamp,
+        expires_at: Timestamp,
+    ) -> Result<()> {
+        SqliteTransaction::renew_job_claim(self, job_id, claim_id, now, expires_at)
+    }
+
+    fn release_job_claim(&mut self, job_id: JobId, claim_id: JobClaimId) -> Result<()> {
+        SqliteTransaction::release_job_claim(self, job_id, claim_id)
+    }
+
+    fn fail_job(
+        &mut self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now: Timestamp,
+        failure: &JobFailure,
+    ) -> Result<()> {
+        SqliteTransaction::fail_job(self, job_id, claim_id, now, failure)
+    }
+
+    fn cancel_job(&mut self, job_id: JobId) -> Result<()> {
+        SqliteTransaction::cancel_job(self, job_id)
+    }
+
     fn commit(&mut self) -> Result<()> {
         SqliteTransaction::commit(self)
     }
@@ -1614,6 +1868,35 @@ fn representation_exists(
             |row| row.get(0),
         )
         .map_err(sqlite_error("check fingerprint representation"))
+}
+
+fn validate_future_job_expiry(now: Timestamp, expires_at: Timestamp) -> Result<()> {
+    if expires_at <= now {
+        return Err(Error::new(
+            ErrorKind::InvalidArgument,
+            "job claim expiry must be after the caller-supplied current time",
+        ));
+    }
+    Ok(())
+}
+
+fn job_transition_error(
+    transaction: &Transaction<'_>,
+    job_id: JobId,
+    conflict_message: &'static str,
+) -> Result<Error> {
+    let exists = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM jobs WHERE id = ?1)",
+            [job_id.as_bytes().as_slice()],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(sqlite_error("check job transition target"))?;
+    Ok(if exists {
+        Error::new(ErrorKind::Conflict, conflict_message)
+    } else {
+        Error::new(ErrorKind::NotFound, "job does not exist")
+    })
 }
 
 fn validate_dependency_references(

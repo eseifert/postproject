@@ -9,8 +9,9 @@ Development version: `0.4.0-alpha.1`.
 
 ### Added
 
-- Added Rust storage operations to request, list, and read durable jobs, with
-  job metadata parameters and semantic request events.
+- Added Rust storage operations to request, list, read, claim, renew, release,
+  fail, and cancel durable jobs, with caller-supplied lease time, token-checked
+  worker transitions, job metadata parameters, and semantic lifecycle events.
 - Added SQLite schema 9 foundations for durable jobs, canonical inputs,
   lifecycle detail, job metadata, and indexed state/kind queries.
 - Added first-class, typed dependency observations with exact authored
