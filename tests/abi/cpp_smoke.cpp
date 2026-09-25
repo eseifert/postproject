@@ -416,6 +416,67 @@ int main(int argc, char **argv) {
       return 33;
     }
 
+    auto claim = reopened.beginTransaction();
+    const auto claim_id = claim.claimJob(
+        job_id, {"C++ worker", std::string("1.0"), std::nullopt},
+        postproject::AgentIdentity{std::string("operator"), std::nullopt}, 10,
+        20);
+    claim.commit();
+    const auto claimed_jobs = reopened.jobs();
+    if (claimed_jobs.size() != 1 || !claimed_jobs[0].claim.has_value() ||
+        claimed_jobs[0].state != postproject::JobState::claimed ||
+        claimed_jobs[0].claim->id != claim_id ||
+        claimed_jobs[0].claim->tool.name != "C++ worker" ||
+        claimed_jobs[0].claim->tool.version != std::string("1.0") ||
+        !claimed_jobs[0].claim->agent.has_value() ||
+        claimed_jobs[0].claim->agent->name != std::string("operator") ||
+        claimed_jobs[0].claim->expires_at_unix_micros != 20) {
+      return 34;
+    }
+
+    auto renew = reopened.beginTransaction();
+    renew.renewJobClaim(job_id, claim_id, 11, 30);
+    renew.commit();
+    auto release = reopened.beginTransaction();
+    release.releaseJobClaim(job_id, claim_id);
+    release.commit();
+
+    auto second_claim = reopened.beginTransaction();
+    const auto second_claim_id = second_claim.claimJob(
+        job_id, {"C++ worker", std::nullopt, std::nullopt}, std::nullopt, 31,
+        40);
+    second_claim.commit();
+    auto fail = reopened.beginTransaction();
+    fail.failJob(job_id, second_claim_id, 32, "encoder exited");
+    fail.commit();
+
+    auto second_request = reopened.beginTransaction();
+    const auto cancelled_job_id = second_request.requestJob(
+        {"org.postproject:generate-thumbnail",
+         {resolutions[0].representation_id}, asset_id,
+         postproject::RepresentationKind::derived, std::nullopt});
+    second_request.commit();
+    auto cancel = reopened.beginTransaction();
+    cancel.cancelJob(cancelled_job_id);
+    cancel.commit();
+
+    const auto final_jobs = reopened.jobs();
+    const auto failed_job = std::find_if(
+        final_jobs.begin(), final_jobs.end(),
+        [&](const postproject::Job &candidate) { return candidate.id == job_id; });
+    const auto cancelled_job = std::find_if(
+        final_jobs.begin(), final_jobs.end(), [&](const postproject::Job &candidate) {
+          return candidate.id == cancelled_job_id;
+        });
+    if (final_jobs.size() != 2 || failed_job == final_jobs.end() ||
+        failed_job->state != postproject::JobState::failed ||
+        failed_job->claim.has_value() ||
+        failed_job->failure_diagnostic != std::string("encoder exited") ||
+        cancelled_job == final_jobs.end() ||
+        cancelled_job->state != postproject::JobState::cancelled) {
+      return 35;
+    }
+
     try {
       static_cast<void>(postproject::Production::open(path + ".missing"));
       return 6;

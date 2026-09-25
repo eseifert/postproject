@@ -1841,6 +1841,95 @@ public:
     return detail::uuid(job_id);
   }
 
+  Uuid claimJob(const Uuid &job_id, const ToolIdentity &tool,
+                const std::optional<AgentIdentity> &agent,
+                std::int64_t now_unix_micros,
+                std::int64_t expires_at_unix_micros) {
+    const pp_uuid_t native_job_id = detail::native_uuid(job_id);
+    const std::string tool_name =
+        detail::checked_string(tool.name, "tool name");
+    const std::optional<std::string> tool_version =
+        detail::checked_optional_string(tool.version, "tool version");
+    const std::optional<std::string> tool_uri =
+        detail::checked_optional_string(tool.uri, "tool URI");
+    const std::optional<std::string> agent_name =
+        agent.has_value()
+            ? detail::checked_optional_string(agent->name, "agent name")
+            : std::nullopt;
+    const std::optional<ExternalIdentifier> identifier =
+        agent.has_value() ? agent->identifier : std::nullopt;
+    const std::optional<std::string> agent_scheme =
+        identifier.has_value()
+            ? std::optional<std::string>(detail::checked_string(
+                  identifier->scheme, "agent identifier scheme"))
+            : std::nullopt;
+    const std::optional<std::string> agent_value =
+        identifier.has_value()
+            ? std::optional<std::string>(detail::checked_string(
+                  identifier->value, "agent identifier value"))
+            : std::nullopt;
+    const std::optional<std::string> agent_qualifier =
+        identifier.has_value()
+            ? detail::checked_optional_string(identifier->qualifier,
+                                              "agent identifier qualifier")
+            : std::nullopt;
+    pp_uuid_t claim_id{};
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_claim_job(
+        transaction_, &native_job_id, tool_name.c_str(),
+        tool_version.has_value() ? tool_version->c_str() : nullptr,
+        tool_uri.has_value() ? tool_uri->c_str() : nullptr,
+        agent_name.has_value() ? agent_name->c_str() : nullptr,
+        agent_scheme.has_value() ? agent_scheme->c_str() : nullptr,
+        agent_value.has_value() ? agent_value->c_str() : nullptr,
+        agent_qualifier.has_value() ? agent_qualifier->c_str() : nullptr,
+        now_unix_micros, expires_at_unix_micros, &claim_id, &error);
+    detail::throw_if_error(status, error);
+    return detail::uuid(claim_id);
+  }
+
+  void renewJobClaim(const Uuid &job_id, const Uuid &claim_id,
+                     std::int64_t now_unix_micros,
+                     std::int64_t expires_at_unix_micros) {
+    const pp_uuid_t native_job_id = detail::native_uuid(job_id);
+    const pp_uuid_t native_claim_id = detail::native_uuid(claim_id);
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_renew_job_claim(
+        transaction_, &native_job_id, &native_claim_id, now_unix_micros,
+        expires_at_unix_micros, &error);
+    detail::throw_if_error(status, error);
+  }
+
+  void releaseJobClaim(const Uuid &job_id, const Uuid &claim_id) {
+    const pp_uuid_t native_job_id = detail::native_uuid(job_id);
+    const pp_uuid_t native_claim_id = detail::native_uuid(claim_id);
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_release_job_claim(
+        transaction_, &native_job_id, &native_claim_id, &error);
+    detail::throw_if_error(status, error);
+  }
+
+  void failJob(const Uuid &job_id, const Uuid &claim_id,
+               std::int64_t now_unix_micros, std::string_view diagnostic) {
+    const pp_uuid_t native_job_id = detail::native_uuid(job_id);
+    const pp_uuid_t native_claim_id = detail::native_uuid(claim_id);
+    const std::string native_diagnostic =
+        detail::checked_string(diagnostic, "job failure diagnostic");
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_fail_job(
+        transaction_, &native_job_id, &native_claim_id, now_unix_micros,
+        native_diagnostic.c_str(), &error);
+    detail::throw_if_error(status, error);
+  }
+
+  void cancelJob(const Uuid &job_id) {
+    const pp_uuid_t native_job_id = detail::native_uuid(job_id);
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_transaction_cancel_job(transaction_, &native_job_id, &error);
+    detail::throw_if_error(status, error);
+  }
+
   Uuid createActivity(const ActivitySpec &spec) {
     const std::string kind = detail::checked_string(spec.kind, "kind");
     std::vector<pp_activity_edge_t> inputs;
