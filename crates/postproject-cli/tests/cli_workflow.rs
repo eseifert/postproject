@@ -738,6 +738,10 @@ fn manages_media_root_lifecycle() {
     assert_eq!(disabled["id"], root_id);
     assert_eq!(disabled["enabled"], false);
     assert_eq!(run_json(&["root", "list", production])[0]["enabled"], false);
+    let events = latest_revision_events(production);
+    assert_eq!(events[0]["kind"], "media_root_enabled_changed");
+    assert_eq!(events[0]["media_root_id"], root_id);
+    assert_eq!(events[0]["enabled"], false);
 
     let enabled = run_json(&["root", "enable", production, root_id]);
     assert_eq!(enabled["id"], root_id);
@@ -745,6 +749,9 @@ fn manages_media_root_lifecycle() {
 
     let removed = run_json(&["root", "remove", production, root_id]);
     assert_eq!(removed["id"], root_id);
+    let events = latest_revision_events(production);
+    assert_eq!(events[0]["kind"], "media_root_removed");
+    assert_eq!(events[0]["media_root_id"], root_id);
     assert!(
         run_json(&["root", "list", production])
             .as_array()
@@ -772,6 +779,9 @@ fn retires_resource_locator() {
 
     let retired = run_json(&["locator", "retire", production, locator_id]);
     assert_eq!(retired["id"], locator_id);
+    let events = latest_revision_events(production);
+    assert_eq!(events[0]["kind"], "locator_retired");
+    assert_eq!(events[0]["locator_id"], locator_id);
 
     let shown = run_json(&["media", "show", production, asset_id]);
     assert!(
@@ -1099,4 +1109,10 @@ fn assert_job_query_pagination(production_path: &str) {
     let succeeded = run_json(&["job", "list", production_path, "--state", "succeeded"]);
     assert_eq!(succeeded["items"].as_array().expect("items").len(), 1);
     assert_eq!(succeeded["items"][0]["state"], "succeeded");
+}
+
+fn latest_revision_events(production: &str) -> Value {
+    let revision = run_json(&["revisions", "latest", production]);
+    let revision_id = revision["id"].as_str().expect("revision ID");
+    run_json(&["revisions", "events", production, revision_id])
 }

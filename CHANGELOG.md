@@ -101,6 +101,11 @@ Development version: `0.4.0-alpha.1`.
 - Moved the repository and its integration repositories to the
   `postproject-org` GitHub organization; `eseifert/postproject` URLs redirect.
 
+### Fixed
+
+- `postproject revisions events` now prints locator-retirement, media-root
+  enablement, and media-root removal events instead of failing on them.
+
 ## 0.3.0-alpha.2 - 2026-09-24
 
 ### Changed

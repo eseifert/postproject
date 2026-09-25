@@ -1594,7 +1594,18 @@ enum RevisionEventKindView {
         resource_id: String,
         locator_id: String,
     },
+    LocatorRetired {
+        resource_id: String,
+        locator_id: String,
+    },
     MediaRootAdded {
+        media_root_id: String,
+    },
+    MediaRootEnabledChanged {
+        media_root_id: String,
+        enabled: bool,
+    },
+    MediaRootRemoved {
         media_root_id: String,
     },
     ExternalIdentifierAdded {
@@ -4527,8 +4538,27 @@ fn revision_event_view(event: &RevisionEvent) -> Result<RevisionEventView> {
             resource_id: resource_id.to_string(),
             locator_id: locator_id.to_string(),
         },
+        RevisionEventKind::LocatorRetired {
+            resource_id,
+            locator_id,
+        } => RevisionEventKindView::LocatorRetired {
+            resource_id: resource_id.to_string(),
+            locator_id: locator_id.to_string(),
+        },
         RevisionEventKind::MediaRootAdded { media_root_id } => {
             RevisionEventKindView::MediaRootAdded {
+                media_root_id: media_root_id.to_string(),
+            }
+        }
+        RevisionEventKind::MediaRootEnabledChanged {
+            media_root_id,
+            enabled,
+        } => RevisionEventKindView::MediaRootEnabledChanged {
+            media_root_id: media_root_id.to_string(),
+            enabled: *enabled,
+        },
+        RevisionEventKind::MediaRootRemoved { media_root_id } => {
+            RevisionEventKindView::MediaRootRemoved {
                 media_root_id: media_root_id.to_string(),
             }
         }
