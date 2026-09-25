@@ -20,6 +20,11 @@ read media files, resolve locations, compute fingerprints, enqueue work, or
 change the production. A caller records a new fingerprint observation
 explicitly before evaluation can account for changed content.
 
+Required [dependency relationships](dependencies.md) are captured with an
+activity input. A changed dependency path or fingerprint can therefore make a
+generated artifact stale without classifying the referencing source itself as
+stale.
+
 ## Explanations and bounds
 
 Every non-current evaluation includes structured reasons. Depending on the

@@ -42,6 +42,8 @@ src/concepts/assets-representations-locators
 src/concepts/external-identifiers
 src/concepts/metadata
 src/concepts/provenance
+src/concepts/dependencies
+src/concepts/artifact-knowledge
 src/concepts/rational-time
 src/concepts/revisions-and-events
 src/concepts/standards-boundaries
