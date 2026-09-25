@@ -9,6 +9,55 @@ use postproject_core::{
 };
 use postproject_media::{fingerprint_representation, prepare_original_media};
 use postproject_storage_sqlite::SqliteProduction;
+use rusqlite::Connection;
+
+#[test]
+fn legacy_activity_inputs_report_absent_dependency_evidence() {
+    let directory = tempfile::tempdir().expect("create fixture directory");
+    let production_path = directory.path().join("legacy-dependency-snapshot.pproj");
+    let paths = ["source.mov", "output.mov"].map(|name| directory.path().join(name));
+    for (index, path) in paths.iter().enumerate() {
+        fs::write(path, format!("media-{index}")).expect("write media fixture");
+    }
+    let imports =
+        paths.map(|path| prepare_original_media(path, None, None).expect("prepare media fixture"));
+    let source_id = imports[0].representation().id();
+    let output_id = imports[1].representation().id();
+    let mut production = SqliteProduction::create(&production_path, None).expect("create");
+    let mut transaction = production.begin_transaction().expect("begin setup");
+    for import in &imports {
+        transaction.import_original(import).expect("stage import");
+    }
+    transaction.commit().expect("commit imports");
+    drop(transaction);
+    create_activity(
+        &mut production,
+        source_id,
+        output_id,
+        "org.postproject:derive",
+    );
+    assert_eq!(
+        evaluate(&production, output_id).state(),
+        ArtifactKnowledgeState::Current
+    );
+    drop(production);
+
+    let connection = Connection::open(&production_path).expect("open raw fixture");
+    connection
+        .execute("DELETE FROM activity_input_dependency_snapshots", [])
+        .expect("simulate pre-dependency activity");
+    drop(connection);
+    let production = SqliteProduction::open(&production_path).expect("reopen fixture");
+    let evaluation = evaluate(&production, output_id);
+    assert_eq!(evaluation.state(), ArtifactKnowledgeState::Indeterminate);
+    assert!(evaluation.reasons().iter().any(|reason| matches!(
+        reason,
+        ArtifactKnowledgeReason::DependencySnapshotAbsent {
+            representation_id,
+            ..
+        } if *representation_id == source_id
+    )));
+}
 
 #[test]
 #[allow(

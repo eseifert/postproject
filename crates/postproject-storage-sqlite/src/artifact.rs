@@ -10,7 +10,7 @@ use postproject_core::{
 };
 use rusqlite::params;
 
-use crate::{SqliteProduction, sqlite_error};
+use crate::{SqliteProduction, dependency_evaluation::evaluate_input_dependencies, sqlite_error};
 
 #[derive(Clone)]
 struct NodeEvaluation {
@@ -222,6 +222,9 @@ impl SqliteProduction {
                 ArtifactEdgeKind::Input,
                 &mut evaluation,
             )?;
+            let dependency_evaluation = evaluate_input_dependencies(self, activity, input)?;
+            promote_state(&mut evaluation.state, dependency_evaluation.state);
+            evaluation.reasons.extend(dependency_evaluation.reasons);
             if !self.activities_producing(input_id)?.is_empty() {
                 let upstream = self.evaluate_artifact_node(input_id, depth + 1, context)?;
                 if upstream.state != ArtifactKnowledgeState::Current {
