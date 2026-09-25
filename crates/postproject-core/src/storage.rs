@@ -5,10 +5,10 @@ use crate::{
     ArtifactReproducibilityReport, Asset, AssetId, Dependency, DependencySet, DependencyTarget,
     ExternalIdentifier, IdentifierScheme, Job, JobClaim, JobClaimId, JobFailure, JobId, Locator,
     MediaRoot, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, Production, Representation, RepresentationFingerprint, RepresentationId,
-    RepresentationImport, Resource, ResourceFingerprint, ResourceId, Result, Revision,
-    RevisionContext, RevisionEvent, RevisionId, Timestamp, ToolIdentity, TransactionId,
-    TransactionState,
+    OriginalMediaImport, Production, RegenerationJobPlan, Representation,
+    RepresentationFingerprint, RepresentationId, RepresentationImport, Resource,
+    ResourceFingerprint, ResourceId, Result, Revision, RevisionContext, RevisionEvent, RevisionId,
+    Timestamp, ToolIdentity, TransactionId, TransactionState,
 };
 
 /// Read operations required from a production persistence backend.
@@ -203,6 +203,22 @@ pub trait ProductionRead {
     /// Returns a not-found error when the job is absent, or a storage-domain
     /// error when its persisted data cannot be decoded safely.
     fn job(&self, job_id: JobId) -> Result<Job>;
+
+    /// Derives non-persisted job requests for existing artifacts.
+    ///
+    /// Each artifact must have exactly one producing activity. The plan copies
+    /// that activity's kind, distinct input representations, and typed metadata
+    /// parameters. The caller explicitly enqueues any returned plan.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the request is excessive, an artifact is
+    /// absent, its producing activity is missing or ambiguous, or persisted
+    /// activity/metadata data cannot be decoded safely.
+    fn plan_regeneration(
+        &self,
+        representation_ids: &[RepresentationId],
+    ) -> Result<Vec<RegenerationJobPlan>>;
 
     /// Returns the newest durable revision, or `None` for an empty journal.
     ///

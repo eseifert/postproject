@@ -26,13 +26,13 @@ use postproject_core::{
     DependencySet, DependencySetStatus, DependencyTarget, Error, ErrorKind, ExternalIdentifier,
     FileFacts, FingerprintSnapshot, FrameRange, IdentifierScheme, ImageSequenceDescriptor,
     ImageSequencePattern, Job, JobClaim, JobClaimId, JobCompletion, JobFailure, JobId, JobKind,
-    JobState, Locator, LocatorAvailability, LocatorId, MAX_REVISION_PAGE_SIZE, MediaRoot,
-    MediaRootId, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
-    OriginIdentity, Production, ProductionId, ProductionRead, ProductionStore, PropertyId,
-    RationalRate, Representation, RepresentationFingerprint, RepresentationId, RepresentationKind,
-    RequestedJobOutput, Resource, ResourceFingerprint, ResourceId, ResourceMember, ResourceRole,
-    Result, Revision, RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity,
-    TransactionId, VocabularyId,
+    JobState, Locator, LocatorAvailability, LocatorId, MAX_REGENERATION_PLANS,
+    MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
+    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, Production, ProductionId,
+    ProductionRead, ProductionStore, PropertyId, RationalRate, RegenerationJobPlan, Representation,
+    RepresentationFingerprint, RepresentationId, RepresentationKind, RequestedJobOutput, Resource,
+    ResourceFingerprint, ResourceId, ResourceMember, ResourceRole, Result, Revision, RevisionEvent,
+    RevisionEventKind, RevisionId, Timestamp, ToolIdentity, TransactionId, VocabularyId,
 };
 use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
 
@@ -1056,6 +1056,63 @@ impl SqliteProduction {
         decode_job(&self.connection, stored)
     }
 
+    /// Derives non-persisted requests that would regenerate existing artifacts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] for an excessive request,
+    /// [`ErrorKind::NotFound`] for an absent artifact, [`ErrorKind::Conflict`]
+    /// when an artifact lacks exactly one producer, or a storage-domain error.
+    pub fn plan_regeneration(
+        &self,
+        representation_ids: &[RepresentationId],
+    ) -> Result<Vec<RegenerationJobPlan>> {
+        if representation_ids.len() > MAX_REGENERATION_PLANS {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                format!("regeneration planning accepts at most {MAX_REGENERATION_PLANS} artifacts"),
+            ));
+        }
+        let mut representation_ids = representation_ids.to_vec();
+        representation_ids.sort_unstable();
+        representation_ids.dedup();
+        representation_ids
+            .into_iter()
+            .map(|representation_id| {
+                let representation = self.load_representation_by_id(representation_id)?;
+                let producers = self.activities_producing(representation_id)?;
+                let [activity] = producers.as_slice() else {
+                    return Err(Error::new(
+                        ErrorKind::Conflict,
+                        format!(
+                            "artifact {representation_id} must have exactly one producing activity"
+                        ),
+                    ));
+                };
+                let mut inputs = activity
+                    .inputs()
+                    .iter()
+                    .map(ActivityInput::representation_id)
+                    .collect::<Vec<_>>();
+                inputs.sort_unstable();
+                inputs.dedup();
+                let output = RequestedJobOutput::new(
+                    representation.asset_id(),
+                    representation.kind(),
+                    None,
+                )?;
+                let job = Job::new(
+                    JobId::new(),
+                    JobKind::new(activity.kind().as_str())?,
+                    inputs,
+                    output,
+                )?;
+                let parameters = self.metadata(ObjectRef::Activity(activity.id()))?;
+                Ok(RegenerationJobPlan::new(representation_id, job, parameters))
+            })
+            .collect()
+    }
+
     /// Returns the newest durable revision, if the journal is non-empty.
     ///
     /// # Errors
@@ -1372,6 +1429,13 @@ impl ProductionRead for SqliteProduction {
 
     fn job(&self, job_id: JobId) -> Result<Job> {
         SqliteProduction::job(self, job_id)
+    }
+
+    fn plan_regeneration(
+        &self,
+        representation_ids: &[RepresentationId],
+    ) -> Result<Vec<RegenerationJobPlan>> {
+        SqliteProduction::plan_regeneration(self, representation_ids)
     }
 
     fn latest_revision(&self) -> Result<Option<Revision>> {

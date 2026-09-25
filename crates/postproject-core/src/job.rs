@@ -2,7 +2,7 @@
 
 use crate::{
     ActivityId, AgentIdentity, AssetId, Error, ErrorKind, JobClaimId, JobId, MediaRoot,
-    RepresentationId, RepresentationKind, Result, Timestamp, ToolIdentity,
+    MetadataAssertion, RepresentationId, RepresentationKind, Result, Timestamp, ToolIdentity,
 };
 
 /// Maximum encoded length of a namespaced job-kind identifier.
@@ -11,6 +11,8 @@ pub const MAX_JOB_KIND_BYTES: usize = 128;
 pub const MAX_JOB_INPUTS: usize = 100_000;
 /// Maximum UTF-8 byte length of a failure diagnostic.
 pub const MAX_JOB_DIAGNOSTIC_BYTES: usize = 4_096;
+/// Maximum artifacts accepted by one regeneration-planning call.
+pub const MAX_REGENERATION_PLANS: usize = 100_000;
 
 /// An open-world, namespaced kind of requested work.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -270,6 +272,49 @@ pub struct Job {
     inputs: Vec<RepresentationId>,
     requested_output: RequestedJobOutput,
     state: JobState,
+}
+
+/// A non-persisted job request and copied parameters for one artifact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegenerationJobPlan {
+    artifact_representation_id: RepresentationId,
+    job: Job,
+    parameters: Vec<MetadataAssertion>,
+}
+
+impl RegenerationJobPlan {
+    /// Creates a backend-derived regeneration plan without enqueuing it.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new(
+        artifact_representation_id: RepresentationId,
+        job: Job,
+        parameters: Vec<MetadataAssertion>,
+    ) -> Self {
+        Self {
+            artifact_representation_id,
+            job,
+            parameters,
+        }
+    }
+
+    /// Returns the existing artifact this request would regenerate.
+    #[must_use]
+    pub const fn artifact_representation_id(&self) -> RepresentationId {
+        self.artifact_representation_id
+    }
+
+    /// Returns the requested job, which has not been persisted.
+    #[must_use]
+    pub const fn job(&self) -> &Job {
+        &self.job
+    }
+
+    /// Returns activity parameter assertions copied for the future job target.
+    #[must_use]
+    pub fn parameters(&self) -> &[MetadataAssertion] {
+        &self.parameters
+    }
 }
 
 impl Job {

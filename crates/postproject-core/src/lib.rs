@@ -55,7 +55,8 @@ pub use identifier_registry::{
 };
 pub use job::{
     Job, JobClaim, JobCompletion, JobFailure, JobKind, JobState, JobStateKind,
-    MAX_JOB_DIAGNOSTIC_BYTES, MAX_JOB_INPUTS, MAX_JOB_KIND_BYTES, RequestedJobOutput,
+    MAX_JOB_DIAGNOSTIC_BYTES, MAX_JOB_INPUTS, MAX_JOB_KIND_BYTES, MAX_REGENERATION_PLANS,
+    RegenerationJobPlan, RequestedJobOutput,
 };
 pub use metadata::{
     DecimalValue, MAX_LANGUAGE_TAG_BYTES, MAX_METADATA_BINARY_BYTES, MAX_METADATA_COLLECTION_ITEMS,
