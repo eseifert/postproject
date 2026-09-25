@@ -35,6 +35,11 @@ Development version: `0.4.0-alpha.1`.
   Triggers maintain them on every write path, and migration backfills them from
   existing knowledge, so those pages read rows proportional to the page rather
   than to the production.
+- Added a `release_0_4_queries` benchmark that measures one page of each domain
+  query on the 10,000-asset fixture. The fixture generator now records logical
+  roots, sparse unresolved media, snapshotted transcodes with a stale fraction,
+  and journal events spread over every asset; delete a cached fixture from an
+  earlier generator version before rerunning.
 - Added SQLite schema 11 query indexes and optional durable logical-root
   knowledge on confirmed locators. Existing locators migrate without fabricated
   root knowledge.

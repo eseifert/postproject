@@ -9,6 +9,15 @@ const ASSETS: u64 = 10_000;
 const REPRESENTATIONS_PER_ASSET: u64 = 10;
 const METADATA_PER_ASSET: u64 = 100;
 const REVISIONS: u64 = 100_000;
+const GENERATOR_VERSION: i64 = 2;
+/// First asset whose representations carry a generated transcode activity.
+const TRANSCODE_FIRST_ASSET: u64 = 300;
+/// Every Nth transcode snapshots an input fingerprint that is no longer current.
+const STALE_TRANSCODE_INTERVAL: u64 = 100;
+/// Every Nth representation's resources have no durable locator.
+const UNRESOLVED_REPRESENTATION_INTERVAL: u64 = 1_000;
+/// Every Nth representation's locators predate logical-root knowledge.
+const ROOTLESS_REPRESENTATION_INTERVAL: u64 = 10;
 
 fn main() {
     let path = env::var_os("POSTPROJECT_BENCH_FIXTURE").map_or_else(
@@ -57,8 +66,20 @@ fn populate(path: &PathBuf, seed: &str) {
         )
         .expect("create fixture marker");
     transaction
-        .execute("INSERT INTO benchmark_fixture VALUES (1, ?1, 1)", [seed])
+        .execute(
+            "INSERT INTO benchmark_fixture VALUES (1, ?1, ?2)",
+            params![seed, GENERATOR_VERSION],
+        )
         .expect("record fixture seed");
+    transaction
+        .execute(
+            "INSERT INTO media_roots (id, name, label, priority, enabled)
+             VALUES (?1, 'media', 'Benchmark media', 0, 1)",
+            [stable_id(seed, b'm', 0)],
+        )
+        .expect("insert fixture media root");
+    let mut representation_digests =
+        Vec::with_capacity(usize::try_from(ASSETS * REPRESENTATIONS_PER_ASSET).unwrap());
 
     for asset_index in 0..ASSETS {
         let asset_id = stable_id(seed, b'a', asset_index);
@@ -75,12 +96,12 @@ fn populate(path: &PathBuf, seed: &str) {
             .expect("insert fixture asset");
         for local_index in 0..REPRESENTATIONS_PER_ASSET {
             let representation_index = asset_index * REPRESENTATIONS_PER_ASSET + local_index;
-            insert_representation(
+            representation_digests.push(insert_representation(
                 &transaction,
                 seed,
                 asset_id.as_slice(),
                 representation_index,
-            );
+            ));
         }
         for property_index in 0..METADATA_PER_ASSET {
             let value = asset_index * METADATA_PER_ASSET + property_index;
@@ -99,6 +120,7 @@ fn populate(path: &PathBuf, seed: &str) {
         }
     }
     insert_provenance(&transaction, seed);
+    insert_transcodes(&transaction, seed, &representation_digests);
     insert_revisions(&transaction, seed);
     transaction.commit().expect("commit fixture population");
     connection
@@ -106,12 +128,16 @@ fn populate(path: &PathBuf, seed: &str) {
         .expect("finalize fixture database");
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one representation's resources, memberships, locators, and fingerprints are written together"
+)]
 fn insert_representation(
     transaction: &rusqlite::Transaction<'_>,
     seed: &str,
     asset_id: &[u8],
     index: u64,
-) {
+) -> [u8; 32] {
     let representation_id = stable_id(seed, b'p', index);
     let structure_kind = i64::try_from(index % 4).unwrap();
     let representation_kind = if index % REPRESENTATIONS_PER_ASSET == 0 {
@@ -180,17 +206,24 @@ fn insert_representation(
                 ],
             )
             .expect("insert fixture membership");
-        transaction
-            .execute(
-                "INSERT INTO locators (id, resource_id, uri, last_seen_micros, availability)
-                 VALUES (?1, ?2, ?3, 0, 1)",
-                params![
-                    locator_id,
-                    resource_id,
-                    format!("root://media/{index:06}/{member_index}.mov")
-                ],
-            )
-            .expect("insert fixture locator");
+        if index % UNRESOLVED_REPRESENTATION_INTERVAL != UNRESOLVED_REPRESENTATION_INTERVAL - 1 {
+            let media_root = (index % ROOTLESS_REPRESENTATION_INTERVAL
+                != ROOTLESS_REPRESENTATION_INTERVAL - 1)
+                .then_some("media");
+            transaction
+                .execute(
+                    "INSERT INTO locators (
+                        id, resource_id, uri, last_seen_micros, availability, media_root_name
+                     ) VALUES (?1, ?2, ?3, 0, 1, ?4)",
+                    params![
+                        locator_id,
+                        resource_id,
+                        format!("root://media/{index:06}/{member_index}.mov"),
+                        media_root
+                    ],
+                )
+                .expect("insert fixture locator");
+        }
         if structure_kind == 1 {
             transaction
                 .execute(
@@ -212,6 +245,7 @@ fn insert_representation(
             params![representation_id, digest.as_bytes().as_slice()],
         )
         .expect("insert fixture representation fingerprint");
+    *digest.as_bytes()
 }
 
 fn insert_provenance(transaction: &rusqlite::Transaction<'_>, seed: &str) {
@@ -258,9 +292,71 @@ fn insert_activity(
         .expect("insert fixture output");
 }
 
+/// Records one snapshotted transcode per asset from its original to its last
+/// derived representation; a fixed fraction snapshots a superseded input.
+fn insert_transcodes(transaction: &rusqlite::Transaction<'_>, seed: &str, digests: &[[u8; 32]]) {
+    for asset_index in TRANSCODE_FIRST_ASSET..ASSETS {
+        let input = asset_index * REPRESENTATIONS_PER_ASSET;
+        let output = input + REPRESENTATIONS_PER_ASSET - 1;
+        let activity_id = stable_id(seed, b'v', 10_000 + asset_index);
+        transaction
+            .execute(
+                "INSERT INTO activities (id, kind, tool_name, tool_version)
+                 VALUES (?1, 'org.postproject:transcode', 'ffmpeg', '7.1')",
+                [activity_id.as_slice()],
+            )
+            .expect("insert fixture transcode");
+        let stale = asset_index % STALE_TRANSCODE_INTERVAL == 0;
+        let input_digest = if stale {
+            *blake3::hash(format!("{seed}:superseded:{input}").as_bytes()).as_bytes()
+        } else {
+            digests[usize::try_from(input).unwrap()]
+        };
+        for (table, representation, digest) in [
+            ("activity_inputs", input, input_digest),
+            (
+                "activity_outputs",
+                output,
+                digests[usize::try_from(output).unwrap()],
+            ),
+        ] {
+            transaction
+                .execute(
+                    &format!(
+                        "INSERT INTO {table}
+                         (activity_id, representation_id, role, snapshot_revision_sequence)
+                         VALUES (?1, ?2, NULL, 1)"
+                    ),
+                    params![activity_id, stable_id(seed, b'p', representation)],
+                )
+                .expect("insert fixture transcode edge");
+            let edge = transaction.last_insert_rowid();
+            let snapshots = if table == "activity_inputs" {
+                "activity_input_fingerprint_snapshots"
+            } else {
+                "activity_output_fingerprint_snapshots"
+            };
+            let edge_column = if table == "activity_inputs" {
+                "activity_input_id"
+            } else {
+                "activity_output_id"
+            };
+            transaction
+                .execute(
+                    &format!(
+                        "INSERT INTO {snapshots} ({edge_column}, algorithm, algorithm_version, value)
+                         VALUES (?1, 'pp-blake3-representation', 1, ?2)"
+                    ),
+                    params![edge, digest.as_slice()],
+                )
+                .expect("insert fixture transcode snapshot");
+        }
+    }
+}
+
 fn insert_revisions(transaction: &rusqlite::Transaction<'_>, seed: &str) {
-    let target = stable_id(seed, b'a', 0);
     for sequence in 1..=REVISIONS {
+        let target = stable_id(seed, b'a', sequence % ASSETS);
         let stored_sequence = i64::try_from(sequence).expect("revision sequence fits SQLite");
         let revision_id = stable_id(seed, b'e', sequence);
         transaction
@@ -313,11 +409,26 @@ fn validate(path: &PathBuf, seed: &str) {
         )
         .expect("read fixture marker");
     assert_eq!(stored_seed, seed, "cached fixture uses another seed");
+    let generator_version: i64 = connection
+        .query_row(
+            "SELECT generator_version FROM benchmark_fixture WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read fixture generator version");
+    assert_eq!(
+        generator_version, GENERATOR_VERSION,
+        "cached fixture predates generator version {GENERATOR_VERSION}; delete it"
+    );
     for (table, minimum) in [
         ("assets", ASSETS),
         ("representations", ASSETS * REPRESENTATIONS_PER_ASSET),
         ("resources", ASSETS * REPRESENTATIONS_PER_ASSET),
-        ("locators", ASSETS * REPRESENTATIONS_PER_ASSET),
+        (
+            "locators",
+            ASSETS * REPRESENTATIONS_PER_ASSET
+                - ASSETS * REPRESENTATIONS_PER_ASSET / UNRESOLVED_REPRESENTATION_INTERVAL * 2,
+        ),
         ("metadata_assertions", ASSETS * METADATA_PER_ASSET),
         ("revisions", REVISIONS),
     ] {

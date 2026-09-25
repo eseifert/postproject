@@ -40,8 +40,12 @@ a timed benchmark. It creates the representative production used by the
   ordered-part, and package structures;
 - 1,000,000 typed metadata assertions;
 - fan-in, fan-out, and a provenance chain 50 activities deep;
-- 100,000 revisions with events;
-- real BLAKE3-shaped resource and representation fingerprint evidence.
+- 100,000 revisions whose events touch every asset;
+- real BLAKE3-shaped resource and representation fingerprint evidence;
+- a logical `media` root recorded on 90% of locators;
+- 100 sparse unresolved representations whose resources have no locator;
+- 9,700 snapshotted `org.postproject:transcode` activities by one exact tool,
+  of which 97 snapshot a superseded input and are therefore stale.
 
 The seed and cache path are explicit, and fixture construction is never part of
 the measured operation:
@@ -101,6 +105,56 @@ boost was enabled, and the machine was not isolated. The spread in several
 maximum samples is therefore scheduler noise; the medians are the comparison
 baseline. These numbers precede 0.4 pagination and set-oriented read-path
 changes and are informational, not release budgets.
+
+## Release 0.4 domain-query pages
+
+Every named query in schema 12 was measured for one page on the generator
+version 2 fixture, captured on 2026-09-25 with the schema 12 changes applied on
+top of commit `c6cecc0`:
+
+```sh
+cargo bench --locked -p postproject-storage-sqlite --bench large_fixture
+POSTPROJECT_BENCH_RUNS=5 \
+  cargo bench --locked -p postproject-storage-sqlite --bench release_0_4_queries
+```
+
+Each row reports five optimized samples of one page with a limit of 100, using a
+fresh open production handle, timing after the open, and a warm file cache.
+Items are the values returned; a continuation means another page exists.
+
+| Query page | Items | Continues | Median | Minimum | Maximum |
+| --- | ---: | :---: | ---: | ---: | ---: |
+| Assets | 100 | yes | 0.135 ms | 0.111 ms | 0.146 ms |
+| Representations of one asset | 10 | no | 0.749 ms | 0.683 ms | 1.172 ms |
+| Resources of one representation | 2 | no | 0.228 ms | 0.224 ms | 0.450 ms |
+| Locators of one resource | 1 | no | 0.111 ms | 0.106 ms | 0.116 ms |
+| Representations under a logical root | 100 | yes | 3.233 ms | 2.957 ms | 6.474 ms |
+| Unresolved media | 100 | no | 0.093 ms | 0.082 ms | 0.111 ms |
+| Objects carrying a metadata property | 100 | yes | 0.709 ms | 0.652 ms | 1.826 ms |
+| Metadata property with an exact value | 1 | no | 0.109 ms | 0.101 ms | 0.131 ms |
+| Outputs by activity kind | 100 | yes | 0.128 ms | 0.124 ms | 0.140 ms |
+| Outputs by exact tool | 100 | yes | 0.158 ms | 0.155 ms | 0.263 ms |
+| Activities producing one representation | 1 | no | 0.454 ms | 0.444 ms | 0.577 ms |
+| Activities consuming one representation | 100 | no | 8.838 ms | 8.505 ms | 9.121 ms |
+| Ancestors through a 50-deep chain | 50 | no | 2.176 ms | 2.072 ms | 2.206 ms |
+| Descendants through a 100-way fan-out | 100 | no | 3.706 ms | 3.645 ms | 3.807 ms |
+| Stale artifacts, whole production | 1 | yes | 122.481 ms | 83.426 ms | 130.288 ms |
+| Stale artifacts descending from one source | 1 | no | 1.009 ms | 0.952 ms | 1.274 ms |
+| Objects changed in the last 1,000 revisions | 100 | yes | 4.789 ms | 4.711 ms | 9.019 ms |
+
+Each page reads rows in proportion to its page, not to the production. Measured on
+the same fixture at schema 11, without the derived query-support tables, the
+unresolved-media page took 742 ms because it examined every membership to find
+100 sparse matches. Outputs by exact tool took 37 ms, and a logical root holding
+5 locators took 59 ms, for the same reason. Pages that return whole
+representations or activities cost more per item than pages that return
+identities. The stale-artifact page evaluates 100 candidate outputs, finds the
+one stale output among them, and continues. The changed-object page reads the
+journal suffix after its cursor.
+
+The run used Rust 1.98.1 on the machine described in the read-path baseline
+above, under the same unisolated conditions. These numbers are informational,
+not release budgets.
 
 ## Quick baseline
 
