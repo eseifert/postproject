@@ -9,10 +9,11 @@ use std::{
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, AgentIdentity, Asset,
     AssetId, ContentStructure, ErrorKind, ExternalIdentifier, IdentifierScheme, Job, JobFailure,
-    JobId, JobKind, JobState, Locator, LocatorAvailability, LocatorId, MediaRoot, MediaRootId,
-    MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, PropertyId, Representation,
-    RepresentationId, RepresentationImport, RepresentationKind, RequestedJobOutput, Resource,
-    ResourceId, RevisionEventKind, Timestamp, ToolIdentity, VocabularyId,
+    JobId, JobKind, JobQuery, JobState, JobStateKind, Locator, LocatorAvailability, LocatorId,
+    MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport,
+    PropertyId, QueryPageRequest, Representation, RepresentationId, RepresentationImport,
+    RepresentationKind, RequestedJobOutput, Resource, ResourceId, RevisionEventKind, Timestamp,
+    ToolIdentity, VocabularyId,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use tempfile::tempdir;
@@ -66,6 +67,111 @@ fn requested_job(source: &OriginalMediaImport) -> Job {
         .expect("valid requested output"),
     )
     .expect("valid job")
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one durable setup exercises paging, both filters, and cursor binding"
+)]
+fn job_queries_are_filtered_and_keyset_paginated() {
+    let directory = tempdir().expect("create temporary directory");
+    let mut production = SqliteProduction::create(directory.path().join("jobs.pproj"), None)
+        .expect("create production");
+    let source = source_import();
+    let proxy_kind = JobKind::new("org.postproject:generate-proxy").expect("kind");
+    let inspect_kind = JobKind::new("org.postproject:inspect-media").expect("kind");
+    let jobs = [
+        Job::new(
+            JobId::from_bytes([5; 16]),
+            proxy_kind.clone(),
+            vec![source.representation().id()],
+            RequestedJobOutput::new(source.asset().id(), RepresentationKind::Proxy, None)
+                .expect("output"),
+        )
+        .expect("job"),
+        Job::new(
+            JobId::from_bytes([6; 16]),
+            inspect_kind.clone(),
+            vec![source.representation().id()],
+            RequestedJobOutput::new(source.asset().id(), RepresentationKind::Derived, None)
+                .expect("output"),
+        )
+        .expect("job"),
+        Job::new(
+            JobId::from_bytes([7; 16]),
+            proxy_kind.clone(),
+            vec![source.representation().id()],
+            RequestedJobOutput::new(source.asset().id(), RepresentationKind::Proxy, None)
+                .expect("output"),
+        )
+        .expect("job"),
+    ];
+    {
+        let mut transaction = production.begin_transaction().expect("begin setup");
+        transaction.import_original(&source).expect("import source");
+        for job in &jobs {
+            transaction.request_job(job).expect("request job");
+        }
+        transaction.cancel_job(jobs[1].id()).expect("cancel job");
+        transaction.commit().expect("commit setup");
+    }
+
+    let query = JobQuery::default();
+    let mut cursor = None;
+    let mut ids = Vec::new();
+    loop {
+        let page = production
+            .query_jobs(
+                &query,
+                &QueryPageRequest::new(1, cursor).expect("page request"),
+            )
+            .expect("query jobs");
+        assert!(!page.traversal_truncated());
+        ids.extend(page.items().iter().map(Job::id));
+        cursor = page.next_cursor().cloned();
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(ids, jobs.iter().map(Job::id).collect::<Vec<_>>());
+
+    let requested_proxies = JobQuery::new(Some(JobStateKind::Requested), Some(proxy_kind));
+    let page = production
+        .query_jobs(
+            &requested_proxies,
+            &QueryPageRequest::new(10, None).expect("page request"),
+        )
+        .expect("query requested proxies");
+    assert_eq!(
+        page.items().iter().map(Job::id).collect::<Vec<_>>(),
+        [jobs[0].id(), jobs[2].id()]
+    );
+    assert!(page.next_cursor().is_none());
+
+    let cancelled = JobQuery::new(Some(JobStateKind::Cancelled), None);
+    let page = production
+        .query_jobs(
+            &cancelled,
+            &QueryPageRequest::new(10, None).expect("page request"),
+        )
+        .expect("query cancelled jobs");
+    assert_eq!(
+        page.items().iter().map(Job::id).collect::<Vec<_>>(),
+        [jobs[1].id()]
+    );
+
+    let first_page = production
+        .query_jobs(
+            &query,
+            &QueryPageRequest::new(1, None).expect("page request"),
+        )
+        .expect("query first page");
+    let mismatched = QueryPageRequest::new(1, first_page.next_cursor().cloned()).expect("page");
+    let error = production
+        .query_jobs(&requested_proxies, &mismatched)
+        .expect_err("cursor must include filters");
+    assert_eq!(error.kind(), ErrorKind::InvalidArgument);
 }
 
 #[test]

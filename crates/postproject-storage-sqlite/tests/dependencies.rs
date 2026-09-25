@@ -2,10 +2,10 @@
 
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, Asset, AssetId,
-    ContentStructure, Dependency, DependencyKind, DependencySetStatus, DependencyTarget, ErrorKind,
-    Locator, LocatorAvailability, LocatorId, OriginalMediaImport, Representation,
-    RepresentationFingerprint, RepresentationId, RepresentationKind, Resource, ResourceId,
-    RevisionEventKind, Timestamp,
+    ContentStructure, Dependency, DependencyKind, DependencyQueryLimits, DependencySetStatus,
+    DependencyTarget, ErrorKind, Locator, LocatorAvailability, LocatorId, OriginalMediaImport,
+    QueryPageRequest, Representation, RepresentationFingerprint, RepresentationId,
+    RepresentationKind, Resource, ResourceId, RevisionEventKind, Timestamp,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use rusqlite::Connection;
@@ -64,6 +64,199 @@ fn assert_direct_dependents(
             .expect("query representation dependents"),
         [source]
     );
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one graph scenario covers traversal, cycles, both directions, bounds, and cursors"
+)]
+fn dependency_queries_are_transitive_bounded_and_keyset_paginated() {
+    let directory = tempfile::tempdir().expect("create directory");
+    let path = directory.path().join("dependency-query.pproj");
+    let mut production = SqliteProduction::create(&path, None).expect("create production");
+    let first = media(1);
+    let second = media(2);
+    let third = media(3);
+    let fourth = media(4);
+    {
+        let mut transaction = production.begin_transaction().expect("begin setup");
+        for item in [&first, &second, &third, &fourth] {
+            transaction.import_original(item).expect("import media");
+        }
+        let first_dependencies = [
+            Dependency::new(
+                None,
+                DependencyKind::new("org.postproject:asset").expect("kind"),
+                DependencyTarget::Asset(second.asset().id()),
+                Some(second.representation().id()),
+                true,
+                "second.mov",
+            )
+            .expect("asset dependency"),
+            Dependency::new(
+                None,
+                DependencyKind::new("org.postproject:pinned").expect("kind"),
+                DependencyTarget::Representation(fourth.representation().id()),
+                None,
+                true,
+                "fourth.mov",
+            )
+            .expect("representation dependency"),
+        ];
+        transaction
+            .record_dependency_set(first.representation().id(), &first_dependencies)
+            .expect("record first dependencies");
+        transaction
+            .record_dependency_set(
+                second.representation().id(),
+                &[Dependency::new(
+                    None,
+                    DependencyKind::new("org.postproject:pinned").expect("kind"),
+                    DependencyTarget::Representation(third.representation().id()),
+                    None,
+                    true,
+                    "third.mov",
+                )
+                .expect("second dependency")],
+            )
+            .expect("record second dependencies");
+        transaction
+            .record_dependency_set(
+                third.representation().id(),
+                &[Dependency::new(
+                    None,
+                    DependencyKind::new("org.postproject:cycle").expect("kind"),
+                    DependencyTarget::Representation(first.representation().id()),
+                    None,
+                    true,
+                    "first.mov",
+                )
+                .expect("cycle dependency")],
+            )
+            .expect("record cycle");
+        transaction.commit().expect("commit setup");
+    }
+
+    let direct_limits = DependencyQueryLimits::new(1, 10).expect("direct limits");
+    let direct = production
+        .query_dependencies(
+            first.representation().id(),
+            direct_limits,
+            &QueryPageRequest::new(10, None).expect("page"),
+        )
+        .expect("query direct dependencies");
+    assert_eq!(
+        direct
+            .items()
+            .iter()
+            .map(|item| (item.target(), item.depth()))
+            .collect::<Vec<_>>(),
+        [
+            (DependencyTarget::Asset(second.asset().id()), 1),
+            (
+                DependencyTarget::Representation(fourth.representation().id()),
+                1,
+            ),
+        ]
+    );
+    assert!(direct.traversal_truncated());
+    assert!(direct.next_cursor().is_none());
+
+    let transitive_limits = DependencyQueryLimits::new(4, 10).expect("transitive limits");
+    let mut cursor = None;
+    let mut dependencies = Vec::new();
+    loop {
+        let page = production
+            .query_dependencies(
+                first.representation().id(),
+                transitive_limits,
+                &QueryPageRequest::new(1, cursor).expect("page"),
+            )
+            .expect("query dependency page");
+        assert!(!page.traversal_truncated());
+        dependencies.extend_from_slice(page.items());
+        cursor = page.next_cursor().cloned();
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(
+        dependencies
+            .iter()
+            .map(|item| (item.target(), item.depth()))
+            .collect::<Vec<_>>(),
+        [
+            (DependencyTarget::Asset(second.asset().id()), 1),
+            (
+                DependencyTarget::Representation(third.representation().id()),
+                2,
+            ),
+            (
+                DependencyTarget::Representation(fourth.representation().id()),
+                1,
+            ),
+        ]
+    );
+
+    let cycle_boundary = production
+        .query_dependencies(
+            first.representation().id(),
+            DependencyQueryLimits::new(2, 10).expect("cycle boundary limits"),
+            &QueryPageRequest::new(10, None).expect("page"),
+        )
+        .expect("query cycle boundary");
+    assert!(!cycle_boundary.traversal_truncated());
+    assert_eq!(cycle_boundary.items(), dependencies);
+
+    let dependents = production
+        .query_dependents(
+            DependencyTarget::Representation(third.representation().id()),
+            transitive_limits,
+            &QueryPageRequest::new(10, None).expect("page"),
+        )
+        .expect("query transitive dependents");
+    assert_eq!(
+        dependents
+            .items()
+            .iter()
+            .map(|item| (item.target(), item.depth()))
+            .collect::<Vec<_>>(),
+        [
+            (
+                DependencyTarget::Representation(first.representation().id()),
+                2,
+            ),
+            (
+                DependencyTarget::Representation(second.representation().id()),
+                1,
+            ),
+        ]
+    );
+    assert!(!dependents.traversal_truncated());
+
+    let first_page = production
+        .query_dependencies(
+            first.representation().id(),
+            transitive_limits,
+            &QueryPageRequest::new(1, None).expect("page"),
+        )
+        .expect("query first page");
+    let mismatched = QueryPageRequest::new(1, first_page.next_cursor().cloned()).expect("page");
+    let error = production
+        .query_dependencies(second.representation().id(), transitive_limits, &mismatched)
+        .expect_err("cursor must be query-scoped");
+    assert_eq!(error.kind(), ErrorKind::InvalidArgument);
+
+    let representation_bound = DependencyQueryLimits::new(4, 1).expect("bounded limits");
+    let bounded = production
+        .query_dependencies(
+            first.representation().id(),
+            representation_bound,
+            &QueryPageRequest::new(10, None).expect("page"),
+        )
+        .expect("query bounded dependencies");
+    assert!(bounded.traversal_truncated());
 }
 
 #[test]
