@@ -528,6 +528,26 @@ int main(int argc, char **argv) {
       return 36;
     }
 
+    const auto regeneration_plans = reopened.planRegeneration(
+        {resolutions[0].representation_id, resolutions[0].representation_id});
+    if (regeneration_plans.size() != 1 ||
+        regeneration_plans[0].artifact_representation_id !=
+            resolutions[0].representation_id ||
+        regeneration_plans[0].job.kind != "org.postproject:ingest" ||
+        !regeneration_plans[0].job.inputs.empty() ||
+        regeneration_plans[0].job.output_asset_id != asset_id ||
+        regeneration_plans[0].job.output_representation_kind !=
+            postproject::RepresentationKind::original ||
+        regeneration_plans[0].job.state !=
+            postproject::JobState::requested ||
+        regeneration_plans[0].parameters.size() != 1 ||
+        regeneration_plans[0].parameters[0].vocabulary !=
+            "com.example.ingest" ||
+        regeneration_plans[0].parameters[0].property != "details" ||
+        reopened.jobs().size() != 3) {
+      return 37;
+    }
+
     try {
       static_cast<void>(postproject::Production::open(path + ".missing"));
       return 6;
