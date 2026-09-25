@@ -11,15 +11,16 @@ use postproject_core::{
     ArtifactDependencyIssue, ArtifactDependencyPathSegment, ArtifactEdgeKind,
     ArtifactEvaluationLimits, ArtifactKnowledgeReason, ArtifactKnowledgeState,
     ArtifactReproducibilityIssue, ArtifactTraversalLimitKind, Asset, AssetId, AvailabilityIssue,
-    AvailabilityIssueKind, DecimalValue, DependencyTarget, EvidenceKind, ExternalIdentifier,
-    FrameRange, IdentifierScheme, ImageSequencePattern, Locator, LocatorAvailability, LocatorId,
-    MediaRoot, MediaRootId, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
-    MetadataValueKind, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId,
-    ProductionStoreTransaction, PropertyId, RationalRate, RationalValue, Representation,
-    RepresentationAvailability, RepresentationId, RepresentationKind, RepresentationResolution,
-    ResolutionEvidence, Resource, ResourceId, ResourceResolution, ResourceResolutionState,
-    ResourceRole, Revision, RevisionContext, RevisionEvent, RevisionEventKind, RevisionId,
-    Timestamp, ToolIdentity, VocabularyId,
+    AvailabilityIssueKind, DecimalValue, Dependency, DependencySet, DependencySetStatus,
+    DependencyTarget, EvidenceKind, ExternalIdentifier, FrameRange, IdentifierScheme,
+    ImageSequencePattern, Locator, LocatorAvailability, LocatorId, MediaRoot, MediaRootId,
+    MetadataAssertion, MetadataField, MetadataProperty, MetadataValue, MetadataValueKind,
+    ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId, ProductionStoreTransaction,
+    PropertyId, RationalRate, RationalValue, Representation, RepresentationAvailability,
+    RepresentationId, RepresentationKind, RepresentationResolution, ResolutionEvidence, Resource,
+    ResourceId, ResourceResolution, ResourceResolutionState, ResourceRole, Revision,
+    RevisionContext, RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity,
+    VocabularyId,
 };
 use postproject_media::{
     FfprobeInspector, FileResourceSource, ImageSequenceSource, InspectionOutcome,
@@ -62,6 +63,8 @@ enum Command {
     Metadata(MetadataArgs),
     /// Inspect production provenance activities.
     Activity(ActivityArgs),
+    /// Inspect representation dependencies.
+    Dependency(DependencyArgs),
     /// Evaluate managed artifacts from recorded production knowledge.
     Artifact(ArtifactArgs),
     /// Inspect the durable semantic change journal.
@@ -508,6 +511,34 @@ struct ActivityRepresentationArgs {
 }
 
 #[derive(Debug, Args)]
+struct DependencyArgs {
+    #[command(subcommand)]
+    command: DependencyCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum DependencyCommand {
+    /// Show one representation's complete dependency observation.
+    Show(ActivityRepresentationArgs),
+    /// List representations that directly depend on an asset or representation.
+    Dependents(DependencyTargetArgs),
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DependencyTargetKind {
+    Asset,
+    Representation,
+}
+
+#[derive(Debug, Args)]
+struct DependencyTargetArgs {
+    production: PathBuf,
+    #[arg(value_enum)]
+    target_kind: DependencyTargetKind,
+    target_id: String,
+}
+
+#[derive(Debug, Args)]
 struct ArtifactArgs {
     #[command(subcommand)]
     command: ArtifactCommand,
@@ -875,6 +906,24 @@ struct ActivityEdgeView {
 }
 
 #[derive(Debug, Serialize)]
+struct DependencySetView {
+    source_representation_id: String,
+    recorded_at_revision: u64,
+    status: &'static str,
+    dependencies: Vec<DependencyView>,
+}
+
+#[derive(Debug, Serialize)]
+struct DependencyView {
+    source_resource_id: Option<String>,
+    kind: String,
+    target: ObjectRefView,
+    resolved_representation_id: Option<String>,
+    required: bool,
+    authored_reference: String,
+}
+
+#[derive(Debug, Serialize)]
 struct ActivityEdgeSnapshotView {
     revision_sequence: u64,
     fingerprints: Vec<FingerprintSnapshotView>,
@@ -1206,6 +1255,10 @@ fn execute(cli: Cli) -> Result<()> {
             ActivityCommand::Descendants(args) => {
                 activity_relatives(&args, ProvenanceDirection::Descendants, cli.json)
             }
+        },
+        Command::Dependency(args) => match args.command {
+            DependencyCommand::Show(args) => dependency_show(&args, cli.json),
+            DependencyCommand::Dependents(args) => dependency_dependents(&args, cli.json),
         },
         Command::Artifact(args) => match args.command {
             ArtifactCommand::Evaluate(args) => artifact_evaluate(&args, cli.json),
@@ -2023,6 +2076,100 @@ fn activity_relatives(
             println!("{}", view.representation_id);
         }
         Ok(())
+    }
+}
+
+fn dependency_show(args: &ActivityRepresentationArgs, json: bool) -> Result<()> {
+    let representation_id = parse_representation_id(&args.representation_id)?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let dependencies = production
+        .dependency_set(representation_id)
+        .context("load dependency set")?
+        .as_ref()
+        .map(dependency_set_view)
+        .transpose()?;
+    if json {
+        print_json(&dependencies)
+    } else if let Some(view) = dependencies {
+        println!(
+            "{}\t{}\t{} dependency(ies)",
+            view.source_representation_id,
+            view.status,
+            view.dependencies.len()
+        );
+        for dependency in view.dependencies {
+            println!(
+                "{}\t{}:{}\t{}",
+                dependency.kind,
+                dependency.target.kind,
+                dependency.target.id,
+                dependency.authored_reference
+            );
+        }
+        Ok(())
+    } else {
+        println!("no dependency observation");
+        Ok(())
+    }
+}
+
+fn dependency_dependents(args: &DependencyTargetArgs, json: bool) -> Result<()> {
+    let target = parse_dependency_target(args.target_kind, &args.target_id)?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let views: Vec<_> = production
+        .dependents(target)
+        .context("load dependents")?
+        .into_iter()
+        .map(|representation_id| RepresentationRefView {
+            representation_id: representation_id.to_string(),
+        })
+        .collect();
+    if json {
+        print_json(&views)
+    } else {
+        for view in views {
+            println!("{}", view.representation_id);
+        }
+        Ok(())
+    }
+}
+
+fn dependency_set_view(set: &DependencySet) -> Result<DependencySetView> {
+    Ok(DependencySetView {
+        source_representation_id: set.source_representation_id().to_string(),
+        recorded_at_revision: set.recorded_at_revision(),
+        status: dependency_set_status_name(set.status())?,
+        dependencies: set
+            .dependencies()
+            .iter()
+            .map(dependency_view)
+            .collect::<Result<Vec<_>>>()?,
+    })
+}
+
+fn dependency_view(dependency: &Dependency) -> Result<DependencyView> {
+    let target = match dependency.target() {
+        DependencyTarget::Asset(id) => ObjectRef::Asset(id),
+        DependencyTarget::Representation(id) => ObjectRef::Representation(id),
+        _ => bail!("dependency target kind is not supported by this CLI"),
+    };
+    Ok(DependencyView {
+        source_resource_id: dependency.source_resource_id().map(|id| id.to_string()),
+        kind: dependency.kind().as_str().to_owned(),
+        target: object_ref_view(target)?,
+        resolved_representation_id: dependency
+            .resolved_representation_id()
+            .map(|id| id.to_string()),
+        required: dependency.is_required(),
+        authored_reference: dependency.authored_reference().to_owned(),
+    })
+}
+
+fn dependency_set_status_name(status: DependencySetStatus) -> Result<&'static str> {
+    match status {
+        DependencySetStatus::Current => Ok("current"),
+        DependencySetStatus::NeedsExtraction => Ok("needs_extraction"),
+        _ => bail!("dependency-set status is not supported by this CLI"),
     }
 }
 
@@ -2967,6 +3114,17 @@ fn parse_asset_id(value: &str) -> Result<AssetId> {
 
 fn parse_representation_id(value: &str) -> Result<RepresentationId> {
     RepresentationId::from_str(value).context("parse representation ID")
+}
+
+fn parse_dependency_target(kind: DependencyTargetKind, value: &str) -> Result<DependencyTarget> {
+    match kind {
+        DependencyTargetKind::Asset => AssetId::from_str(value)
+            .map(DependencyTarget::Asset)
+            .context("parse asset ID"),
+        DependencyTargetKind::Representation => RepresentationId::from_str(value)
+            .map(DependencyTarget::Representation)
+            .context("parse representation ID"),
+    }
 }
 
 fn parse_identifier_target(kind: IdentifierTargetKind, value: &str) -> Result<ObjectRef> {

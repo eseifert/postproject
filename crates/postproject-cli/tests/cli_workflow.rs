@@ -368,6 +368,14 @@ fn adds_every_representation_shape() {
         original.to_str().expect("UTF-8 original path"),
     ]);
     let asset_id = imported["asset_id"].as_str().expect("asset ID");
+    let original_representation_id = imported["representation_id"]
+        .as_str()
+        .expect("representation ID");
+    assert!(run_json(&["dependency", "show", production, original_representation_id,]).is_null());
+    assert_eq!(
+        run_json(&["dependency", "dependents", production, "asset", asset_id]),
+        serde_json::json!([])
+    );
 
     add_representation_from_spec(
         production,
