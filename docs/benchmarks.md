@@ -1,6 +1,6 @@
 # Benchmarks
 
-Iteration-one benchmarks are informational baselines built with Criterion. They
+Release 0.1 benchmarks are informational baselines built with Criterion. They
 cover the four scale-sensitive workflows named in the acceptance criteria:
 
 - fingerprinting and importing 1,000 small files in one transaction;
@@ -12,7 +12,7 @@ cover the four scale-sensitive workflows named in the acceptance criteria:
 Run them with an optimized build:
 
 ```sh
-cargo bench --locked -p postproject-storage-sqlite --bench iteration_one
+cargo bench --locked -p postproject-storage-sqlite --bench release_0_1
 ```
 
 Fixture construction that is not part of the operation under measurement is
@@ -29,11 +29,11 @@ committed. Published numbers must record the commit, Rust version, operating
 system, CPU, storage device/filesystem, power policy, and full Criterion command.
 Results are not release gates yet; they exist to make regressions measurable.
 
-## Iteration-four scale fixture
+## Release 0.4 scale fixture
 
 The `large_fixture` benchmark target is a deterministic generator rather than
 a timed benchmark. It creates the representative production used by the
-iteration-four query, staleness, job, and revision-feed benchmarks:
+0.4 query, staleness, job, and revision-feed benchmarks:
 
 - 10,000 assets and 100,000 representations;
 - more than 100,000 resources and locators across single-file, sequence,
@@ -47,8 +47,8 @@ The seed and cache path are explicit, and fixture construction is never part of
 the measured operation:
 
 ```sh
-POSTPROJECT_BENCH_SEED=postproject-i4 \
-POSTPROJECT_BENCH_FIXTURE=target/bench-fixtures/iteration-four.pproj \
+POSTPROJECT_BENCH_SEED=postproject-0.4 \
+POSTPROJECT_BENCH_FIXTURE=target/bench-fixtures/release-0.4.pproj \
   cargo bench --locked -p postproject-storage-sqlite --bench large_fixture
 ```
 
@@ -56,17 +56,17 @@ An existing cache is validated and reused. Delete that one explicit file to
 regenerate it after the generator version or seed changes. Generation uses no
 network, locale, or wall-clock input.
 
-## Iteration-four read-path baseline
+## Release 0.4 read-path baseline
 
 The pre-query-API baseline was captured on 2026-09-24 at commit `7f835c0`
-against the `postproject-i4` fixture: 10,000 assets, 100,000 representations,
+against the `postproject-0.4` fixture: 10,000 assets, 100,000 representations,
 150,000 resources and locators, 1,000,000 metadata assertions, 151 activities,
 and 100,000 revisions. The 494 MiB production was generated and measured with:
 
 ```sh
 cargo bench --locked -p postproject-storage-sqlite --bench large_fixture
 POSTPROJECT_BENCH_RUNS=3 \
-  cargo bench --locked -p postproject-storage-sqlite --bench iteration_four_baseline
+  cargo bench --locked -p postproject-storage-sqlite --bench release_0_4_baseline
 ```
 
 Each row reports three optimized samples. A read sample uses a fresh open
@@ -74,7 +74,7 @@ production handle, starts timing after the open, consumes the result, and runs
 with the operating-system file cache warm. `open` measures the handle open
 itself. The nested rows deliberately issue the existing per-parent calls; the
 inventory row exercises the complete assets → representations → resources →
-locators knowledge walk that Phase 5 will change.
+locators knowledge walk that the 0.4 domain-query work will change.
 
 | Existing read path | Median | Minimum | Maximum |
 | --- | ---: | ---: | ---: |
@@ -99,7 +99,7 @@ The run used Rust 1.98.1 on Linux 7.2.5, an AMD Ryzen 7 4800H, and a Samsung
 970 EVO Plus NVMe SSD with Btrfs. The CPU governor was `ondemand`, frequency
 boost was enabled, and the machine was not isolated. The spread in several
 maximum samples is therefore scheduler noise; the medians are the comparison
-baseline. These numbers precede Phase 5's pagination and set-oriented read-path
+baseline. These numbers precede 0.4 pagination and set-oriented read-path
 changes and are informational, not release budgets.
 
 ## Quick baseline

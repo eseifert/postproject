@@ -1,6 +1,6 @@
-# Iteration 3 integration findings
+# Release 0.3 integration findings
 
-Iteration 3 began with four disposable integrations. Their repositories run
+Release 0.3 began with four disposable integrations. Their repositories run
 against PostProject `main`, and PostProject CI calls their reusable workflows
 against the revision under test. They are probes, not compatibility promises.
 

@@ -5,7 +5,7 @@
 
 ## Context
 
-Pre-1.0 redesign remains valuable, but Iteration 3 introduces integrations in
+Pre-1.0 redesign remains valuable, but release 0.3 introduces integrations in
 repositories with their own maintenance schedules. Requiring every experiment to
 follow every PostProject commit would make external validation needlessly costly.
 A blanket stability promise would be equally premature because most of the model

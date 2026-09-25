@@ -32,7 +32,7 @@ conventions must not cross it.
 
 ## Current direction and deferred concerns
 
-The current iteration adds fingerprint observations and activity snapshots,
+The 0.4 development release adds fingerprint observations and activity snapshots,
 managed-artifact evaluation, dependency relationships, and durable jobs in that
 domain-first order. Each capability reaches persistence before the public C ABI
 and language wrappers are expanded around it.

@@ -66,7 +66,7 @@ Development version: `0.4.0-alpha.1`.
   programs that CI compiles and runs against the installed package. New guides
   cover creating a production, external identifiers, and media roots and
   resolution; the other integrator guides are now language-neutral.
-- Published the complete Iteration 3 documentation under both its immutable
+- Published the complete 0.3.0-alpha.2 documentation under both its immutable
   release path and `latest`, and marked alpha GitHub releases as prereleases.
 
 ## 0.3.0-alpha.1 - 2026-09-23
@@ -195,5 +195,5 @@ Development version: `0.4.0-alpha.1`.
 - Bounded SQLite value and row sizes when opening untrusted production files.
 - Unambiguous cross-platform CMake metadata with explicit Windows DLL packaging.
 - Backend-neutral, domain-shaped production read and transaction contracts.
-- Iteration-one acceptance report with verification and benchmark summaries.
+- Release 0.1 acceptance report with verification and benchmark summaries.
 - Locked the compatible `yoke-derive` patch release to preserve Rust 1.85 support.

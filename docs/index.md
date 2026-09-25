@@ -79,11 +79,11 @@ benchmarks
 fuzzing
 releasing
 roadmap
-iteration-one-report
-iteration-two-report
-iteration-three-integration-findings
-iteration-three-report
-standards-impact-iteration-3
+release-0.1-report
+release-0.2-report
+release-0.3-integration-findings
+release-0.3-report
+standards-impact-0.3
 abi-policy
 adr/0001-project-naming
 adr/0002-identity-model

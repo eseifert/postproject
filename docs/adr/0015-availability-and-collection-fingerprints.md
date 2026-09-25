@@ -85,7 +85,7 @@ sampled single-file fingerprints already behave. A caller that needs certainty v
 members, which is the validity tier rather than the presence tier.
 
 Verifying frames against the filesystem beyond presence — detecting that a frame was deleted or
-rewritten after import — remains the filesystem-scanning work scheduled for a later iteration.
+rewritten after import — remains filesystem-scanning work scheduled for a later release.
 This decision defines what that work refines, not a substitute for it.
 
 The two tiers give integrations a vocabulary that already exists elsewhere. A host that

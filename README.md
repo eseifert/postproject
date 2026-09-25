@@ -108,9 +108,9 @@ Standalone installed-package examples live in [`examples/c`](examples/c) and
 - [Standards boundaries](docs/src/concepts/standards-boundaries.md)
 - [Roadmap](docs/roadmap.md)
 - [Stewardship](STEWARDSHIP.md)
-- [Iteration-one acceptance report](docs/iteration-one-report.md)
-- [Iteration-two acceptance report](docs/iteration-two-report.md)
-- [Iteration-three acceptance report](docs/iteration-three-report.md)
+- [Release 0.1 acceptance report](docs/release-0.1-report.md)
+- [Release 0.2 acceptance report](docs/release-0.2-report.md)
+- [Release 0.3 acceptance report](docs/release-0.3-report.md)
 
 Build the unified reference with Python 3.12 or newer after installing
 `docs/requirements.txt` and Doxygen:

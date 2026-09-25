@@ -1,10 +1,10 @@
-# Iteration two acceptance report
+# Release 0.2 acceptance report
 
 Date: 2026-09-23
 
 ## Delivered capability
 
-The second iteration turns PostProject from a file-relinking foundation into a
+Release 0.2 turns PostProject from a file-relinking foundation into a
 standards-aware production knowledge library. Assets own independently identified
 representations; representations describe single files, compact image sequences,
 ordered parts, and packages made from typed resources and locators. Original,
@@ -32,11 +32,11 @@ versioned `https://postproject.org/ref/v1/` form.
 
 ## Standards and architecture
 
-The core preserves concepts needed for later adapters without importing their
+The core preserves concepts needed by adapter integrations without importing their
 types. Documentation records conceptual mappings and non-claims for OpenAssetIO,
 IPTC Video Metadata Hub, EBUCore/EBUCorePlus, W3C PROV, MovieLabs OMC, OTIO,
-AAF, IMF, MXF, C2PA, and UMID-related identity. OpenAssetIO remains an Iteration
-3 integration boundary rather than a competing core abstraction.
+AAF, IMF, MXF, C2PA, and UMID-related identity. OpenAssetIO remains a post-0.2
+integration boundary rather than a competing core abstraction.
 
 SQLite remains behind domain-shaped read and transaction traits. The core has
 no SQL, OpenAssetIO, Python, or C-ABI dependency. Explicit SQL migrations and
@@ -101,10 +101,10 @@ promises or release gates.
 ## Known limitations
 
 - Discovery is synchronous and scans enabled local filesystem roots without a
-  persistent index. Root identities are stored as absolute URIs; per-machine
-  named-root or volume mappings are not implemented yet.
-- Compound structures are explicit at ingest. Automatic sequence, camera-card,
-  sidecar, and vendor-span recognition is deferred.
+  persistent index. Root identities are stored as absolute URIs; release 0.2
+  does not include per-machine named-root or volume mappings.
+- Compound structures are explicit at ingest. Release 0.2 does not include
+  automatic sequence, camera-card, sidecar, or vendor-span recognition.
 - Large-file sampled fingerprints are relocation evidence, not collision-proof
   full-content verification.
 - SQLite is the only backend. There is no daemon, remote object-store backend,
@@ -116,13 +116,3 @@ promises or release gates.
 - Release archives are not code-signed. A maintainer must create the signed
   version tag; the tag workflow then publishes checksummed source/native
   archives and the tested Python wheel to GitHub Releases.
-
-## Deliberate deferrals
-
-Iteration 3 owns the documentation site at `postproject.org`, automatic media
-recognition and inspection, an OpenAssetIO Manager and OTIO-through-OpenAssetIO
-demonstration, portable per-machine root mappings, and persistent discovery
-indexes. Later work owns publishing workflows, full standards adapters,
-PostgreSQL/server mode, collaboration, timeline/editorial concepts, remote
-storage, technical metadata extraction, semantic search, and distributed
-revision merging.

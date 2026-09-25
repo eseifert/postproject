@@ -39,7 +39,7 @@ Deletion must affect performance only.
 - **Tables in the production database.** This gives transactional convenience
   but mixes local, rebuildable observations with portable production knowledge.
 - **One global content index.** It may be useful later, but introduces lifecycle,
-  privacy, and cross-production policy beyond this iteration.
+  privacy, and cross-production policy beyond this release.
 - **Memory-only caching.** It cannot make a second process or a later invocation
   materially cheaper.
 

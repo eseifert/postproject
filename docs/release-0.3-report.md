@@ -1,6 +1,6 @@
-# Iteration 3 acceptance report
+# Release 0.3 acceptance report
 
-Iteration 3 turns PostProject's model into a portable, inspectable workflow and
+Release 0.3 turns PostProject's model into a portable, inspectable workflow and
 tests it through applications outside the main repository. The delivered
 release is package `0.3.0-alpha.2`, C ABI 15, and SQLite schema 6.
 
@@ -72,7 +72,7 @@ and the separate landing page.
   unversioned location trait import.
 - The technical-profile score uses one persisted inspection and is supporting
   evidence, not content identity. Full verification remains opt-in.
-- The inventory cache is deliberately local and rebuildable; persistent shared
-  indexing and background jobs remain later work.
+- The inventory cache is deliberately local and rebuildable. Release 0.3 does
+  not include persistent shared indexing or background jobs.
 - Releases are checksummed but not code-signed. PostProject remains pre-1.0,
   with only the subset named in ADR 0020 compatible within the 0.3 series.

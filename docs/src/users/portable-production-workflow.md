@@ -1,6 +1,6 @@
 # Portable production workflow
 
-This walkthrough joins the Iteration 3 features into one operator story. Use
+This walkthrough joins the 0.3 release features into one operator story. Use
 the `postproject` executable from a [native release archive](../integrators/installing-a-release.md);
 none of these steps invokes Cargo.
 
@@ -76,4 +76,3 @@ accepts the same versioned representation bindings exposed by PostProject. The
 one in an ordinary `ExternalReference` and lets the upstream OpenAssetIO media
 linker resolve it to locatable content. Rational clip time remains owned by
 OTIO, and an image sequence remains one PostProject representation.
-

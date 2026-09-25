@@ -63,6 +63,11 @@ Every callable concept page includes at least one synchronized example across
 C, C++, Python, Rust, and the CLI. The documentation build treats a missing
 surface as a warning, and CI promotes documentation warnings to errors.
 
+Published documentation identifies historical scope by package release, C ABI,
+or schema version. Planning labels remain confined to the untracked planning
+briefs. A workspace test scans the published Markdown to keep that boundary
+enforced.
+
 | Concept page | Tested example region |
 | --- | --- |
 | Identity | `host-binding` |
@@ -96,7 +101,7 @@ byte-identical candidates for the third, explicitly confirms all choices in one
 transaction, reopens the production, and resolves from persisted locators with no
 roots supplied.
 
-The iteration-two E2E test creates four representations on one asset, attaches
+The 0.2 release E2E test creates four representations on one asset, attaches
 typed metadata and an external identifier, records proxy-generation
 provenance, and verifies one atomic semantic revision. It then moves the
 single-file and compound media, discovers and confirms replacement locators,

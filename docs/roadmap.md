@@ -1,30 +1,30 @@
 # Roadmap
 
-## Iteration 1 — complete
+## Release 0.1 — complete
 
 Deliver stable media identity, SQLite persistence, versioned fingerprints,
 deterministic relinking, a C ABI, C++ wrapper, CLI, packaging, and comprehensive
 tests. The delivered scope and remaining constraints are recorded in the
-[acceptance report](iteration-one-report.md).
+[acceptance report](release-0.1-report.md).
 
-## Iteration 2 — complete
+## Release 0.2 — complete
 
 Establish standards-aware internal/external identity, structured and repeated
 metadata, activity-based provenance, rational time, a durable semantic revision
 journal, and a Python binding over the public C ABI. Documentation is organized
 for application users, integrators, and contributors. The delivered scope and
 remaining constraints are recorded in the
-[acceptance report](iteration-two-report.md).
+[acceptance report](release-0.2-report.md).
 
-## Iteration 3 — complete
+## Release 0.3 — complete
 
 Add portable named storage roots, non-mutating inventory scans, compound-media
 recognition, optional technical inspection, opt-in content verification,
 OpenAssetIO and OTIO integration demonstrations, and a published unified API
 site. The delivered scope and remaining constraints are recorded in the
-[acceptance report](iteration-three-report.md).
+[acceptance report](release-0.3-report.md).
 
-## Iteration 4 — in progress
+## Release 0.4 — in progress
 
 Add managed-artifact knowledge, dependency-aware staleness, durable production
 jobs, scalable domain queries, cross-process change delivery, publishing, and a

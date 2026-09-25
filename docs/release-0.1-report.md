@@ -1,4 +1,4 @@
-# Iteration one acceptance report
+# Release 0.1 acceptance report
 
 Date: 2026-09-19
 
@@ -75,12 +75,3 @@ performance gates; full intervals and methodology are in `docs/benchmarks.md`.
 - Timelines, collaboration, networking, server mode, decoding, proxy generation,
   metadata indexing, and editor-specific adapters remain intentionally out of
   scope.
-
-## Recommended next iteration
-
-Keep the current identity, transaction, and C ABI boundaries while adding typed
-metadata namespaces, derived-media lineage, artifact/job records, a production
-revision journal and event feed, optional filesystem indexing, and one additional
-binding such as Python or GObject. PostgreSQL/server experiments should follow
-the backend-neutral contracts without expanding the local SQLite schema into a
-transport API.
