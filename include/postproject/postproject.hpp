@@ -181,6 +181,35 @@ enum class ArtifactReasonKind : std::uint32_t {
       PP_ARTIFACT_REASON_FINGERPRINT_RECOMPUTATION_PENDING,
   upstream_not_current = PP_ARTIFACT_REASON_UPSTREAM_NOT_CURRENT,
   traversal_truncated = PP_ARTIFACT_REASON_TRAVERSAL_TRUNCATED,
+  dependency_snapshot_absent =
+      PP_ARTIFACT_REASON_DEPENDENCY_SNAPSHOT_ABSENT,
+  dependency_knowledge_incomplete =
+      PP_ARTIFACT_REASON_DEPENDENCY_KNOWLEDGE_INCOMPLETE,
+  dependency_path_changed = PP_ARTIFACT_REASON_DEPENDENCY_PATH_CHANGED,
+  dependency_fingerprint_changed =
+      PP_ARTIFACT_REASON_DEPENDENCY_FINGERPRINT_CHANGED,
+  dependency_fingerprint_recomputation_pending =
+      PP_ARTIFACT_REASON_DEPENDENCY_FINGERPRINT_RECOMPUTATION_PENDING,
+  dependency_fingerprint_evidence_missing =
+      PP_ARTIFACT_REASON_DEPENDENCY_FINGERPRINT_EVIDENCE_MISSING,
+};
+
+enum class ArtifactDependencyIssue : std::uint32_t {
+  needs_extraction = PP_ARTIFACT_DEPENDENCY_NEEDS_EXTRACTION,
+  unresolved = PP_ARTIFACT_DEPENDENCY_UNRESOLVED,
+  depth_truncated = PP_ARTIFACT_DEPENDENCY_DEPTH_TRUNCATED,
+  representations_truncated =
+      PP_ARTIFACT_DEPENDENCY_REPRESENTATIONS_TRUNCATED,
+};
+
+struct ArtifactDependencyPathSegment final {
+  Uuid source_representation_id;
+  std::uint32_t dependency_position;
+  std::optional<Uuid> source_resource_id;
+  std::string kind;
+  ObjectRef target;
+  std::optional<Uuid> resolved_representation_id;
+  std::string authored_reference;
 };
 
 enum class ArtifactTraversalLimit : std::uint32_t {
@@ -192,10 +221,13 @@ struct ArtifactReason final {
   ArtifactReasonKind kind;
   std::optional<Uuid> activity_id;
   Uuid representation_id;
+  std::optional<Uuid> input_representation_id;
   std::optional<ArtifactEdgeKind> edge_kind;
   std::optional<ArtifactKnowledgeState> upstream_state;
   std::optional<ArtifactTraversalLimit> traversal_limit;
   std::optional<std::uint32_t> activity_count;
+  std::optional<ArtifactDependencyIssue> dependency_issue;
+  std::vector<ArtifactDependencyPathSegment> dependency_path;
   std::optional<std::string> fingerprint_algorithm;
   std::optional<std::uint16_t> fingerprint_version;
   std::optional<std::vector<std::uint8_t>> snapshot_value;
@@ -2265,18 +2297,52 @@ public:
           evaluation.get(), index, &native, &reason_error);
       detail::throw_if_error(reason_status, reason_error);
       const auto kind = static_cast<ArtifactReasonKind>(native.kind);
+      const bool has_dependency =
+          kind == ArtifactReasonKind::dependency_snapshot_absent ||
+          kind == ArtifactReasonKind::dependency_knowledge_incomplete ||
+          kind == ArtifactReasonKind::dependency_path_changed ||
+          kind == ArtifactReasonKind::dependency_fingerprint_changed ||
+          kind == ArtifactReasonKind::
+                      dependency_fingerprint_recomputation_pending ||
+          kind == ArtifactReasonKind::
+                      dependency_fingerprint_evidence_missing;
       const bool has_activity =
           kind == ArtifactReasonKind::snapshot_absent ||
           kind == ArtifactReasonKind::fingerprint_evidence_missing ||
           kind == ArtifactReasonKind::fingerprint_changed ||
-          kind == ArtifactReasonKind::fingerprint_recomputation_pending;
-      const bool has_edge = has_activity;
+          kind == ArtifactReasonKind::fingerprint_recomputation_pending ||
+          has_dependency;
+      const bool has_edge = has_activity && !has_dependency;
+      std::vector<ArtifactDependencyPathSegment> dependency_path;
+      dependency_path.reserve(
+          static_cast<std::size_t>(native.dependency_path_length));
+      for (std::uint64_t path_index = 0;
+           path_index < native.dependency_path_length; ++path_index) {
+        const pp_artifact_dependency_path_segment_t &segment =
+            native.dependency_path[path_index];
+        dependency_path.push_back(
+            {detail::uuid(segment.source_representation_id),
+             segment.dependency_position,
+             segment.has_source_resource != 0
+                 ? std::optional<Uuid>(detail::uuid(segment.source_resource_id))
+                 : std::nullopt,
+             std::string(segment.kind), detail::object_ref(segment.target),
+             segment.has_resolved_representation != 0
+                 ? std::optional<Uuid>(
+                       detail::uuid(segment.resolved_representation_id))
+                 : std::nullopt,
+             std::string(segment.authored_reference)});
+      }
       reasons.push_back(
           {kind,
            has_activity
                ? std::optional<Uuid>(detail::uuid(native.activity_id))
                : std::nullopt,
            detail::uuid(native.representation_id),
+           has_dependency
+               ? std::optional<Uuid>(
+                     detail::uuid(native.input_representation_id))
+               : std::nullopt,
            has_edge ? std::optional<ArtifactEdgeKind>(
                           static_cast<ArtifactEdgeKind>(native.edge_kind))
                     : std::nullopt,
@@ -2292,6 +2358,12 @@ public:
            kind == ArtifactReasonKind::producing_activity_ambiguous
                ? std::optional<std::uint32_t>(native.activity_count)
                : std::nullopt,
+           kind == ArtifactReasonKind::dependency_knowledge_incomplete
+               ? std::optional<ArtifactDependencyIssue>(
+                     static_cast<ArtifactDependencyIssue>(
+                         native.dependency_issue))
+               : std::nullopt,
+           std::move(dependency_path),
            detail::optional_string(native.fingerprint_algorithm),
            native.fingerprint_algorithm != nullptr
                ? std::optional<std::uint16_t>(native.fingerprint_version)
