@@ -2,7 +2,9 @@
 
 use std::ffi::{CString, c_char};
 
-use postproject_core::{Error, Job, JobState, RegenerationJobPlan, RepresentationKind};
+use postproject_core::{
+    Error, Job, JobState, QueryCursor, RegenerationJobPlan, RepresentationKind,
+};
 
 use crate::{PpUuid, exact_cstring};
 
@@ -15,6 +17,7 @@ const PP_JOB_CANCELLED: u32 = 5;
 /// Opaque immutable job result set owned by the C caller.
 pub struct PpJobSet {
     jobs: Vec<AbiJob>,
+    next_cursor: Option<CString>,
 }
 
 /// Opaque immutable regeneration-plan result set owned by the C caller.
@@ -110,11 +113,18 @@ struct AbiJob {
 
 impl PpJobSet {
     pub(crate) fn new(jobs: &[Job]) -> Result<Self, Error> {
+        Self::new_page(jobs, None)
+    }
+
+    pub(crate) fn new_page(jobs: &[Job], next_cursor: Option<&QueryCursor>) -> Result<Self, Error> {
         let jobs = jobs
             .iter()
             .map(AbiJob::try_from)
             .collect::<Result<_, _>>()?;
-        Ok(Self { jobs })
+        let next_cursor = next_cursor
+            .map(|cursor| exact_cstring(cursor.as_str(), "query cursor"))
+            .transpose()?;
+        Ok(Self { jobs, next_cursor })
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -127,6 +137,12 @@ impl PpJobSet {
 
     pub(crate) fn input(&self, job_index: usize, input_index: usize) -> Option<PpUuid> {
         self.jobs.get(job_index)?.inputs.get(input_index).copied()
+    }
+
+    pub(crate) fn next_cursor(&self) -> *const c_char {
+        self.next_cursor
+            .as_ref()
+            .map_or(std::ptr::null(), |cursor| cursor.as_ptr())
     }
 }
 

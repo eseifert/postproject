@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     return 64;
   }
   (void)remove(argv[1]);
-  if (pp_abi_version() != UINT32_C(23)) {
+  if (pp_abi_version() != UINT32_C(24)) {
     return 1;
   }
   pp_error_code_t status =
@@ -1153,23 +1153,47 @@ int main(int argc, char **argv) {
   dependencies = NULL;
   const pp_object_ref_t dependency_target = {
       PP_OBJECT_REPRESENTATION, proxy_representation_id};
-  pp_object_ref_set_t *dependent_set = NULL;
-  pp_object_ref_t dependent = {0};
-  if (pp_production_dependents(production, &dependency_target, &dependent_set,
-                               &error) != PP_OK ||
+  pp_dependency_query_set_t *dependent_set = NULL;
+  pp_dependency_match_t dependent = {0};
+  if (pp_production_dependents(production, &dependency_target, UINT32_C(1),
+                               UINT32_C(1000), UINT32_C(1000), NULL,
+                               &dependent_set, &error) != PP_OK ||
       dependent_set == NULL ||
-      pp_object_ref_set_count(dependent_set) != UINT64_C(1) ||
-      pp_object_ref_set_get(dependent_set, UINT64_C(0), &dependent, &error) !=
-          PP_OK ||
-      dependent.kind != PP_OBJECT_REPRESENTATION ||
-      memcmp(dependent.id.bytes, representation_id.bytes,
-             sizeof(representation_id.bytes)) != 0) {
-    pp_object_ref_set_release(dependent_set);
+      pp_dependency_query_set_count(dependent_set) != UINT64_C(1) ||
+      pp_dependency_query_set_get(dependent_set, UINT64_C(0), &dependent,
+                                  &error) != PP_OK ||
+      dependent.target.kind != PP_OBJECT_REPRESENTATION ||
+      memcmp(dependent.target.id.bytes, representation_id.bytes,
+             sizeof(representation_id.bytes)) != 0 ||
+      dependent.depth != UINT32_C(1) ||
+      pp_dependency_query_set_next_cursor(dependent_set) != NULL ||
+      pp_dependency_query_set_traversal_truncated(dependent_set) != UINT8_C(0)) {
+    pp_dependency_query_set_release(dependent_set);
     pp_production_release(production);
     pp_error_release(error);
     return 76;
   }
-  pp_object_ref_set_release(dependent_set);
+  pp_dependency_query_set_release(dependent_set);
+
+  pp_dependency_query_set_t *dependency_matches = NULL;
+  pp_dependency_match_t dependency_match = {0};
+  if (pp_production_dependencies(
+          production, &representation_id, UINT32_C(2), UINT32_C(1000),
+          UINT32_C(1), NULL, &dependency_matches, &error) != PP_OK ||
+      dependency_matches == NULL ||
+      pp_dependency_query_set_count(dependency_matches) != UINT64_C(1) ||
+      pp_dependency_query_set_get(dependency_matches, UINT64_C(0),
+                                  &dependency_match, &error) != PP_OK ||
+      dependency_match.target.kind != PP_OBJECT_REPRESENTATION ||
+      memcmp(dependency_match.target.id.bytes, proxy_representation_id.bytes,
+             sizeof(proxy_representation_id.bytes)) != 0 ||
+      dependency_match.depth != UINT32_C(1)) {
+    pp_dependency_query_set_release(dependency_matches);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 76;
+  }
+  pp_dependency_query_set_release(dependency_matches);
 
   pp_uuid_t job_id = {{0}};
   status = pp_production_begin_transaction(production, &transaction, &error);
@@ -1191,7 +1215,8 @@ int main(int argc, char **argv) {
   pp_job_set_t *jobs = NULL;
   pp_job_t job = {0};
   pp_uuid_t job_input_id = {{0}};
-  status = pp_production_jobs(production, &jobs, &error);
+  status = pp_production_jobs(production, 0, NULL, UINT32_C(1000), NULL, &jobs,
+                              &error);
   if (status != PP_OK || jobs == NULL ||
       pp_job_set_count(jobs) != UINT64_C(1) ||
       pp_job_set_get(jobs, UINT64_C(0), &job, &error) != PP_OK ||
@@ -1231,7 +1256,9 @@ int main(int argc, char **argv) {
   transaction = NULL;
   jobs = NULL;
   memset(&job, 0, sizeof(job));
-  if (pp_production_jobs(production, &jobs, &error) != PP_OK || jobs == NULL ||
+  if (pp_production_jobs(production, 0, NULL, UINT32_C(1000), NULL, &jobs,
+                         &error) != PP_OK ||
+      jobs == NULL ||
       pp_job_set_get(jobs, UINT64_C(0), &job, &error) != PP_OK ||
       job.state != PP_JOB_CLAIMED ||
       memcmp(job.claim_id.bytes, claim_id.bytes, sizeof(claim_id.bytes)) != 0 ||
@@ -1333,7 +1360,9 @@ int main(int argc, char **argv) {
   pp_job_t other_job = {0};
   jobs = NULL;
   memset(&job, 0, sizeof(job));
-  if (pp_production_jobs(production, &jobs, &error) != PP_OK || jobs == NULL ||
+  if (pp_production_jobs(production, 0, NULL, UINT32_C(1000), NULL, &jobs,
+                         &error) != PP_OK ||
+      jobs == NULL ||
       pp_job_set_count(jobs) != UINT64_C(2) ||
       pp_job_set_get(jobs, UINT64_C(0), &job, &error) != PP_OK ||
       pp_job_set_get(jobs, UINT64_C(1), &other_job, &error) != PP_OK) {
@@ -1429,7 +1458,9 @@ int main(int argc, char **argv) {
   jobs = NULL;
   pp_job_t completed_job = {0};
   uint8_t found_completed_job = UINT8_C(0);
-  if (pp_production_jobs(production, &jobs, &error) != PP_OK || jobs == NULL ||
+  if (pp_production_jobs(production, 0, NULL, UINT32_C(1000), NULL, &jobs,
+                         &error) != PP_OK ||
+      jobs == NULL ||
       pp_job_set_count(jobs) != UINT64_C(3)) {
     pp_job_set_release(jobs);
     pp_production_release(production);
@@ -1538,8 +1569,39 @@ int main(int argc, char **argv) {
   pp_job_set_release(planned_job_set);
   pp_regeneration_plan_set_release(plans);
   jobs = NULL;
-  if (pp_production_jobs(production, &jobs, &error) != PP_OK || jobs == NULL ||
+  if (pp_production_jobs(production, 0, NULL, UINT32_C(1000), NULL, &jobs,
+                         &error) != PP_OK ||
+      jobs == NULL ||
       pp_job_set_count(jobs) != UINT64_C(3)) {
+    pp_job_set_release(jobs);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 102;
+  }
+  pp_job_set_release(jobs);
+  jobs = NULL;
+  if (pp_production_jobs(production, 0, NULL, UINT32_C(1), NULL, &jobs,
+                         &error) != PP_OK ||
+      jobs == NULL || pp_job_set_count(jobs) != UINT64_C(1) ||
+      pp_job_set_next_cursor(jobs) == NULL) {
+    pp_job_set_release(jobs);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 102;
+  }
+  char job_cursor[2049] = {0};
+  if (snprintf(job_cursor, sizeof(job_cursor), "%s",
+               pp_job_set_next_cursor(jobs)) < 0) {
+    pp_job_set_release(jobs);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 102;
+  }
+  pp_job_set_release(jobs);
+  jobs = NULL;
+  if (pp_production_jobs(production, 0, NULL, UINT32_C(1), job_cursor, &jobs,
+                         &error) != PP_OK ||
+      jobs == NULL || pp_job_set_count(jobs) != UINT64_C(1)) {
     pp_job_set_release(jobs);
     pp_production_release(production);
     pp_error_release(error);

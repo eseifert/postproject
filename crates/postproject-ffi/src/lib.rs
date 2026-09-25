@@ -32,15 +32,14 @@ use postproject_core::{
     ArtifactEvaluationLimits, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, Dependency,
     DependencyKind, DependencyQueryLimits, DependencyTarget, Error, ErrorKind, EvidenceKind,
     ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern, Job,
-    JobClaimId, JobFailure, JobId, JobKind, JobQuery, Locator, MAX_ACTIVITY_EDGES,
-    MAX_CONTENT_MEMBERS, MAX_DEPENDENCIES_PER_SET, MAX_DEPENDENCY_QUERY_REPRESENTATIONS,
-    MAX_JOB_INPUTS, MAX_QUERY_PAGE_SIZE, MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MediaRootId,
-    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId,
-    PropertyId, QueryPageRequest, RationalRate, RepresentationAvailability,
-    RepresentationFingerprint, RepresentationId, RepresentationImport, RepresentationKind,
-    RepresentationResolution, RequestedJobOutput, ResolutionEvidence, ResourceFingerprint,
-    ResourceId, ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, Timestamp,
-    ToolIdentity, TransactionLifecycle, VocabularyId,
+    JobClaimId, JobFailure, JobId, JobKind, JobQuery, JobStateKind, Locator, MAX_ACTIVITY_EDGES,
+    MAX_CONTENT_MEMBERS, MAX_DEPENDENCIES_PER_SET, MAX_JOB_INPUTS, MAX_SEQUENCE_EXCEPTIONS,
+    MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity,
+    OriginalMediaImport, ProductionId, PropertyId, QueryCursor, QueryPageRequest, RationalRate,
+    RepresentationAvailability, RepresentationFingerprint, RepresentationId, RepresentationImport,
+    RepresentationKind, RepresentationResolution, RequestedJobOutput, ResolutionEvidence,
+    ResourceFingerprint, ResourceId, ResourceResolutionState, ResourceRole, RevisionContext,
+    RevisionId, Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, MediaRootMapping,
@@ -54,7 +53,7 @@ pub use artifact::{
     PpArtifactDependencyPathSegment, PpArtifactEvaluation, PpArtifactReason,
     PpArtifactReproducibility, PpArtifactReproducibilityIssue,
 };
-pub use dependency::{PpDependency, PpDependencySet};
+pub use dependency::{PpDependency, PpDependencyMatch, PpDependencyQuerySet, PpDependencySet};
 pub use jobs::{PpJob, PpJobSet, PpRegenerationPlanSet};
 use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
@@ -149,7 +148,7 @@ const PP_REVISION_JOB_FAILED: u32 = 25;
 const PP_REVISION_JOB_CANCELLED: u32 = 26;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 23;
+pub const ABI_VERSION: u32 = 24;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -1386,22 +1385,27 @@ pub unsafe extern "C" fn pp_dependency_set_release(dependencies: *mut PpDependen
     }));
 }
 
-/// Loads representations that directly depend on an asset or representation.
+/// Queries representations that directly or transitively depend on a target.
 ///
 /// # Safety
 ///
-/// `production` and `target` must be live readable values, `out_representations`
+/// `production` and `target` must be live readable values, `cursor` must be
+/// null or NUL-terminated UTF-8 for this call, `out_matches`
 /// must be writable, and `out_error` may be null or writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pp_production_dependents(
     production: *const PpProduction,
     target: *const PpObjectRef,
-    out_representations: *mut *mut PpObjectRefSet,
+    max_depth: u32,
+    max_representations: u32,
+    limit: u32,
+    cursor: *const c_char,
+    out_matches: *mut *mut PpDependencyQuerySet,
     out_error: *mut *mut PpError,
 ) -> u32 {
     // SAFETY: Inputs are validated before use and result ownership is explicit.
     unsafe {
-        initialize_output(out_representations);
+        initialize_output(out_matches);
         ffi_call(out_error, || {
             let production = production
                 .as_ref()
@@ -1409,7 +1413,7 @@ pub unsafe extern "C" fn pp_production_dependents(
             let target = target
                 .as_ref()
                 .ok_or_else(|| invalid_argument("target must not be null"))?;
-            require_output(out_representations, "out_representations")?;
+            require_output(out_matches, "out_matches")?;
             let target = match object_ref_from_abi(*target)? {
                 ObjectRef::Asset(id) => DependencyTarget::Asset(id),
                 ObjectRef::Representation(id) => DependencyTarget::Representation(id),
@@ -1419,29 +1423,173 @@ pub unsafe extern "C" fn pp_production_dependents(
                     ));
                 }
             };
+            let page_request = query_page_request(limit, cursor)?;
             let inner = lock_production(&production.state);
             let page = inner.dependents(
                 target,
-                DependencyQueryLimits::new(1, MAX_DEPENDENCY_QUERY_REPRESENTATIONS)?,
-                &QueryPageRequest::new(MAX_QUERY_PAGE_SIZE, None)?,
+                DependencyQueryLimits::new(max_depth, max_representations)?,
+                &page_request,
             )?;
-            let objects = page
-                .items()
-                .iter()
-                .map(|id| PpObjectRef {
-                    kind: PP_OBJECT_REPRESENTATION,
-                    id: PpUuid {
-                        bytes: match id.target() {
-                            DependencyTarget::Representation(id) => id.into_bytes(),
-                            _ => unreachable!("reverse dependency queries return representations"),
-                        },
-                    },
-                })
-                .collect();
-            out_representations.write(Box::into_raw(Box::new(PpObjectRefSet { objects })));
+            out_matches.write(Box::into_raw(Box::new(PpDependencyQuerySet::new(
+                page.items(),
+                page.next_cursor(),
+                page.traversal_truncated(),
+            )?)));
             Ok(())
         })
     }
+}
+
+/// Queries direct or transitive dependencies of a representation.
+///
+/// # Safety
+///
+/// `production` and `representation_id` must be live readable values, `cursor`
+/// must be null or NUL-terminated UTF-8 for this call, `out_matches` must be
+/// writable, and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_dependencies(
+    production: *const PpProduction,
+    representation_id: *const PpUuid,
+    max_depth: u32,
+    max_representations: u32,
+    limit: u32,
+    cursor: *const c_char,
+    out_matches: *mut *mut PpDependencyQuerySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before use and result ownership is explicit.
+    unsafe {
+        initialize_output(out_matches);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            let representation_id = representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+            require_output(out_matches, "out_matches")?;
+            let page_request = query_page_request(limit, cursor)?;
+            let inner = lock_production(&production.state);
+            let page = inner.dependencies(
+                RepresentationId::from_bytes(representation_id.bytes),
+                DependencyQueryLimits::new(max_depth, max_representations)?,
+                &page_request,
+            )?;
+            out_matches.write(Box::into_raw(Box::new(PpDependencyQuerySet::new(
+                page.items(),
+                page.next_cursor(),
+                page.traversal_truncated(),
+            )?)));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the number of dependency matches in a page. Null returns zero.
+///
+/// # Safety
+///
+/// `matches` must be null or a live query-set handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_dependency_query_set_count(
+    matches: *const PpDependencyQuerySet,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null handle is live by the caller contract.
+        unsafe { matches.as_ref() }.map_or(0, |set| u64::try_from(set.len()).unwrap_or(u64::MAX))
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one dependency-query match.
+///
+/// # Safety
+///
+/// `matches` must be live, `out_match` writable, and `out_error` may be null
+/// or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_dependency_query_set_get(
+    matches: *const PpDependencyQuerySet,
+    index: u64,
+    out_match: *mut PpDependencyMatch,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_value(
+            out_match,
+            PpDependencyMatch {
+                target: PpObjectRef {
+                    kind: 0,
+                    id: PpUuid { bytes: [0; 16] },
+                },
+                depth: 0,
+            },
+        );
+        ffi_call(out_error, || {
+            require_output(out_match, "out_match")?;
+            let matches = matches
+                .as_ref()
+                .ok_or_else(|| invalid_argument("matches must not be null"))?;
+            let index = usize::try_from(index)
+                .map_err(|_| invalid_argument("dependency match index is too large"))?;
+            out_match.write(
+                matches
+                    .get(index)
+                    .ok_or_else(|| invalid_argument("dependency match index is out of range"))?,
+            );
+            Ok(())
+        })
+    }
+}
+
+/// Returns a borrowed next-page cursor, or null when this is the last page.
+///
+/// # Safety
+///
+/// `matches` must be null or a live query-set handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_dependency_query_set_next_cursor(
+    matches: *const PpDependencyQuerySet,
+) -> *const c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null handle is live by the caller contract.
+        unsafe { matches.as_ref() }.map_or(ptr::null(), PpDependencyQuerySet::next_cursor)
+    }))
+    .unwrap_or(ptr::null())
+}
+
+/// Reports whether a traversal bound made the page's query incomplete.
+///
+/// # Safety
+///
+/// `matches` must be null or a live query-set handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_dependency_query_set_traversal_truncated(
+    matches: *const PpDependencyQuerySet,
+) -> u8 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null handle is live by the caller contract.
+        unsafe { matches.as_ref() }.map_or(0, |set| u8::from(set.traversal_truncated))
+    }))
+    .unwrap_or(0)
+}
+
+/// Releases a dependency query page. Null is a no-op.
+///
+/// # Safety
+///
+/// A non-null handle must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_dependency_query_set_release(matches: *mut PpDependencyQuerySet) {
+    if matches.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership is transferred back exactly once by contract.
+        drop(unsafe { Box::from_raw(matches) });
+    }));
 }
 
 /// Evaluates artifact knowledge without accessing media files.
@@ -2274,15 +2422,20 @@ pub unsafe extern "C" fn pp_activity_set_release(activities: *mut PpActivitySet)
     }));
 }
 
-/// Loads every durable job in stable identity order.
+/// Queries one page of durable jobs in stable identity order.
 ///
 /// # Safety
 ///
-/// `production` must be live, `out_jobs` must be writable, and `out_error` may
-/// be null or writable.
+/// `production` must be live; `kind` and `cursor` must each be null or
+/// NUL-terminated UTF-8 for this call; `out_jobs` must be writable; and
+/// `out_error` may be null or writable. State zero means any state.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pp_production_jobs(
     production: *const PpProduction,
+    state: u32,
+    kind: *const c_char,
+    limit: u32,
+    cursor: *const c_char,
     out_jobs: *mut *mut PpJobSet,
     out_error: *mut *mut PpError,
 ) -> u32 {
@@ -2294,15 +2447,36 @@ pub unsafe extern "C" fn pp_production_jobs(
                 .as_ref()
                 .ok_or_else(|| invalid_argument("production must not be null"))?;
             require_output(out_jobs, "out_jobs")?;
+            let query = JobQuery::new(
+                job_state_kind_from_abi(state)?,
+                optional_utf8(kind, "job kind")?
+                    .map(JobKind::new)
+                    .transpose()?,
+            );
+            let page_request = query_page_request(limit, cursor)?;
             let inner = lock_production(&production.state);
-            let page = inner.jobs(
-                &JobQuery::default(),
-                &QueryPageRequest::new(MAX_QUERY_PAGE_SIZE, None)?,
-            )?;
-            out_jobs.write(Box::into_raw(Box::new(PpJobSet::new(page.items())?)));
+            let page = inner.jobs(&query, &page_request)?;
+            out_jobs.write(Box::into_raw(Box::new(PpJobSet::new_page(
+                page.items(),
+                page.next_cursor(),
+            )?)));
             Ok(())
         })
     }
+}
+
+/// Returns a borrowed next-page cursor, or null when this is the last page.
+///
+/// # Safety
+///
+/// `jobs` must be null or a live result-set handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_job_set_next_cursor(jobs: *const PpJobSet) -> *const c_char {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null handle is live by the caller contract.
+        unsafe { jobs.as_ref() }.map_or(ptr::null(), PpJobSet::next_cursor)
+    }))
+    .unwrap_or(ptr::null())
 }
 
 /// Returns the number of jobs in a result set. Null returns zero.
@@ -5440,6 +5614,14 @@ unsafe fn optional_utf8<'a>(value: *const c_char, label: &str) -> Result<Option<
     }
 }
 
+unsafe fn query_page_request(limit: u32, cursor: *const c_char) -> Result<QueryPageRequest, Error> {
+    // SAFETY: The caller of this helper carries the exported optional-string contract.
+    let cursor = unsafe { optional_utf8(cursor, "query cursor") }?
+        .map(QueryCursor::new)
+        .transpose()?;
+    QueryPageRequest::new(limit, cursor)
+}
+
 unsafe fn required_bytes<'a>(
     value: *const u8,
     length: u64,
@@ -5703,6 +5885,18 @@ fn representation_kind_from_abi(value: u32) -> Result<RepresentationKind, Error>
         PP_REPRESENTATION_OPTIMIZED => Ok(RepresentationKind::Optimized),
         PP_REPRESENTATION_DERIVED => Ok(RepresentationKind::Derived),
         _ => Err(invalid_argument("unknown representation kind")),
+    }
+}
+
+fn job_state_kind_from_abi(value: u32) -> Result<Option<JobStateKind>, Error> {
+    match value {
+        0 => Ok(None),
+        1 => Ok(Some(JobStateKind::Requested)),
+        2 => Ok(Some(JobStateKind::Claimed)),
+        3 => Ok(Some(JobStateKind::Succeeded)),
+        4 => Ok(Some(JobStateKind::Failed)),
+        5 => Ok(Some(JobStateKind::Cancelled)),
+        _ => Err(invalid_argument("job state filter is invalid")),
     }
 }
 

@@ -129,6 +129,17 @@ struct DependencySet final {
   std::vector<Dependency> dependencies;
 };
 
+struct DependencyMatch final {
+  ObjectRef target;
+  std::uint32_t depth;
+};
+
+template <typename T> struct QueryPage final {
+  std::vector<T> items;
+  std::optional<std::string> next_cursor;
+  bool traversal_truncated;
+};
+
 struct FingerprintSnapshot final {
   std::string algorithm;
   std::uint16_t version;
@@ -727,6 +738,15 @@ struct DependencySetDeleter final {
 using DependencySetHandle =
     std::unique_ptr<pp_dependency_set_t, DependencySetDeleter>;
 
+struct DependencyQuerySetDeleter final {
+  void operator()(pp_dependency_query_set_t *matches) const noexcept {
+    pp_dependency_query_set_release(matches);
+  }
+};
+
+using DependencyQuerySetHandle = std::unique_ptr<
+    pp_dependency_query_set_t, DependencyQuerySetDeleter>;
+
 struct ActivitySetDeleter final {
   void operator()(pp_activity_set_t *activities) const noexcept {
     pp_activity_set_release(activities);
@@ -1266,6 +1286,24 @@ inline Job job(const pp_job_set_t *jobs, std::uint64_t index) {
           std::move(claim),
           std::move(completion),
           optional_string(native.failure_diagnostic)};
+}
+
+inline QueryPage<DependencyMatch>
+dependency_query_page(DependencyQuerySetHandle matches) {
+  std::vector<DependencyMatch> items;
+  const std::uint64_t count = pp_dependency_query_set_count(matches.get());
+  items.reserve(static_cast<std::size_t>(count));
+  for (std::uint64_t index = 0; index < count; ++index) {
+    pp_dependency_match_t native{};
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_dependency_query_set_get(
+        matches.get(), index, &native, &error);
+    throw_if_error(status, error);
+    items.push_back({object_ref(native.target), native.depth});
+  }
+  const char *cursor = pp_dependency_query_set_next_cursor(matches.get());
+  return {std::move(items), optional_string(cursor),
+          pp_dependency_query_set_traversal_truncated(matches.get()) != 0};
 }
 
 inline Revision revision(const pp_revision_set_t *revisions,
@@ -2579,31 +2617,46 @@ public:
                          std::move(result)};
   }
 
-  [[nodiscard]] std::vector<Uuid> dependents(const ObjectRef &target) const {
+  [[nodiscard]] QueryPage<DependencyMatch>
+  dependencies(const Uuid &representation_id, std::uint32_t max_depth,
+               std::uint32_t max_representations, std::uint32_t limit,
+               std::optional<std::string_view> cursor = std::nullopt) const {
+    const pp_uuid_t native_id = detail::native_uuid(representation_id);
+    const std::optional<std::string> checked_cursor =
+        cursor.has_value()
+            ? std::optional<std::string>(
+                  detail::checked_string(*cursor, "query cursor"))
+            : std::nullopt;
+    pp_dependency_query_set_t *raw_matches = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_dependencies(
+        production_, &native_id, max_depth, max_representations, limit,
+        checked_cursor.has_value() ? checked_cursor->c_str() : nullptr,
+        &raw_matches, &error);
+    detail::throw_if_error(status, error);
+    return detail::dependency_query_page(
+        detail::DependencyQuerySetHandle(raw_matches));
+  }
+
+  [[nodiscard]] QueryPage<DependencyMatch>
+  dependents(const ObjectRef &target, std::uint32_t max_depth,
+             std::uint32_t max_representations, std::uint32_t limit,
+             std::optional<std::string_view> cursor = std::nullopt) const {
     const pp_object_ref_t native_target = detail::native_object_ref(target);
-    pp_object_ref_set_t *raw_objects = nullptr;
+    const std::optional<std::string> checked_cursor =
+        cursor.has_value()
+            ? std::optional<std::string>(
+                  detail::checked_string(*cursor, "query cursor"))
+            : std::nullopt;
+    pp_dependency_query_set_t *raw_matches = nullptr;
     pp_error_t *error = nullptr;
     const pp_error_code_t status = pp_production_dependents(
-        production_, &native_target, &raw_objects, &error);
+        production_, &native_target, max_depth, max_representations, limit,
+        checked_cursor.has_value() ? checked_cursor->c_str() : nullptr,
+        &raw_matches, &error);
     detail::throw_if_error(status, error);
-    detail::ObjectRefSetHandle objects(raw_objects);
-
-    std::vector<Uuid> result;
-    const std::uint64_t count = pp_object_ref_set_count(objects.get());
-    result.reserve(static_cast<std::size_t>(count));
-    for (std::uint64_t index = 0; index < count; ++index) {
-      pp_object_ref_t object{};
-      pp_error_t *item_error = nullptr;
-      const pp_error_code_t item_status =
-          pp_object_ref_set_get(objects.get(), index, &object, &item_error);
-      detail::throw_if_error(item_status, item_error);
-      if (object.kind != PP_OBJECT_REPRESENTATION) {
-        throw Error(ErrorCode::internal,
-                    "dependency query returned a non-representation object");
-      }
-      result.push_back(detail::uuid(object.id));
-    }
-    return result;
+    return detail::dependency_query_page(
+        detail::DependencyQuerySetHandle(raw_matches));
   }
 
   [[nodiscard]] std::vector<ExternalIdentifier>
@@ -2815,21 +2868,39 @@ public:
     return result;
   }
 
-  [[nodiscard]] std::vector<Job> jobs() const {
+  [[nodiscard]] QueryPage<Job>
+  jobs(std::uint32_t limit,
+       std::optional<std::string_view> cursor = std::nullopt,
+       std::optional<JobState> state = std::nullopt,
+       std::optional<std::string_view> kind = std::nullopt) const {
+    const std::optional<std::string> checked_cursor =
+        cursor.has_value()
+            ? std::optional<std::string>(
+                  detail::checked_string(*cursor, "query cursor"))
+            : std::nullopt;
+    const std::optional<std::string> checked_kind =
+        kind.has_value()
+            ? std::optional<std::string>(detail::checked_string(*kind, "job kind"))
+            : std::nullopt;
     pp_job_set_t *raw_jobs = nullptr;
     pp_error_t *error = nullptr;
-    const pp_error_code_t status =
-        pp_production_jobs(production_, &raw_jobs, &error);
+    const pp_error_code_t status = pp_production_jobs(
+        production_,
+        state.has_value() ? static_cast<pp_job_state_t>(*state) : 0,
+        checked_kind.has_value() ? checked_kind->c_str() : nullptr, limit,
+        checked_cursor.has_value() ? checked_cursor->c_str() : nullptr,
+        &raw_jobs, &error);
     detail::throw_if_error(status, error);
     detail::JobSetHandle jobs(raw_jobs);
 
-    std::vector<Job> result;
+    std::vector<Job> items;
     const std::uint64_t count = pp_job_set_count(jobs.get());
-    result.reserve(static_cast<std::size_t>(count));
+    items.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t index = 0; index < count; ++index) {
-      result.push_back(detail::job(jobs.get(), index));
+      items.push_back(detail::job(jobs.get(), index));
     }
-    return result;
+    const char *next_cursor = pp_job_set_next_cursor(jobs.get());
+    return {std::move(items), detail::optional_string(next_cursor), false};
   }
 
   [[nodiscard]] std::vector<RegenerationJobPlan>

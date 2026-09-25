@@ -3,8 +3,8 @@
 use std::ffi::{CString, c_char};
 
 use postproject_core::{
-    Dependency, DependencySet, DependencySetStatus, DependencyTarget, Error, ErrorKind,
-    RepresentationId,
+    Dependency, DependencyQueryMatch, DependencySet, DependencySetStatus, DependencyTarget, Error,
+    ErrorKind, QueryCursor, RepresentationId,
 };
 
 use crate::{PP_OBJECT_ASSET, PP_OBJECT_REPRESENTATION, PpObjectRef, PpUuid, exact_cstring};
@@ -16,6 +16,23 @@ pub struct PpDependencySet {
     pub(crate) status: u32,
     pub(crate) present: bool,
     dependencies: Vec<AbiDependency>,
+}
+
+/// Opaque immutable page of dependency-query matches owned by the C caller.
+pub struct PpDependencyQuerySet {
+    matches: Vec<PpDependencyMatch>,
+    next_cursor: Option<CString>,
+    pub(crate) traversal_truncated: bool,
+}
+
+/// Fixed-layout dependency-query match borrowed from a query set.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct PpDependencyMatch {
+    /// Floating asset or pinned/dependent representation identity.
+    pub target: PpObjectRef,
+    /// Shortest observed edge depth from the query root.
+    pub depth: u32,
 }
 
 /// Borrowed dependency edge used for both input and output.
@@ -88,6 +105,65 @@ impl PpDependencySet {
 
     pub(crate) fn get(&self, index: usize) -> Option<PpDependency> {
         self.dependencies.get(index).map(AbiDependency::as_abi)
+    }
+}
+
+impl PpDependencyQuerySet {
+    pub(crate) fn new(
+        matches: &[DependencyQueryMatch],
+        next_cursor: Option<&QueryCursor>,
+        traversal_truncated: bool,
+    ) -> Result<Self, Error> {
+        let matches = matches
+            .iter()
+            .map(PpDependencyMatch::try_from)
+            .collect::<Result<_, _>>()?;
+        let next_cursor = next_cursor
+            .map(|cursor| exact_cstring(cursor.as_str(), "query cursor"))
+            .transpose()?;
+        Ok(Self {
+            matches,
+            next_cursor,
+            traversal_truncated,
+        })
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.matches.len()
+    }
+
+    pub(crate) fn get(&self, index: usize) -> Option<PpDependencyMatch> {
+        self.matches.get(index).copied()
+    }
+
+    pub(crate) fn next_cursor(&self) -> *const c_char {
+        self.next_cursor
+            .as_ref()
+            .map_or(std::ptr::null(), |cursor| cursor.as_ptr())
+    }
+}
+
+impl TryFrom<&DependencyQueryMatch> for PpDependencyMatch {
+    type Error = Error;
+
+    fn try_from(value: &DependencyQueryMatch) -> Result<Self, Self::Error> {
+        let (kind, bytes) = match value.target() {
+            DependencyTarget::Asset(id) => (PP_OBJECT_ASSET, id.into_bytes()),
+            DependencyTarget::Representation(id) => (PP_OBJECT_REPRESENTATION, id.into_bytes()),
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::Unsupported,
+                    "dependency query target is not supported by this ABI",
+                ));
+            }
+        };
+        Ok(Self {
+            target: PpObjectRef {
+                kind,
+                id: PpUuid { bytes },
+            },
+            depth: value.depth(),
+        })
     }
 }
 

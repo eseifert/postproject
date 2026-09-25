@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
   std::remove(path.c_str());
 
   try {
-    if (postproject::abi_version() != 23) {
+    if (postproject::abi_version() != 24) {
       return 3;
     }
 
@@ -127,7 +127,7 @@ int main(int argc, char **argv) {
       return 17;
     }
     if (production.dependencySet(representations[0].id).has_value() ||
-        !production.dependents(asset_ref).empty()) {
+        !production.dependents(asset_ref, 1, 1000, 1000).items.empty()) {
       return 30;
     }
     auto observations = production.beginTransaction();
@@ -372,7 +372,9 @@ int main(int argc, char **argv) {
     const auto dependency_events =
         reopened.revisionEvents(dependency_revision->id);
     const auto dependencies = reopened.dependencySet(proxy_id);
-    const auto dependents = reopened.dependents(asset_ref);
+    const auto dependency_matches =
+        reopened.dependencies(proxy_id, 4, 1000, 1);
+    const auto dependents = reopened.dependents(asset_ref, 1, 1000, 1000);
     if (!dependencies.has_value() ||
         dependencies->source_representation_id != proxy_id ||
         dependencies->recorded_at_revision == 0 ||
@@ -386,7 +388,16 @@ int main(int argc, char **argv) {
         !dependencies->dependencies[0].required ||
         dependencies->dependencies[0].authored_reference !=
             dependency.authored_reference ||
-        dependents.size() != 1 || dependents[0] != proxy_id ||
+        dependency_matches.items.size() != 1 ||
+        !(dependency_matches.items[0].target == asset_ref) ||
+        dependency_matches.items[0].depth != 1 ||
+        dependency_matches.next_cursor.has_value() ||
+        dependency_matches.traversal_truncated ||
+        dependents.items.size() != 1 ||
+        dependents.items[0].target.id != proxy_id ||
+        dependents.items[0].target.kind != postproject::ObjectKind::representation ||
+        dependents.items[0].depth != 1 || dependents.next_cursor.has_value() ||
+        dependents.traversal_truncated ||
         dependency_events.size() != 1 ||
         !std::holds_alternative<postproject::DependencySetRecordedEvent>(
             dependency_events[0].payload) ||
@@ -401,18 +412,20 @@ int main(int argc, char **argv) {
         {"org.postproject:generate-proxy", {resolutions[0].representation_id},
          asset_id, postproject::RepresentationKind::proxy, std::nullopt});
     job_request.commit();
-    const auto jobs = reopened.jobs();
-    if (jobs.size() != 1 || jobs[0].id != job_id ||
-        jobs[0].kind != "org.postproject:generate-proxy" ||
-        jobs[0].inputs !=
+    const auto jobs = reopened.jobs(1000);
+    if (jobs.items.size() != 1 || jobs.items[0].id != job_id ||
+        jobs.items[0].kind != "org.postproject:generate-proxy" ||
+        jobs.items[0].inputs !=
             std::vector<postproject::Uuid>{resolutions[0].representation_id} ||
-        jobs[0].output_asset_id != asset_id ||
-        jobs[0].output_representation_kind !=
+        jobs.items[0].output_asset_id != asset_id ||
+        jobs.items[0].output_representation_kind !=
             postproject::RepresentationKind::proxy ||
-        jobs[0].target_root.has_value() ||
-        jobs[0].state != postproject::JobState::requested ||
-        jobs[0].claim.has_value() || jobs[0].completion.has_value() ||
-        jobs[0].failure_diagnostic.has_value()) {
+        jobs.items[0].target_root.has_value() ||
+        jobs.items[0].state != postproject::JobState::requested ||
+        jobs.items[0].claim.has_value() ||
+        jobs.items[0].completion.has_value() ||
+        jobs.items[0].failure_diagnostic.has_value() ||
+        jobs.next_cursor.has_value()) {
       return 33;
     }
 
@@ -422,15 +435,16 @@ int main(int argc, char **argv) {
         postproject::AgentIdentity{std::string("operator"), std::nullopt}, 10,
         20);
     claim.commit();
-    const auto claimed_jobs = reopened.jobs();
-    if (claimed_jobs.size() != 1 || !claimed_jobs[0].claim.has_value() ||
-        claimed_jobs[0].state != postproject::JobState::claimed ||
-        claimed_jobs[0].claim->id != claim_id ||
-        claimed_jobs[0].claim->tool.name != "C++ worker" ||
-        claimed_jobs[0].claim->tool.version != std::string("1.0") ||
-        !claimed_jobs[0].claim->agent.has_value() ||
-        claimed_jobs[0].claim->agent->name != std::string("operator") ||
-        claimed_jobs[0].claim->expires_at_unix_micros != 20) {
+    const auto claimed_jobs = reopened.jobs(1000);
+    if (claimed_jobs.items.size() != 1 ||
+        !claimed_jobs.items[0].claim.has_value() ||
+        claimed_jobs.items[0].state != postproject::JobState::claimed ||
+        claimed_jobs.items[0].claim->id != claim_id ||
+        claimed_jobs.items[0].claim->tool.name != "C++ worker" ||
+        claimed_jobs.items[0].claim->tool.version != std::string("1.0") ||
+        !claimed_jobs.items[0].claim->agent.has_value() ||
+        claimed_jobs.items[0].claim->agent->name != std::string("operator") ||
+        claimed_jobs.items[0].claim->expires_at_unix_micros != 20) {
       return 34;
     }
 
@@ -460,19 +474,21 @@ int main(int argc, char **argv) {
     cancel.cancelJob(cancelled_job_id);
     cancel.commit();
 
-    const auto final_jobs = reopened.jobs();
+    const auto final_jobs = reopened.jobs(1000);
     const auto failed_job = std::find_if(
-        final_jobs.begin(), final_jobs.end(),
+        final_jobs.items.begin(), final_jobs.items.end(),
         [&](const postproject::Job &candidate) { return candidate.id == job_id; });
     const auto cancelled_job = std::find_if(
-        final_jobs.begin(), final_jobs.end(), [&](const postproject::Job &candidate) {
+        final_jobs.items.begin(), final_jobs.items.end(),
+        [&](const postproject::Job &candidate) {
           return candidate.id == cancelled_job_id;
         });
-    if (final_jobs.size() != 2 || failed_job == final_jobs.end() ||
+    if (final_jobs.items.size() != 2 ||
+        failed_job == final_jobs.items.end() ||
         failed_job->state != postproject::JobState::failed ||
         failed_job->claim.has_value() ||
         failed_job->failure_diagnostic != std::string("encoder exited") ||
-        cancelled_job == final_jobs.end() ||
+        cancelled_job == final_jobs.items.end() ||
         cancelled_job->state != postproject::JobState::cancelled) {
       return 35;
     }
@@ -508,15 +524,16 @@ int main(int argc, char **argv) {
                            completion_activity_id);
     completion.commit();
 
-    const auto completed_jobs = reopened.jobs();
+    const auto completed_jobs = reopened.jobs(1000);
     const auto completed_job = std::find_if(
-        completed_jobs.begin(), completed_jobs.end(),
+        completed_jobs.items.begin(), completed_jobs.items.end(),
         [&](const postproject::Job &candidate) {
           return candidate.id == completed_job_id;
         });
     const auto completion_producing =
         reopened.activitiesProducing(completed_representation_id);
-    if (completed_jobs.size() != 3 || completed_job == completed_jobs.end() ||
+    if (completed_jobs.items.size() != 3 ||
+        completed_job == completed_jobs.items.end() ||
         completed_job->state != postproject::JobState::succeeded ||
         !completed_job->completion.has_value() ||
         completed_job->completion->activity_id != completion_activity_id ||
@@ -526,6 +543,24 @@ int main(int argc, char **argv) {
         completion_producing[0].id != completion_activity_id ||
         !completion_producing[0].outputs[0].snapshot.has_value()) {
       return 36;
+    }
+
+    const auto first_job_page = reopened.jobs(1);
+    if (first_job_page.items.size() != 1 ||
+        !first_job_page.next_cursor.has_value()) {
+      return 38;
+    }
+    const auto second_job_page =
+        reopened.jobs(1, *first_job_page.next_cursor);
+    const auto succeeded_jobs =
+        reopened.jobs(1000, std::nullopt,
+                      postproject::JobState::succeeded);
+    if (second_job_page.items.size() != 1 ||
+        second_job_page.items[0].id == first_job_page.items[0].id ||
+        succeeded_jobs.items.size() != 1 ||
+        succeeded_jobs.items[0].id != completed_job_id ||
+        succeeded_jobs.next_cursor.has_value()) {
+      return 38;
     }
 
     const auto regeneration_plans = reopened.planRegeneration(
@@ -544,7 +579,7 @@ int main(int argc, char **argv) {
         regeneration_plans[0].parameters[0].vocabulary !=
             "com.example.ingest" ||
         regeneration_plans[0].parameters[0].property != "details" ||
-        reopened.jobs().size() != 3) {
+        reopened.jobs(1000).items.size() != 3) {
       return 37;
     }
 

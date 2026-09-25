@@ -34,6 +34,7 @@ typedef struct pp_activity_set pp_activity_set_t;
 typedef struct pp_job_set pp_job_set_t;
 typedef struct pp_regeneration_plan_set pp_regeneration_plan_set_t;
 typedef struct pp_dependency_set pp_dependency_set_t;
+typedef struct pp_dependency_query_set pp_dependency_query_set_t;
 typedef struct pp_artifact_evaluation pp_artifact_evaluation_t;
 typedef struct pp_artifact_reproducibility pp_artifact_reproducibility_t;
 typedef struct pp_revision_set pp_revision_set_t;
@@ -189,6 +190,11 @@ typedef struct pp_object_ref {
   pp_object_kind_t kind;
   pp_uuid_t id;
 } pp_object_ref_t;
+
+typedef struct pp_dependency_match {
+  pp_object_ref_t target;
+  uint32_t depth;
+} pp_dependency_match_t;
 
 /* Fields not used by an event kind are zero or NULL. String pointers borrow
  * the owning pp_revision_event_set_t. */
@@ -606,9 +612,29 @@ PP_API pp_error_code_t pp_dependency_set_get_dependency(
     const pp_dependency_set_t *dependencies, uint64_t index,
     pp_dependency_t *out_dependency, pp_error_t **out_error);
 PP_API void pp_dependency_set_release(pp_dependency_set_t *dependencies);
+/* Dependency-query cursors and match views borrow the owning query set. A null
+ * input cursor starts a query; a null next cursor marks the final page. */
+PP_API pp_error_code_t pp_production_dependencies(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
+    uint32_t max_depth, uint32_t max_representations, uint32_t limit,
+    const char *cursor, pp_dependency_query_set_t **out_matches,
+    pp_error_t **out_error);
 PP_API pp_error_code_t pp_production_dependents(
     const pp_production_t *production, const pp_object_ref_t *target,
-    pp_object_ref_set_t **out_representations, pp_error_t **out_error);
+    uint32_t max_depth, uint32_t max_representations, uint32_t limit,
+    const char *cursor, pp_dependency_query_set_t **out_matches,
+    pp_error_t **out_error);
+PP_API uint64_t pp_dependency_query_set_count(
+    const pp_dependency_query_set_t *matches);
+PP_API pp_error_code_t pp_dependency_query_set_get(
+    const pp_dependency_query_set_t *matches, uint64_t index,
+    pp_dependency_match_t *out_match, pp_error_t **out_error);
+PP_API const char *pp_dependency_query_set_next_cursor(
+    const pp_dependency_query_set_t *matches);
+PP_API uint8_t pp_dependency_query_set_traversal_truncated(
+    const pp_dependency_query_set_t *matches);
+PP_API void pp_dependency_query_set_release(
+    pp_dependency_query_set_t *matches);
 /* Artifact evaluation is knowledge-only. Returned strings and byte spans
  * borrow their owning result handle. */
 PP_API pp_error_code_t pp_production_evaluate_artifact(
@@ -707,11 +733,14 @@ PP_API pp_error_code_t pp_activity_set_get_output_snapshot_fingerprint(
     uint8_t *out_has_observed_revision,
     uint64_t *out_observed_revision_sequence, pp_error_t **out_error);
 PP_API void pp_activity_set_release(pp_activity_set_t *activities);
-/* Job views and their strings borrow the owning result set. */
+/* Job views, their strings, and the optional next cursor borrow the owning
+ * result set. State zero and a null kind select all jobs. */
 PP_API pp_error_code_t pp_production_jobs(
-    const pp_production_t *production, pp_job_set_t **out_jobs,
+    const pp_production_t *production, pp_job_state_t state, const char *kind,
+    uint32_t limit, const char *cursor, pp_job_set_t **out_jobs,
     pp_error_t **out_error);
 PP_API uint64_t pp_job_set_count(const pp_job_set_t *jobs);
+PP_API const char *pp_job_set_next_cursor(const pp_job_set_t *jobs);
 PP_API pp_error_code_t pp_job_set_get(
     const pp_job_set_t *jobs, uint64_t index, pp_job_t *out_job,
     pp_error_t **out_error);

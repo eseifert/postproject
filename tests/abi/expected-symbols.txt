@@ -19,6 +19,11 @@ pp_artifact_reproducibility_release
 pp_asset_set_count
 pp_asset_set_get
 pp_asset_set_release
+pp_dependency_query_set_count
+pp_dependency_query_set_get
+pp_dependency_query_set_next_cursor
+pp_dependency_query_set_release
+pp_dependency_query_set_traversal_truncated
 pp_dependency_set_get
 pp_dependency_set_get_dependency
 pp_dependency_set_release
@@ -34,6 +39,7 @@ pp_host_binding_release
 pp_job_set_count
 pp_job_set_get
 pp_job_set_get_input
+pp_job_set_next_cursor
 pp_job_set_release
 pp_media_root_set_count
 pp_media_root_set_get
@@ -81,6 +87,7 @@ pp_production_assets
 pp_production_begin_transaction
 pp_production_changes_since
 pp_production_create
+pp_production_dependencies
 pp_production_dependency_set
 pp_production_dependents
 pp_production_evaluate_artifact
