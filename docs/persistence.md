@@ -7,7 +7,7 @@ SQLite's per-connection value-length limit is reduced to 16 MiB before migration
 or queries run. This bounds allocations for strings, blobs, and result rows read
 from an untrusted production file while leaving ample room for production metadata.
 
-## Schema version 9
+## Schema version 10
 
 The current development schema stores a singleton production record plus assets,
 representations, content structures, resources, memberships, locators, typed
@@ -24,7 +24,8 @@ Constraints enforce ID lengths, enumeration ranges, bounded text and blobs,
 non-empty fingerprint values, and referential integrity. Indexes support
 representations by asset, resources by representation, locators by resource,
 external identifiers by target and exact scheme/value, metadata by target or
-property, enabled media roots by priority, and jobs by state and kind.
+property, enabled media roots by priority, and jobs by state and kind or by
+kind alone. Job indexes include the stable ID key used for cursor continuation.
 
 External identifiers and metadata assertions use polymorphic typed targets.
 Jobs are valid targets alongside production, asset, representation, resource,
