@@ -179,7 +179,7 @@ fn exercise_job_completion(
         .expect("completion representation ID");
 
     let third_process_jobs = run_json(&["job", "list", production]);
-    let observed = third_process_jobs
+    let observed = third_process_jobs["items"]
         .as_array()
         .expect("job array")
         .iter()
@@ -204,7 +204,7 @@ fn exercise_dependencies(
 ) {
     assert!(run_json(&["dependency", "show", production, original_representation_id,]).is_null());
     assert_eq!(
-        run_json(&["dependency", "dependents", production, "asset", asset_id]),
+        run_json(&["dependency", "dependents", production, "asset", asset_id])["items"],
         serde_json::json!([])
     );
     let proxy_resource_id = representations
@@ -249,14 +249,29 @@ fn exercise_dependencies(
         recorded
     );
     assert_eq!(
-        run_json(&["dependency", "dependents", production, "asset", asset_id])[0]["representation_id"],
+        run_json(&["dependency", "dependents", production, "asset", asset_id])["items"][0]["target"]
+            ["id"],
         proxy_id
     );
+    let forward = run_json(&[
+        "dependency",
+        "dependencies",
+        production,
+        proxy_id,
+        "--max-depth",
+        "2",
+        "--limit",
+        "1",
+    ]);
+    assert_eq!(forward["items"][0]["target"]["id"], asset_id);
+    assert_eq!(forward["items"][0]["depth"], 1);
+    assert!(forward["next_cursor"].is_null());
+    assert_eq!(forward["traversal_truncated"], false);
     fs::write(&dependency_spec, b"[]").expect("write empty dependency spec");
     let empty = run_json(&["dependency", "record", production, proxy_id, spec_path]);
     assert_eq!(empty["dependencies"], serde_json::json!([]));
     assert_eq!(
-        run_json(&["dependency", "dependents", production, "asset", asset_id]),
+        run_json(&["dependency", "dependents", production, "asset", asset_id])["items"],
         serde_json::json!([])
     );
 }
@@ -990,7 +1005,8 @@ fn requests_and_lists_jobs() {
     assert!(requested["target_root"].is_null());
 
     let jobs = run_json(&["job", "list", production_path]);
-    assert_eq!(jobs, serde_json::json!([requested]));
+    assert_eq!(jobs["items"], serde_json::json!([requested]));
+    assert!(jobs["next_cursor"].is_null());
     let revision = run_json(&["revisions", "latest", production_path]);
     let events = run_json(&[
         "revisions",
@@ -999,7 +1015,7 @@ fn requests_and_lists_jobs() {
         revision["id"].as_str().expect("revision ID"),
     ]);
     assert_eq!(events[0]["kind"], "job_requested");
-    assert_eq!(events[0]["job_id"], jobs[0]["id"]);
+    assert_eq!(events[0]["job_id"], jobs["items"][0]["id"]);
 
     exercise_job_claim_lifecycle(
         production_path,
@@ -1014,6 +1030,7 @@ fn requests_and_lists_jobs() {
         original.to_str().expect("UTF-8 output path"),
     );
     let jobs_before_plan = run_json(&["job", "list", production_path]);
+    assert_job_query_pagination(production_path);
     let plans = run_json(&[
         "job",
         "plan",
@@ -1039,4 +1056,26 @@ fn requests_and_lists_jobs() {
         run_json(&["job", "list", production_path]),
         jobs_before_plan
     );
+}
+
+fn assert_job_query_pagination(production_path: &str) {
+    let first_page = run_json(&["job", "list", production_path, "--limit", "1"]);
+    let cursor = first_page["next_cursor"]
+        .as_str()
+        .expect("continuation after first job");
+    let second_page = run_json(&[
+        "job",
+        "list",
+        production_path,
+        "--limit",
+        "1",
+        "--cursor",
+        cursor,
+    ]);
+    assert_eq!(first_page["items"].as_array().expect("items").len(), 1);
+    assert_eq!(second_page["items"].as_array().expect("items").len(), 1);
+    assert_ne!(first_page["items"][0]["id"], second_page["items"][0]["id"]);
+    let succeeded = run_json(&["job", "list", production_path, "--state", "succeeded"]);
+    assert_eq!(succeeded["items"].as_array().expect("items").len(), 1);
+    assert_eq!(succeeded["items"][0]["state"], "succeeded");
 }

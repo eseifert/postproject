@@ -14,15 +14,15 @@ use postproject_core::{
     AvailabilityIssueKind, DecimalValue, Dependency, DependencyKind, DependencyQueryLimits,
     DependencySet, DependencySetStatus, DependencyTarget, EvidenceKind, ExternalIdentifier,
     FrameRange, IdentifierScheme, ImageSequencePattern, Job, JobClaimId, JobFailure, JobId,
-    JobKind, JobQuery, JobState, Locator, LocatorAvailability, LocatorId,
-    MAX_DEPENDENCY_QUERY_REPRESENTATIONS, MAX_QUERY_PAGE_SIZE, MediaRoot, MediaRootId,
-    MetadataAssertion, MetadataField, MetadataProperty, MetadataValue, MetadataValueKind,
-    ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId, ProductionStoreTransaction,
-    PropertyId, QueryPageRequest, RationalRate, RationalValue, Representation,
-    RepresentationAvailability, RepresentationId, RepresentationKind, RepresentationResolution,
-    RequestedJobOutput, ResolutionEvidence, Resource, ResourceId, ResourceResolution,
-    ResourceResolutionState, ResourceRole, Revision, RevisionContext, RevisionEvent,
-    RevisionEventKind, RevisionId, Timestamp, ToolIdentity, VocabularyId,
+    JobKind, JobQuery, JobState, JobStateKind, Locator, LocatorAvailability, LocatorId, MediaRoot,
+    MediaRootId, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
+    MetadataValueKind, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId,
+    ProductionStoreTransaction, PropertyId, QueryCursor, QueryPageRequest, RationalRate,
+    RationalValue, Representation, RepresentationAvailability, RepresentationId,
+    RepresentationKind, RepresentationResolution, RequestedJobOutput, ResolutionEvidence, Resource,
+    ResourceId, ResourceResolution, ResourceResolutionState, ResourceRole, Revision,
+    RevisionContext, RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity,
+    VocabularyId,
 };
 use postproject_media::{
     FfprobeInspector, FileResourceSource, ImageSequenceSource, InspectionOutcome,
@@ -526,8 +526,40 @@ enum DependencyCommand {
     Record(DependencyRecordArgs),
     /// Show one representation's complete dependency observation.
     Show(ActivityRepresentationArgs),
-    /// List representations that directly depend on an asset or representation.
+    /// Query direct or transitive dependencies of a representation.
+    Dependencies(DependencyRepresentationQueryArgs),
+    /// Query representations that depend on an asset or representation.
     Dependents(DependencyTargetArgs),
+}
+
+#[derive(Debug, Args)]
+struct QueryPageArgs {
+    /// Maximum items returned in this page.
+    #[arg(long, default_value_t = 100)]
+    limit: u32,
+    /// Opaque continuation returned by the preceding page.
+    #[arg(long)]
+    cursor: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct DependencyQueryArgs {
+    /// Maximum dependency-edge depth to traverse.
+    #[arg(long, default_value_t = 1)]
+    max_depth: u32,
+    /// Maximum distinct representations to traverse.
+    #[arg(long, default_value_t = 1_000)]
+    max_representations: u32,
+    #[command(flatten)]
+    page: QueryPageArgs,
+}
+
+#[derive(Debug, Args)]
+struct DependencyRepresentationQueryArgs {
+    production: PathBuf,
+    representation_id: String,
+    #[command(flatten)]
+    query: DependencyQueryArgs,
 }
 
 #[derive(Debug, Args)]
@@ -568,6 +600,8 @@ struct DependencyTargetArgs {
     #[arg(value_enum)]
     target_kind: DependencyTargetKind,
     target_id: String,
+    #[command(flatten)]
+    query: DependencyQueryArgs,
 }
 
 #[derive(Debug, Args)]
@@ -619,9 +653,29 @@ enum JobCommand {
     /// Administratively cancel requested or claimed work.
     Cancel(JobIdArgs),
     /// List durable jobs in stable identity order.
-    List(ProductionArgs),
+    List(JobListArgs),
     /// Derive non-persisted jobs that would regenerate artifacts.
     Plan(JobPlanArgs),
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum JobStateArg {
+    Requested,
+    Claimed,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Args)]
+struct JobListArgs {
+    production: PathBuf,
+    #[arg(long, value_enum)]
+    state: Option<JobStateArg>,
+    #[arg(long)]
+    kind: Option<String>,
+    #[command(flatten)]
+    page: QueryPageArgs,
 }
 
 #[derive(Debug, Args)]
@@ -1102,6 +1156,19 @@ struct DependencyView {
 }
 
 #[derive(Debug, Serialize)]
+struct QueryPageView<T> {
+    items: Vec<T>,
+    next_cursor: Option<String>,
+    traversal_truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct DependencyMatchView {
+    target: ObjectRefView,
+    depth: u32,
+}
+
+#[derive(Debug, Serialize)]
 struct ActivityEdgeSnapshotView {
     revision_sequence: u64,
     fingerprints: Vec<FingerprintSnapshotView>,
@@ -1461,6 +1528,7 @@ fn execute(cli: Cli) -> Result<()> {
         Command::Dependency(args) => match args.command {
             DependencyCommand::Record(args) => dependency_record(&args, cli.json),
             DependencyCommand::Show(args) => dependency_show(&args, cli.json),
+            DependencyCommand::Dependencies(args) => dependency_dependencies(&args, cli.json),
             DependencyCommand::Dependents(args) => dependency_dependents(&args, cli.json),
         },
         Command::Artifact(args) => match args.command {
@@ -2399,26 +2467,58 @@ fn dependency_dependents(args: &DependencyTargetArgs, json: bool) -> Result<()> 
     let page = production
         .dependents(
             target,
-            DependencyQueryLimits::new(1, MAX_DEPENDENCY_QUERY_REPRESENTATIONS)?,
-            &QueryPageRequest::new(MAX_QUERY_PAGE_SIZE, None)?,
+            DependencyQueryLimits::new(args.query.max_depth, args.query.max_representations)?,
+            &query_page_request(&args.query.page)?,
         )
-        .context("load dependents")?
-        .into_items();
-    let views: Vec<_> = page
-        .into_iter()
-        .map(|item| RepresentationRefView {
-            representation_id: match item.target() {
-                DependencyTarget::Representation(id) => id.to_string(),
-                _ => unreachable!("reverse dependency queries return representations"),
-            },
-        })
-        .collect();
+        .context("load dependents")?;
+    print_dependency_query_page(&page, json)
+}
+
+fn dependency_dependencies(args: &DependencyRepresentationQueryArgs, json: bool) -> Result<()> {
+    let source = parse_representation_id(&args.representation_id)?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let page = production
+        .dependencies(
+            source,
+            DependencyQueryLimits::new(args.query.max_depth, args.query.max_representations)?,
+            &query_page_request(&args.query.page)?,
+        )
+        .context("load dependencies")?;
+    print_dependency_query_page(&page, json)
+}
+
+fn print_dependency_query_page(
+    page: &postproject_core::QueryPage<postproject_core::DependencyQueryMatch>,
+    json: bool,
+) -> Result<()> {
+    let view = QueryPageView {
+        items: page
+            .items()
+            .iter()
+            .map(|item| {
+                Ok(DependencyMatchView {
+                    target: object_ref_view(match item.target() {
+                        DependencyTarget::Asset(id) => ObjectRef::Asset(id),
+                        DependencyTarget::Representation(id) => ObjectRef::Representation(id),
+                        _ => unreachable!("unsupported dependency target"),
+                    })?,
+                    depth: item.depth(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?,
+        next_cursor: page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
+        traversal_truncated: page.traversal_truncated(),
+    };
     if json {
-        print_json(&views)
+        print_json(&view)
     } else {
-        for view in views {
-            println!("{}", view.representation_id);
+        for item in view.items {
+            println!("{}\t{}\t{}", item.target.kind, item.target.id, item.depth);
         }
+        if let Some(cursor) = view.next_cursor {
+            println!("next_cursor\t{cursor}");
+        }
+        println!("traversal_truncated\t{}", view.traversal_truncated);
         Ok(())
     }
 }
@@ -2798,23 +2898,56 @@ fn print_job_result(
     }
 }
 
-fn job_list(args: &ProductionArgs, json: bool) -> Result<()> {
+fn job_list(args: &JobListArgs, json: bool) -> Result<()> {
     let production = SqliteProduction::open(&args.production).context("open production")?;
     let page = production
         .jobs(
-            &JobQuery::default(),
-            &QueryPageRequest::new(MAX_QUERY_PAGE_SIZE, None)?,
+            &JobQuery::new(
+                args.state.map(job_state_kind),
+                args.kind
+                    .as_deref()
+                    .map(JobKind::new)
+                    .transpose()
+                    .context("validate job kind filter")?,
+            ),
+            &query_page_request(&args.page)?,
         )
-        .context("load jobs")?
-        .into_items();
-    let views = page.iter().map(job_view).collect::<Vec<_>>();
+        .context("load jobs")?;
+    let view = QueryPageView {
+        items: page.items().iter().map(job_view).collect::<Vec<_>>(),
+        next_cursor: page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
+        traversal_truncated: false,
+    };
     if json {
-        print_json(&views)
+        print_json(&view)
     } else {
-        for view in views {
-            println!("{}\t{}\t{}", view.id, view.state, view.kind);
+        for item in view.items {
+            println!("{}\t{}\t{}", item.id, item.state, item.kind);
+        }
+        if let Some(cursor) = view.next_cursor {
+            println!("next_cursor\t{cursor}");
         }
         Ok(())
+    }
+}
+
+fn query_page_request(args: &QueryPageArgs) -> Result<QueryPageRequest> {
+    let cursor = args
+        .cursor
+        .as_deref()
+        .map(QueryCursor::new)
+        .transpose()
+        .context("validate query cursor")?;
+    QueryPageRequest::new(args.limit, cursor).context("validate query page")
+}
+
+const fn job_state_kind(state: JobStateArg) -> JobStateKind {
+    match state {
+        JobStateArg::Requested => JobStateKind::Requested,
+        JobStateArg::Claimed => JobStateKind::Claimed,
+        JobStateArg::Succeeded => JobStateKind::Succeeded,
+        JobStateArg::Failed => JobStateKind::Failed,
+        JobStateArg::Cancelled => JobStateKind::Cancelled,
     }
 }
 
