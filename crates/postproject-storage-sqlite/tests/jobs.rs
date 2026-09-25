@@ -1,5 +1,11 @@
 //! Durable job request integration coverage.
 
+use std::{
+    env, fs,
+    io::{Read, Write},
+    process::{Command, Stdio},
+};
+
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, AgentIdentity, Asset,
     AssetId, ContentStructure, ErrorKind, ExternalIdentifier, IdentifierScheme, Job, JobFailure,
@@ -10,6 +16,9 @@ use postproject_core::{
 };
 use postproject_storage_sqlite::SqliteProduction;
 use tempfile::tempdir;
+
+const CLAIM_WORKER_PRODUCTION: &str = "POSTPROJECT_TEST_CLAIM_PRODUCTION";
+const CLAIM_WORKER_RESULT: &str = "POSTPROJECT_TEST_CLAIM_RESULT";
 
 fn source_import() -> OriginalMediaImport {
     let asset_id = AssetId::from_bytes([1; 16]);
@@ -57,6 +66,105 @@ fn requested_job(source: &OriginalMediaImport) -> Job {
         .expect("valid requested output"),
     )
     .expect("valid job")
+}
+
+#[test]
+fn claim_worker_process() {
+    let Some(production_path) = env::var_os(CLAIM_WORKER_PRODUCTION) else {
+        return;
+    };
+    let result_path = env::var_os(CLAIM_WORKER_RESULT).expect("worker result path");
+    let mut signal = [0_u8];
+    std::io::stdin()
+        .read_exact(&mut signal)
+        .expect("parent starts worker");
+
+    let mut production = SqliteProduction::open(production_path).expect("open shared production");
+    let mut transaction = production
+        .begin_transaction()
+        .expect("begin claim transaction");
+    let tool = ToolIdentity::new("claim-worker", None, None).expect("valid tool");
+    let outcome = match transaction.claim_job(
+        JobId::from_bytes([5; 16]),
+        &tool,
+        None,
+        Timestamp::from_unix_micros(10),
+        Timestamp::from_unix_micros(20),
+    ) {
+        Ok(_) => {
+            transaction.commit().expect("commit winning claim");
+            "claimed"
+        }
+        Err(error) if error.kind() == ErrorKind::Conflict => "conflict",
+        Err(error) => panic!("unexpected claim failure: {error}"),
+    };
+    fs::write(result_path, outcome).expect("write worker result");
+}
+
+#[test]
+fn concurrent_processes_cannot_both_claim_one_job() {
+    let directory = tempdir().expect("temporary directory");
+    let production_path = directory.path().join("shared.pproj");
+    let source = source_import();
+    let job = requested_job(&source);
+    let mut production = SqliteProduction::create(&production_path, Some("Claim race".to_owned()))
+        .expect("create production");
+    let mut transaction = production.begin_transaction().expect("begin setup");
+    transaction.import_original(&source).expect("import source");
+    transaction
+        .add_media_root(
+            MediaRoot::new(
+                MediaRootId::from_bytes([6; 16]),
+                "proxies",
+                None,
+                None,
+                0,
+                true,
+            )
+            .expect("valid root"),
+        )
+        .expect("add root");
+    transaction.request_job(&job).expect("request job");
+    transaction.commit().expect("commit setup");
+    drop(transaction);
+    drop(production);
+
+    let executable = env::current_exe().expect("current test executable");
+    let result_paths = [
+        directory.path().join("worker-one.result"),
+        directory.path().join("worker-two.result"),
+    ];
+    let mut children = result_paths
+        .iter()
+        .map(|result_path| {
+            Command::new(&executable)
+                .args(["--exact", "claim_worker_process", "--nocapture"])
+                .env(CLAIM_WORKER_PRODUCTION, &production_path)
+                .env(CLAIM_WORKER_RESULT, result_path)
+                .stdin(Stdio::piped())
+                .spawn()
+                .expect("spawn claim worker")
+        })
+        .collect::<Vec<_>>();
+
+    for child in &mut children {
+        child
+            .stdin
+            .take()
+            .expect("worker stdin")
+            .write_all(b"x")
+            .expect("start claim worker");
+    }
+    for child in &mut children {
+        assert!(child.wait().expect("wait for claim worker").success());
+    }
+
+    let mut outcomes = result_paths
+        .iter()
+        .map(|path| fs::read_to_string(path).expect("read worker result"))
+        .collect::<Vec<_>>();
+    outcomes.sort_unstable();
+    assert_eq!(outcomes, ["claimed", "conflict"]);
 }
 
 fn proxy_import(
