@@ -49,6 +49,22 @@ with Production.create("production.pproj", "Documentary") as production:
         if page.next_cursor is None:
             break
         page = production.jobs(limit=100, cursor=page.next_cursor)
+
+    cursor = None
+    while True:
+        assets = production.assets_page(limit=100, cursor=cursor)
+        for asset in assets.items:
+            for representation in production.representations_page(
+                asset.id, limit=100
+            ).items:
+                print(representation.id, representation.kind)
+        cursor = assets.next_cursor
+        if cursor is None:
+            break
+
+    unresolved = production.unresolved_media(limit=100)
+    changed = production.objects_changed_since(0, limit=100)
+    print(len(unresolved.items), len(changed.items))
 ```
 
 Production and transaction handles support deterministic `close()` and context
@@ -65,3 +81,12 @@ the complete nested candidate, evidence, issue, and missing-frame details before
 releasing their native result handle.
 Query cursors are opaque and must be reused with the same page size, filters,
 root, and traversal bounds that produced them.
+Paginated queries cover assets, representations, resources, locators with their
+recorded logical root, unresolved media, representations under a media root,
+metadata properties with an optional exact scalar value, producing and
+consuming activities, outputs by activity kind or tool, bounded provenance
+ancestors and descendants, dependencies and dependents, stale artifacts, jobs,
+and objects changed since a revision. Unresolved-media and media-root queries
+read recorded knowledge only and never touch the filesystem; use `resolve()`
+for current file availability. A stale-artifact page may hold fewer results
+than its limit and still return a `next_cursor`.

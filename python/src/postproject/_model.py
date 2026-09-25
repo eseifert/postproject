@@ -175,6 +175,14 @@ class DependencyMatch:
 
 
 @dataclass(frozen=True, slots=True)
+class ProvenanceMatch:
+    """One provenance-query representation and its shortest observed depth."""
+
+    representation_id: RepresentationId
+    depth: int
+
+
+@dataclass(frozen=True, slots=True)
 class FingerprintSnapshot:
     """Fingerprint evidence captured at one semantic revision."""
 
@@ -506,6 +514,15 @@ class Locator:
     uri: str
     availability: LocatorAvailability
     last_seen_unix_micros: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class LocatorMatch:
+    """One locator-query result with its owning resource and logical root."""
+
+    resource_id: ResourceId
+    locator: Locator
+    media_root: str | None
 
 
 @dataclass(frozen=True, slots=True)

@@ -37,6 +37,7 @@ from postproject import (
     JobState,
     LocatorAddedEvent,
     LocatorAvailability,
+    LocatorMatch,
     LocatorRetiredEvent,
     MediaRootEnabledChangedEvent,
     MediaRootRemovedEvent,
@@ -61,6 +62,7 @@ from postproject import (
     NotFoundError,
     OriginIdentity,
     Production,
+    ProvenanceMatch,
     RepresentationAddedEvent,
     RepresentationAvailability,
     RepresentationFingerprintObservedEvent,
@@ -1061,6 +1063,269 @@ class ProductionTests(unittest.TestCase):
             self.assertEqual(reason.representation_id, source.id)
             self.assertEqual(reason.edge_kind, ArtifactEdgeKind.INPUT)
             self.assertEqual(reason.current_value, b"changed-python-fingerprint")
+
+    def test_media_structure_queries_are_paginated(self) -> None:
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                first_asset = transaction.import_media(self.media_path)
+                second_asset = transaction.import_media(self.second_media_path)
+                transaction.add_media_root("media", "Media", 1)
+            imported = production.latest_revision
+            assert imported is not None
+
+            first_page = production.assets_page(limit=1)
+            self.assertEqual(len(first_page.items), 1)
+            self.assertIsNotNone(first_page.next_cursor)
+            self.assertFalse(first_page.traversal_truncated)
+            paged_assets = list(first_page.items)
+            cursor = first_page.next_cursor
+            while cursor is not None:
+                page = production.assets_page(limit=1, cursor=cursor)
+                paged_assets.extend(page.items)
+                cursor = page.next_cursor
+            self.assertEqual(tuple(paged_assets), tuple(production.assets))
+            self.assertEqual(
+                {asset.id for asset in paged_assets}, {first_asset, second_asset}
+            )
+
+            representations = production.representations_page(first_asset, limit=1000)
+            self.assertIsNone(representations.next_cursor)
+            self.assertEqual(
+                representations.items, production.representations[first_asset]
+            )
+            representation = representations.items[0]
+            resource = representation.resources[0]
+            locator = resource.locators[0]
+
+            resources = production.resources_page(representation.id, limit=1000)
+            self.assertEqual(resources.items, (resource.id,))
+            self.assertIsNone(resources.next_cursor)
+
+            locators = production.locators_page(resource.id, limit=1000)
+            self.assertEqual(
+                locators.items, (LocatorMatch(resource.id, locator, None),)
+            )
+            self.assertIsNone(locators.next_cursor)
+            self.assertEqual(production.unresolved_media(limit=1000).items, ())
+            self.assertEqual(
+                production.representations_under_media_root("media", limit=1000).items,
+                (),
+            )
+
+            with production.transaction() as transaction:
+                transaction.retire_locator(locator.id)
+            self.assertEqual(
+                production.unresolved_media(limit=1000).items, (representation.id,)
+            )
+            self.assertEqual(
+                production.locators_page(resource.id, limit=1000).items, ()
+            )
+
+            with production.transaction() as transaction:
+                transaction.confirm_locator_under_root(
+                    resource.id, locator.uri, "media"
+                )
+            self.assertEqual(production.unresolved_media(limit=1000).items, ())
+            (confirmed,) = production.locators_page(resource.id, limit=1000).items
+            self.assertEqual(confirmed.resource_id, resource.id)
+            self.assertEqual(confirmed.locator.uri, locator.uri)
+            self.assertEqual(confirmed.media_root, "media")
+            under_root = production.representations_under_media_root(
+                "media", limit=1000
+            )
+            self.assertEqual(
+                tuple(value.id for value in under_root.items), (representation.id,)
+            )
+            with self.assertRaises(NotFoundError):
+                production.representations_under_media_root("archive", limit=1000)
+
+            changed = production.objects_changed_since(imported.sequence, limit=1000)
+            self.assertIsNone(changed.next_cursor)
+            self.assertIn(resource.id, changed.items)
+            self.assertNotIn(second_asset, changed.items)
+            everything = production.objects_changed_since(0, limit=1000).items
+            self.assertIn(first_asset, everything)
+            self.assertIn(second_asset, everything)
+            first_change = production.objects_changed_since(0, limit=1)
+            assert first_change.next_cursor is not None
+            rest = production.objects_changed_since(
+                0, limit=1000, cursor=first_change.next_cursor
+            )
+            self.assertEqual(first_change.items + rest.items, everything)
+
+            with self.assertRaises(InvalidArgumentError):
+                production.assets_page(limit=0)
+            with self.assertRaises(InvalidArgumentError):
+                production.assets_page(limit=1, cursor="not-a-cursor")
+            with self.assertRaises(InvalidArgumentError):
+                production.representations_under_media_root("", limit=1)
+            with self.assertRaises(ValueError):
+                with production.transaction() as transaction:
+                    transaction.confirm_locator_under_root(
+                        resource.id, "file:///nul", "bad\0root"
+                    )
+
+    def test_metadata_queries_page_and_filter_exact_scalars(self) -> None:
+        scene = MetadataProperty("https://example.com/metadata", "scene")
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                first_asset = transaction.import_media(self.media_path)
+                second_asset = transaction.import_media(self.second_media_path)
+            with production.transaction() as transaction:
+                transaction.add_metadata(first_asset, scene, MetadataString("12A"))
+                transaction.add_metadata(second_asset, scene, MetadataString("14"))
+                transaction.add_metadata(second_asset, scene, MetadataU64(12))
+
+            everything = production.query_metadata(scene, limit=1000)
+            self.assertIsNone(everything.next_cursor)
+            self.assertEqual(
+                set(everything.items), set(production.metadata_by_property[scene])
+            )
+            self.assertEqual(len(everything.items), 3)
+
+            first_page = production.query_metadata(scene, limit=2)
+            assert first_page.next_cursor is not None
+            second_page = production.query_metadata(
+                scene, limit=2, cursor=first_page.next_cursor
+            )
+            self.assertIsNone(second_page.next_cursor)
+            self.assertEqual(first_page.items + second_page.items, everything.items)
+
+            exact = production.query_metadata(
+                scene, limit=1000, value=MetadataString("12A")
+            )
+            self.assertEqual(
+                exact.items,
+                (MetadataAssertion(first_asset, scene, MetadataString("12A")),),
+            )
+            typed = production.query_metadata(scene, limit=1000, value=MetadataU64(12))
+            self.assertEqual(
+                typed.items, (MetadataAssertion(second_asset, scene, MetadataU64(12)),)
+            )
+            self.assertEqual(
+                production.query_metadata(
+                    scene, limit=1000, value=MetadataString("99")
+                ).items,
+                (),
+            )
+            with self.assertRaises(InvalidArgumentError):
+                production.query_metadata(
+                    scene, limit=1000, value=MetadataList((MetadataString("12A"),))
+                )
+            with self.assertRaises(InvalidArgumentError):
+                production.query_metadata(scene, limit=0)
+
+    def test_provenance_queries_are_bounded_and_paginated(self) -> None:
+        tool = ToolIdentity("FFmpeg", "8.0", "https://ffmpeg.org/")
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                source_asset = transaction.import_media(self.media_path)
+                output_asset = transaction.import_media(self.second_media_path)
+            source = production.representations[source_asset][0]
+            output = production.representations[output_asset][0]
+            with production.transaction() as transaction:
+                transaction.create_activity(
+                    ActivitySpec(
+                        "org.postproject:transcode",
+                        inputs=(ActivityEdge(source.id),),
+                        outputs=(ActivityEdge(output.id),),
+                        tool=tool,
+                    )
+                )
+            activity = production.activities[0]
+
+            producing = production.activities_producing_page(output.id, limit=1000)
+            self.assertEqual(producing.items, (activity,))
+            self.assertIsNone(producing.next_cursor)
+            consuming = production.activities_consuming_page(source.id, limit=1000)
+            self.assertEqual(consuming.items, (activity,))
+            self.assertEqual(
+                production.activities_producing_page(source.id, limit=1000).items, ()
+            )
+
+            self.assertEqual(
+                production.outputs_by_activity_kind(
+                    "org.postproject:transcode", limit=1000
+                ).items,
+                (output.id,),
+            )
+            self.assertEqual(
+                production.outputs_by_activity_kind(
+                    "org.postproject:conform", limit=1000
+                ).items,
+                (),
+            )
+            self.assertEqual(
+                production.outputs_by_tool(tool, limit=1000).items, (output.id,)
+            )
+            self.assertEqual(
+                production.outputs_by_tool(
+                    ToolIdentity("FFmpeg", "7.1", "https://ffmpeg.org/"), limit=1000
+                ).items,
+                (),
+            )
+
+            ancestors = production.provenance_ancestors_page(
+                output.id, max_depth=4, max_representations=1000, limit=1000
+            )
+            self.assertEqual(ancestors.items, (ProvenanceMatch(source.id, 1),))
+            self.assertIsNone(ancestors.next_cursor)
+            self.assertFalse(ancestors.traversal_truncated)
+            descendants = production.provenance_descendants_page(
+                source.id, max_depth=4, max_representations=1000, limit=1000
+            )
+            self.assertEqual(descendants.items, (ProvenanceMatch(output.id, 1),))
+            with self.assertRaises(InvalidArgumentError):
+                production.provenance_ancestors_page(
+                    output.id, max_depth=0, max_representations=1000, limit=1000
+                )
+
+            self.assertEqual(
+                production.stale_artifacts(
+                    max_depth=64, max_representations=1000, limit=1000
+                ).items,
+                (),
+            )
+            source_fingerprint = source.fingerprints[0]
+            with production.transaction() as transaction:
+                transaction.record_representation_fingerprint(
+                    source.id,
+                    Fingerprint(
+                        source_fingerprint.algorithm,
+                        source_fingerprint.version,
+                        b"changed-python-fingerprint",
+                    ),
+                )
+            stale = production.stale_artifacts(
+                max_depth=64, max_representations=1000, limit=1000
+            )
+            self.assertEqual(stale.items, (output.id,))
+            self.assertIsNone(stale.next_cursor)
+            self.assertFalse(stale.traversal_truncated)
+            self.assertEqual(
+                production.stale_artifacts(
+                    max_depth=64,
+                    max_representations=1000,
+                    limit=1000,
+                    source=source.id,
+                ).items,
+                (output.id,),
+            )
+            self.assertEqual(
+                production.stale_artifacts(
+                    max_depth=64,
+                    max_representations=1000,
+                    limit=1000,
+                    source=output.id,
+                ).items,
+                (),
+            )
 
     def test_regeneration_plans_copy_provenance_without_enqueuing(self) -> None:
         parameter = MetadataProperty("org.postproject.parameters", "profile")

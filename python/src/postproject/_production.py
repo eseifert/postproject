@@ -9,7 +9,7 @@ from _ctypes import _Pointer
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from types import TracebackType
-from typing import Self
+from typing import Self, TypeVar
 from uuid import UUID
 
 from . import _abi
@@ -23,8 +23,10 @@ from ._abi import (
     Error,
     ExternalIdentifierSet,
     JobSet,
+    LocatorQuerySet,
     MediaRootSet,
     MetadataSet,
+    ObjectQuerySet,
     ObjectRefSet,
     RegenerationPlanSet,
     RepresentationSet,
@@ -118,6 +120,7 @@ from ._model import (
     LocatorAddedEvent,
     LocatorAvailability,
     LocatorId,
+    LocatorMatch,
     LocatorRetiredEvent,
     MediaRoot,
     MediaRootAddedEvent,
@@ -146,6 +149,7 @@ from ._model import (
     ObjectReference,
     OriginIdentity,
     ProductionId,
+    ProvenanceMatch,
     QueryPage,
     RegenerationJobPlan,
     Representation,
@@ -173,6 +177,8 @@ from ._model import (
     TransactionId,
 )
 from ._native import NativeLibrary
+
+_ObjectQueryItem = TypeVar("_ObjectQueryItem")
 
 
 class _Assets:
@@ -740,6 +746,338 @@ class Production:
         finally:
             self._native.lib.pp_dependency_query_set_release(handle)
 
+    def assets_page(self, *, limit: int, cursor: str | None = None) -> QueryPage[Asset]:
+        """Return one bounded asset page in creation and identity order."""
+
+        self._require_open()
+        handle = ctypes.POINTER(AssetSet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_assets_page(
+            self._handle,
+            limit,
+            _optional_text(cursor),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native asset query returned no result set")
+        try:
+            count = self._native.lib.pp_asset_set_count(handle)
+            return QueryPage(
+                tuple(
+                    _asset_at(self._native, handle, index)
+                    for index in range(int(count))
+                ),
+                _decode_optional(self._native.lib.pp_asset_set_next_cursor(handle)),
+            )
+        finally:
+            self._native.lib.pp_asset_set_release(handle)
+
+    def representations_page(
+        self, asset_id: AssetId, *, limit: int, cursor: str | None = None
+    ) -> QueryPage[Representation]:
+        """Return one bounded page of representations belonging to an asset."""
+
+        self._require_open()
+        native_id = _native_uuid(asset_id.value)
+        return self._representation_page(
+            self._native.lib.pp_production_representations_page,
+            self._handle,
+            ctypes.byref(native_id),
+            limit,
+            _optional_text(cursor),
+        )
+
+    def representations_under_media_root(
+        self, root_name: str, *, limit: int, cursor: str | None = None
+    ) -> QueryPage[Representation]:
+        """Return one bounded page of representations located under a root."""
+
+        self._require_open()
+        return self._representation_page(
+            self._native.lib.pp_production_representations_under_media_root,
+            self._handle,
+            _utf8(root_name, "root name"),
+            limit,
+            _optional_text(cursor),
+        )
+
+    def resources_page(
+        self,
+        representation_id: RepresentationId,
+        *,
+        limit: int,
+        cursor: str | None = None,
+    ) -> QueryPage[ResourceId]:
+        """Return one bounded page of resources in representation order."""
+
+        self._require_open()
+        native_id = _native_uuid(representation_id.value)
+        return self._object_query_page(
+            self._native.lib.pp_production_resources_page,
+            _resource_match,
+            self._handle,
+            ctypes.byref(native_id),
+            limit,
+            _optional_text(cursor),
+        )
+
+    def locators_page(
+        self, resource_id: ResourceId, *, limit: int, cursor: str | None = None
+    ) -> QueryPage[LocatorMatch]:
+        """Return one bounded page of locators belonging to a resource."""
+
+        self._require_open()
+        native_id = _native_uuid(resource_id.value)
+        handle = ctypes.POINTER(LocatorQuerySet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_locators_page(
+            self._handle,
+            ctypes.byref(native_id),
+            limit,
+            _optional_text(cursor),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native locator query returned no result set")
+        try:
+            count = self._native.lib.pp_locator_query_set_count(handle)
+            return QueryPage(
+                tuple(
+                    _locator_match_at(self._native, handle, index)
+                    for index in range(int(count))
+                ),
+                _decode_optional(
+                    self._native.lib.pp_locator_query_set_next_cursor(handle)
+                ),
+            )
+        finally:
+            self._native.lib.pp_locator_query_set_release(handle)
+
+    def unresolved_media(
+        self, *, limit: int, cursor: str | None = None
+    ) -> QueryPage[RepresentationId]:
+        """Return representations whose required resources lack locators."""
+
+        self._require_open()
+        return self._object_query_page(
+            self._native.lib.pp_production_unresolved_media,
+            _representation_match,
+            self._handle,
+            limit,
+            _optional_text(cursor),
+        )
+
+    def objects_changed_since(
+        self, sequence: int, *, limit: int, cursor: str | None = None
+    ) -> QueryPage[ObjectReference]:
+        """Return distinct semantic objects touched after revision ``sequence``."""
+
+        self._require_open()
+        return self._object_query_page(
+            self._native.lib.pp_production_objects_changed_since,
+            _object_match,
+            self._handle,
+            sequence,
+            limit,
+            _optional_text(cursor),
+        )
+
+    def query_metadata(
+        self,
+        property: MetadataProperty,
+        *,
+        limit: int,
+        cursor: str | None = None,
+        value: MetadataValue | None = None,
+    ) -> QueryPage[MetadataAssertion]:
+        """Return one bounded assertion page with an optional exact scalar value."""
+
+        self._require_open()
+        vocabulary = _utf8(property.vocabulary, "metadata vocabulary")
+        property_name = _utf8(property.property, "metadata property")
+        native_cursor = _optional_text(cursor)
+        handle = ctypes.POINTER(MetadataSet)()
+        error = ctypes.POINTER(Error)()
+        native_value = None if value is None else _metadata_input(self._native, value)
+        try:
+            status = self._native.lib.pp_production_query_metadata(
+                self._handle,
+                vocabulary,
+                property_name,
+                native_value,
+                limit,
+                native_cursor,
+                ctypes.byref(handle),
+                ctypes.byref(error),
+            )
+        finally:
+            if native_value is not None:
+                self._native.lib.pp_metadata_input_release(native_value)
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native metadata query returned no result set")
+        try:
+            count = self._native.lib.pp_metadata_set_count(handle)
+            return QueryPage(
+                tuple(
+                    _metadata_at(self._native, handle, index)
+                    for index in range(int(count))
+                ),
+                _decode_optional(self._native.lib.pp_metadata_set_next_cursor(handle)),
+            )
+        finally:
+            self._native.lib.pp_metadata_set_release(handle)
+
+    def activities_producing_page(
+        self,
+        representation_id: RepresentationId,
+        *,
+        limit: int,
+        cursor: str | None = None,
+    ) -> QueryPage[Activity]:
+        """Return one bounded page of activities producing a representation."""
+
+        self._require_open()
+        native_id = _native_uuid(representation_id.value)
+        return self._activity_page(
+            self._native.lib.pp_production_activities_producing_page,
+            self._handle,
+            ctypes.byref(native_id),
+            limit,
+            _optional_text(cursor),
+        )
+
+    def activities_consuming_page(
+        self,
+        representation_id: RepresentationId,
+        *,
+        limit: int,
+        cursor: str | None = None,
+    ) -> QueryPage[Activity]:
+        """Return one bounded page of activities consuming a representation."""
+
+        self._require_open()
+        native_id = _native_uuid(representation_id.value)
+        return self._activity_page(
+            self._native.lib.pp_production_activities_consuming_page,
+            self._handle,
+            ctypes.byref(native_id),
+            limit,
+            _optional_text(cursor),
+        )
+
+    def outputs_by_activity_kind(
+        self, kind: str, *, limit: int, cursor: str | None = None
+    ) -> QueryPage[RepresentationId]:
+        """Return outputs produced by activities of one exact kind."""
+
+        self._require_open()
+        return self._object_query_page(
+            self._native.lib.pp_production_outputs_by_activity_kind,
+            _representation_match,
+            self._handle,
+            _utf8(kind, "activity kind"),
+            limit,
+            _optional_text(cursor),
+        )
+
+    def outputs_by_tool(
+        self, tool: ToolIdentity, *, limit: int, cursor: str | None = None
+    ) -> QueryPage[RepresentationId]:
+        """Return outputs produced by activities with one exact tool identity."""
+
+        self._require_open()
+        return self._object_query_page(
+            self._native.lib.pp_production_outputs_by_tool,
+            _representation_match,
+            self._handle,
+            _utf8(tool.name, "tool name"),
+            _optional_text(tool.version),
+            _optional_text(tool.uri),
+            limit,
+            _optional_text(cursor),
+        )
+
+    def provenance_ancestors_page(
+        self,
+        representation_id: RepresentationId,
+        *,
+        max_depth: int,
+        max_representations: int,
+        limit: int,
+        cursor: str | None = None,
+    ) -> QueryPage[ProvenanceMatch]:
+        """Return one bounded page of shortest-depth provenance ancestors."""
+
+        self._require_open()
+        native_id = _native_uuid(representation_id.value)
+        return self._object_query_page(
+            self._native.lib.pp_production_provenance_ancestors_page,
+            _provenance_match,
+            self._handle,
+            ctypes.byref(native_id),
+            max_depth,
+            max_representations,
+            limit,
+            _optional_text(cursor),
+        )
+
+    def provenance_descendants_page(
+        self,
+        representation_id: RepresentationId,
+        *,
+        max_depth: int,
+        max_representations: int,
+        limit: int,
+        cursor: str | None = None,
+    ) -> QueryPage[ProvenanceMatch]:
+        """Return one bounded page of shortest-depth provenance descendants."""
+
+        self._require_open()
+        native_id = _native_uuid(representation_id.value)
+        return self._object_query_page(
+            self._native.lib.pp_production_provenance_descendants_page,
+            _provenance_match,
+            self._handle,
+            ctypes.byref(native_id),
+            max_depth,
+            max_representations,
+            limit,
+            _optional_text(cursor),
+        )
+
+    def stale_artifacts(
+        self,
+        *,
+        max_depth: int,
+        max_representations: int,
+        limit: int,
+        cursor: str | None = None,
+        source: RepresentationId | None = None,
+    ) -> QueryPage[RepresentationId]:
+        """Return produced representations currently evaluated as stale.
+
+        ``source`` restricts the query to its provenance descendants; the depth
+        and representation bounds apply to each artifact evaluation.
+        """
+
+        self._require_open()
+        native_source = None if source is None else _native_uuid(source.value)
+        return self._object_query_page(
+            self._native.lib.pp_production_stale_artifacts,
+            _representation_match,
+            self._handle,
+            None if native_source is None else ctypes.byref(native_source),
+            max_depth,
+            max_representations,
+            limit,
+            _optional_text(cursor),
+        )
+
     @property
     def host_bindings(self) -> _HostBindings:
         """Return the portable host-binding formatter and parser."""
@@ -1107,6 +1445,88 @@ class Production:
         finally:
             self._native.lib.pp_metadata_set_release(handle)
 
+    def _representation_page(
+        self, function: Callable[..., int], *arguments: object
+    ) -> QueryPage[Representation]:
+        handle = ctypes.POINTER(RepresentationSet)()
+        error = ctypes.POINTER(Error)()
+        status = function(*arguments, ctypes.byref(handle), ctypes.byref(error))
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native representation query returned no result set")
+        try:
+            count = self._native.lib.pp_representation_set_count(handle)
+            return QueryPage(
+                tuple(
+                    _representation_at(self._native, handle, index)
+                    for index in range(int(count))
+                ),
+                _decode_optional(
+                    self._native.lib.pp_representation_set_next_cursor(handle)
+                ),
+            )
+        finally:
+            self._native.lib.pp_representation_set_release(handle)
+
+    def _activity_page(
+        self, function: Callable[..., int], *arguments: object
+    ) -> QueryPage[Activity]:
+        handle = ctypes.POINTER(ActivitySet)()
+        error = ctypes.POINTER(Error)()
+        status = function(*arguments, ctypes.byref(handle), ctypes.byref(error))
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native activity query returned no result set")
+        try:
+            count = self._native.lib.pp_activity_set_count(handle)
+            return QueryPage(
+                tuple(
+                    _activity_at(self._native, handle, index)
+                    for index in range(int(count))
+                ),
+                _decode_optional(self._native.lib.pp_activity_set_next_cursor(handle)),
+            )
+        finally:
+            self._native.lib.pp_activity_set_release(handle)
+
+    def _object_query_page(
+        self,
+        function: Callable[..., int],
+        convert: Callable[[ObjectReference, int], _ObjectQueryItem],
+        *arguments: object,
+    ) -> QueryPage[_ObjectQueryItem]:
+        handle = ctypes.POINTER(ObjectQuerySet)()
+        error = ctypes.POINTER(Error)()
+        status = function(*arguments, ctypes.byref(handle), ctypes.byref(error))
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native object query returned no result set")
+        try:
+            count = self._native.lib.pp_object_query_set_count(handle)
+            items: list[_ObjectQueryItem] = []
+            for index in range(int(count)):
+                value = _abi.ObjectRef()
+                depth = ctypes.c_uint32()
+                item_error = ctypes.POINTER(Error)()
+                item_status = self._native.lib.pp_object_query_set_get(
+                    handle,
+                    index,
+                    ctypes.byref(value),
+                    ctypes.byref(depth),
+                    ctypes.byref(item_error),
+                )
+                self._native.check(item_status, item_error)
+                items.append(convert(_object_reference(value), int(depth.value)))
+            return QueryPage(
+                tuple(items),
+                _decode_optional(
+                    self._native.lib.pp_object_query_set_next_cursor(handle)
+                ),
+                bool(self._native.lib.pp_object_query_set_traversal_truncated(handle)),
+            )
+        finally:
+            self._native.lib.pp_object_query_set_release(handle)
+
 
 class Transaction:
     """A caller-serialized transaction with context-manager semantics."""
@@ -1302,6 +1722,27 @@ class Transaction:
             self._handle,
             ctypes.byref(native_id),
             _utf8(uri, "locator URI"),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
+    def confirm_locator_under_root(
+        self, resource_id: ResourceId, uri: str, root_name: str
+    ) -> None:
+        """Stage explicit confirmation of a URI under a logical media root.
+
+        The root name is retained as query evidence and need not name a
+        currently configured or enabled root.
+        """
+
+        self._require_open()
+        native_id = _native_uuid(resource_id.value)
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_confirm_locator_under_root(
+            self._handle,
+            ctypes.byref(native_id),
+            _utf8(uri, "locator URI"),
+            _utf8(root_name, "root name"),
             ctypes.byref(error),
         )
         self._native.check(status, error)
@@ -2187,6 +2628,64 @@ def _dependency_query_page(
         tuple(items),
         _decode_optional(native.lib.pp_dependency_query_set_next_cursor(matches)),
         bool(native.lib.pp_dependency_query_set_traversal_truncated(matches)),
+    )
+
+
+def _resource_match(reference: ObjectReference, _depth: int) -> ResourceId:
+    if not isinstance(reference, ResourceId):
+        raise RuntimeError("native resource query returned a non-resource")
+    return reference
+
+
+def _representation_match(reference: ObjectReference, _depth: int) -> RepresentationId:
+    if not isinstance(reference, RepresentationId):
+        raise RuntimeError("native representation query returned a non-representation")
+    return reference
+
+
+def _object_match(reference: ObjectReference, _depth: int) -> ObjectReference:
+    return reference
+
+
+def _provenance_match(reference: ObjectReference, depth: int) -> ProvenanceMatch:
+    if not isinstance(reference, RepresentationId):
+        raise RuntimeError("native provenance query returned a non-representation")
+    return ProvenanceMatch(reference, depth)
+
+
+def _locator_match_at(
+    native: NativeLibrary, locators: _Pointer[LocatorQuerySet], index: int
+) -> LocatorMatch:
+    locator_id = Uuid()
+    resource_id = Uuid()
+    uri = ctypes.c_char_p()
+    availability = _abi.LocatorAvailability()
+    has_last_seen = ctypes.c_uint8()
+    last_seen = ctypes.c_int64()
+    media_root = ctypes.c_char_p()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_locator_query_set_get(
+        locators,
+        index,
+        ctypes.byref(locator_id),
+        ctypes.byref(resource_id),
+        ctypes.byref(uri),
+        ctypes.byref(availability),
+        ctypes.byref(has_last_seen),
+        ctypes.byref(last_seen),
+        ctypes.byref(media_root),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    return LocatorMatch(
+        ResourceId(_uuid(resource_id)),
+        Locator(
+            LocatorId(_uuid(locator_id)),
+            _decode_required(uri.value, "locator URI"),
+            _locator_availability(int(availability.value)),
+            int(last_seen.value) if has_last_seen.value else None,
+        ),
+        _decode_optional(media_root.value),
     )
 
 
