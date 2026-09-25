@@ -619,6 +619,8 @@ enum JobCommand {
     Cancel(JobIdArgs),
     /// List durable jobs in stable identity order.
     List(ProductionArgs),
+    /// Derive non-persisted jobs that would regenerate artifacts.
+    Plan(JobPlanArgs),
 }
 
 #[derive(Debug, Args)]
@@ -704,6 +706,14 @@ struct JobFailArgs {
 struct JobIdArgs {
     production: PathBuf,
     job_id: String,
+}
+
+#[derive(Debug, Args)]
+struct JobPlanArgs {
+    production: PathBuf,
+    /// Artifact representation ID; repeat to plan multiple artifacts.
+    #[arg(long = "artifact", required = true)]
+    artifacts: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -1056,6 +1066,13 @@ struct JobView {
     completion_activity_id: Option<String>,
     completion_representation_id: Option<String>,
     failure_diagnostic: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RegenerationPlanView {
+    artifact_representation_id: String,
+    job: JobView,
+    parameters: Vec<MetadataAssertionView>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1458,6 +1475,7 @@ fn execute(cli: Cli) -> Result<()> {
             JobCommand::Fail(args) => job_fail(args, cli.json),
             JobCommand::Cancel(args) => job_cancel(&args, cli.json),
             JobCommand::List(args) => job_list(&args, cli.json),
+            JobCommand::Plan(args) => job_plan(&args, cli.json),
         },
         Command::Revisions(args) => match args.command {
             RevisionsCommand::Latest(args) => revisions_latest(&args, cli.json),
@@ -2783,6 +2801,45 @@ fn job_list(args: &ProductionArgs, json: bool) -> Result<()> {
     } else {
         for view in views {
             println!("{}\t{}\t{}", view.id, view.state, view.kind);
+        }
+        Ok(())
+    }
+}
+
+fn job_plan(args: &JobPlanArgs, json: bool) -> Result<()> {
+    let artifact_ids = args
+        .artifacts
+        .iter()
+        .map(|value| parse_representation_id(value))
+        .collect::<Result<Vec<_>>>()?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let plans = production
+        .plan_regeneration(&artifact_ids)
+        .context("plan artifact regeneration")?;
+    let views = plans
+        .iter()
+        .map(|plan| {
+            let target = ObjectRef::Job(plan.job().id());
+            let parameters = plan
+                .parameters()
+                .iter()
+                .map(|assertion| metadata_assertion_view(target, assertion))
+                .collect::<Result<Vec<_>>>()?;
+            Ok(RegenerationPlanView {
+                artifact_representation_id: plan.artifact_representation_id().to_string(),
+                job: job_view(plan.job()),
+                parameters,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if json {
+        print_json(&views)
+    } else {
+        for view in views {
+            println!(
+                "{}\t{}\t{}",
+                view.artifact_representation_id, view.job.id, view.job.kind
+            );
         }
         Ok(())
     }
