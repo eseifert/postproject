@@ -43,3 +43,11 @@ without making otherwise usable media partial.
 This separation is why PostProject can retain an asset's identity and metadata
 when storage paths change, and why one missing image-sequence frame is not
 mistaken for a fully online representation.
+
+## Across public surfaces
+
+Resolution reports candidates without mutating the production or silently
+choosing among ambiguous locations:
+
+```{code-variants} resolve-asset
+```

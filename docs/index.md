@@ -24,6 +24,7 @@ src/integrators/media-resolution
 src/integrators/compound-media
 src/integrators/metadata-vocabularies
 src/integrators/provenance
+src/integrators/bounded-queries
 src/integrators/jobs-and-workers
 src/integrators/revision-feed
 src/integrators/host-object-bindings

@@ -39,6 +39,7 @@ Start with [installing a release](installing-a-release.md), then
 - [Compound media](compound-media.md)
 - [Metadata vocabularies](metadata-vocabularies.md)
 - [Provenance](provenance.md)
+- [Bounded queries and cursors](bounded-queries.md)
 - [Revision feed](revision-feed.md)
 - [Host-object bindings](host-object-bindings.md)
 

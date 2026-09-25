@@ -37,6 +37,7 @@
 - [Compound-media integration](integrators/compound-media.md)
 - [Metadata vocabularies](integrators/metadata-vocabularies.md)
 - [Provenance integration](integrators/provenance.md)
+- [Bounded queries and cursors](integrators/bounded-queries.md)
 - [Jobs and workers](integrators/jobs-and-workers.md)
 - [Revision feed](integrators/revision-feed.md)
 

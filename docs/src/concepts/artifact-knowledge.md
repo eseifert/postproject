@@ -73,3 +73,11 @@ The C and C++ APIs expose owned evaluation and reproducibility results, Python
 provides immutable value objects through `Production.evaluate_artifact()` and
 `Production.artifact_reproducibility()`, and the CLI exposes `artifact
 evaluate` and `artifact reproducibility` with structured JSON output.
+
+## Across public surfaces
+
+Evaluation and reproducibility are separate read-only questions. This example
+reports both and preserves the structured reasons or missing conditions:
+
+```{code-variants} artifact-knowledge
+```

@@ -13,3 +13,11 @@ an `AssetId`, `RepresentationId`, or `ResourceId`.
 
 This separation lets one object carry several identifiers without pretending
 that any single external scheme defines PostProject's storage identity.
+
+## Across public surfaces
+
+The following example serializes a typed host-object binding and parses it back
+without collapsing the production or object kind into raw UUID text:
+
+```{code-variants} host-binding
+```

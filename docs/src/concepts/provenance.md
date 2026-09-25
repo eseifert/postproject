@@ -45,3 +45,11 @@ responsibility of the host application or workflow system.
 
 See [standards boundaries](standards-boundaries.md) for the conceptual mapping
 to W3C PROV and MovieLabs OMC.
+
+## Across public surfaces
+
+The example records one activity and queries the graph from its input and
+output sides:
+
+```{code-variants} provenance
+```

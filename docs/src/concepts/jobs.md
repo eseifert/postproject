@@ -67,6 +67,17 @@ Artifact knowledge, availability, and work remain independent dimensions. A
 stale proxy can be online with no pending job; a requested job does not make an
 artifact stale.
 
+## Across public surfaces
+
+The example requests work, filters by exact state and kind, and follows opaque
+one-item pages to completion:
+
+```{code-variants} job-query-pages
+```
+
+See [bounded queries and cursors](../integrators/bounded-queries.md) for
+continuation rules.
+
 See [artifact knowledge and reproducibility](artifact-knowledge.md) for the
 derived knowledge state and [jobs and workers](../integrators/jobs-and-workers.md)
 for the worker protocol.

@@ -102,6 +102,17 @@ absent and empty observations with `dependency show`, and exposes
 `items`, `next_cursor`, and `traversal_truncated`. All recording remains
 explicit and transactional.
 
+## Across public surfaces
+
+The example records a complete dependency observation, then performs bounded
+forward and reverse queries:
+
+```{code-variants} dependency-queries
+```
+
+See [bounded queries and cursors](../integrators/bounded-queries.md) for cursor
+ownership, pagination, and weak-consistency guidance.
+
 See [artifact knowledge and reproducibility](artifact-knowledge.md) for the
 derived state model and [production provenance](provenance.md) for completed
 transformations. The standards mappings and deliberate non-mappings are in the

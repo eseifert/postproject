@@ -85,3 +85,11 @@ The journal is not itself multi-user collaboration. It has no distributed
 merge, base-revision conflict protocol, authenticated authorship, subscription
 transport, or remote ordering. Those capabilities can build on the durable
 semantic cursor later without changing what existing revisions mean.
+
+## Across public surfaces
+
+The example drains bounded revision pages and advances the durable consumer
+cursor only after processing every event in a revision:
+
+```{code-variants} revision-feed
+```

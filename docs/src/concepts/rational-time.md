@@ -42,3 +42,11 @@ timeline, edit, track, wall-clock timestamp, SMPTE timecode label, or drop-frame
 formatting rule. Those concepts may map to rational values, but their display
 and contextual semantics belong in later adapters. PostProject does not infer
 them from a rate alone.
+
+## Across public surfaces
+
+Image-sequence creation carries an exact rational rate and an inclusive,
+stepped frame range through every public surface:
+
+```{code-variants} image-sequence
+```

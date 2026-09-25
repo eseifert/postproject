@@ -22,3 +22,10 @@ In particular:
 
 The [mapping matrix](../reference/standards-mapping-matrix.md) distinguishes
 lossless storage, conceptual mappings, and deliberately deferred adapters.
+
+## Why there is no code variant
+
+This page defines interpretation and non-claims rather than a callable concept.
+There is therefore no operation to demonstrate across C, C++, Python, Rust, and
+the CLI. Executable examples live with the modeled concepts above; the mapping
+matrix records how those values may enter or leave standards-specific adapters.

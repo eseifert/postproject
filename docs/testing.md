@@ -55,8 +55,29 @@ package job configures `docs/examples` against the installed prefix and runs one
 shared scenario per surface through CTest: create a production, import media,
 attach an identifier and metadata, move the media and confirm the relocated
 candidate, add an image sequence, record provenance, drain the revision feed,
-and round-trip a host binding. The CLI script needs `bash` and `jq` and is
-skipped on Windows.
+evaluate artifact knowledge, traverse dependencies, page filtered jobs, and
+round-trip a host binding. The CLI script needs `bash` and `jq` and is skipped
+on Windows.
+
+Every callable concept page includes at least one synchronized example across
+C, C++, Python, Rust, and the CLI. The documentation build treats a missing
+surface as a warning, and CI promotes documentation warnings to errors.
+
+| Concept page | Tested example region |
+| --- | --- |
+| Identity | `host-binding` |
+| Assets, representations, resources, and locators | `resolve-asset` |
+| External identifiers | `external-identifiers` |
+| Metadata assertions | `metadata` |
+| Production provenance | `provenance` |
+| Dependency relationships | `dependency-queries` |
+| Artifact knowledge and reproducibility | `artifact-knowledge` |
+| Jobs and production work | `job-query-pages` |
+| Revisions and semantic events | `revision-feed` |
+| Rational time and ranges | `image-sequence` |
+
+Standards boundaries is interpretive policy rather than a callable concept and
+therefore documents explicitly why it has no executable variant.
 
 The native sanitizer job rebuilds both consumers with AddressSanitizer and
 UndefinedBehaviorSanitizer, enables leak detection, and runs their real lifecycle

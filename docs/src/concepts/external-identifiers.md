@@ -32,3 +32,11 @@ network service. See [SMPTE ST 2029](https://pub.smpte.org/doc/st2029/20090310-p
 [RFC 4246](https://www.rfc-editor.org/rfc/rfc4246.html), and
 [RFC 7972](https://www.rfc-editor.org/rfc/rfc7972.html) for the authoritative
 formats.
+
+## Across public surfaces
+
+This example attaches an application identifier and performs the corresponding
+exact lookup:
+
+```{code-variants} external-identifiers
+```

@@ -50,3 +50,11 @@ value, 15 mebibytes per binary or aggregate payload, and a bounded decimal
 scale. Stored encodings are decoded as untrusted input; invalid tags, lengths,
 UTF-8, URIs, language tags, object kinds, truncation, and trailing bytes return
 errors rather than panicking.
+
+## Across public surfaces
+
+This example writes a language-tagged title and reads it through both object
+and property-oriented views:
+
+```{code-variants} metadata
+```
