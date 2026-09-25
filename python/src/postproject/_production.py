@@ -19,6 +19,7 @@ from ._abi import (
 from ._abi import (
     ActivitySet,
     AssetSet,
+    DependencyQuerySet,
     Error,
     ExternalIdentifierSet,
     JobSet,
@@ -39,6 +40,7 @@ from ._abi import (
     ArtifactReproducibility as NativeArtifactReproducibility,
 )
 from ._abi import Dependency as NativeDependency
+from ._abi import DependencyMatch as NativeDependencyMatch
 from ._abi import (
     DependencySet as NativeDependencySet,
 )
@@ -84,6 +86,7 @@ from ._model import (
     AvailabilityIssueKind,
     ContentStructureKind,
     Dependency,
+    DependencyMatch,
     DependencySet,
     DependencySetRecordedEvent,
     DependencySetStatus,
@@ -143,6 +146,7 @@ from ._model import (
     ObjectReference,
     OriginIdentity,
     ProductionId,
+    QueryPage,
     RegenerationJobPlan,
     Representation,
     RepresentationAddedEvent,
@@ -415,23 +419,39 @@ class Production:
             self._native.lib.pp_production_activities, self._handle
         )
 
-    @property
-    def jobs(self) -> tuple[Job, ...]:
-        """Return every durable job in stable identity order."""
+    def jobs(
+        self,
+        *,
+        limit: int,
+        cursor: str | None = None,
+        state: JobState | None = None,
+        kind: str | None = None,
+    ) -> QueryPage[Job]:
+        """Return one bounded job page with optional exact predicates."""
 
         self._require_open()
         handle = ctypes.POINTER(JobSet)()
         error = ctypes.POINTER(Error)()
         status = self._native.lib.pp_production_jobs(
-            self._handle, ctypes.byref(handle), ctypes.byref(error)
+            self._handle,
+            0 if state is None else _native_job_state(state),
+            _optional_text(kind),
+            limit,
+            _optional_text(cursor),
+            ctypes.byref(handle),
+            ctypes.byref(error),
         )
         self._native.check(status, error)
         if not handle:
             raise RuntimeError("native job query returned no result set")
         try:
             count = self._native.lib.pp_job_set_count(handle)
-            return tuple(
-                _job_at(self._native, handle, index) for index in range(int(count))
+            return QueryPage(
+                tuple(
+                    _job_at(self._native, handle, index)
+                    for index in range(int(count))
+                ),
+                _decode_optional(self._native.lib.pp_job_set_next_cursor(handle)),
             )
         finally:
             self._native.lib.pp_job_set_release(handle)
@@ -655,18 +675,61 @@ class Production:
         finally:
             self._native.lib.pp_dependency_set_release(handle)
 
+    def dependencies(
+        self,
+        representation_id: RepresentationId,
+        *,
+        max_depth: int,
+        max_representations: int,
+        limit: int,
+        cursor: str | None = None,
+    ) -> QueryPage[DependencyMatch]:
+        """Return one bounded page of direct or transitive dependencies."""
+
+        self._require_open()
+        native_id = _native_uuid(representation_id.value)
+        handle = ctypes.POINTER(DependencyQuerySet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_dependencies(
+            self._handle,
+            ctypes.byref(native_id),
+            max_depth,
+            max_representations,
+            limit,
+            _optional_text(cursor),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native dependency query returned no result set")
+        try:
+            return _dependency_query_page(self._native, handle)
+        finally:
+            self._native.lib.pp_dependency_query_set_release(handle)
+
     def dependents(
-        self, target: AssetId | RepresentationId
-    ) -> tuple[RepresentationId, ...]:
-        """Return representations that directly depend on ``target``."""
+        self,
+        target: AssetId | RepresentationId,
+        *,
+        max_depth: int,
+        max_representations: int,
+        limit: int,
+        cursor: str | None = None,
+    ) -> QueryPage[DependencyMatch]:
+        """Return one bounded page of direct or transitive dependents."""
 
         self._require_open()
         native_target = _native_object_reference(target)
-        handle = ctypes.POINTER(ObjectRefSet)()
+        handle = ctypes.POINTER(DependencyQuerySet)()
         error = ctypes.POINTER(Error)()
         status = self._native.lib.pp_production_dependents(
             self._handle,
             ctypes.byref(native_target),
+            max_depth,
+            max_representations,
+            limit,
+            _optional_text(cursor),
             ctypes.byref(handle),
             ctypes.byref(error),
         )
@@ -674,18 +737,9 @@ class Production:
         if not handle:
             raise RuntimeError("native dependents query returned no result set")
         try:
-            count = self._native.lib.pp_object_ref_set_count(handle)
-            result: list[RepresentationId] = []
-            for index in range(int(count)):
-                reference = _object_reference_at(self._native, handle, index)
-                if not isinstance(reference, RepresentationId):
-                    raise RuntimeError(
-                        "native dependents query returned a non-representation"
-                    )
-                result.append(reference)
-            return tuple(result)
+            return _dependency_query_page(self._native, handle)
         finally:
-            self._native.lib.pp_object_ref_set_release(handle)
+            self._native.lib.pp_dependency_query_set_release(handle)
 
     @property
     def host_bindings(self) -> _HostBindings:
@@ -2114,6 +2168,29 @@ def _job_at(native: NativeLibrary, jobs: _Pointer[JobSet], index: int) -> Job:
     )
 
 
+def _dependency_query_page(
+    native: NativeLibrary, matches: _Pointer[DependencyQuerySet]
+) -> QueryPage[DependencyMatch]:
+    count = native.lib.pp_dependency_query_set_count(matches)
+    items: list[DependencyMatch] = []
+    for index in range(int(count)):
+        value = NativeDependencyMatch()
+        error = ctypes.POINTER(Error)()
+        status = native.lib.pp_dependency_query_set_get(
+            matches, index, ctypes.byref(value), ctypes.byref(error)
+        )
+        native.check(status, error)
+        target = _object_reference(value.target)
+        if not isinstance(target, (AssetId, RepresentationId)):
+            raise RuntimeError("native dependency query returned an invalid target")
+        items.append(DependencyMatch(target, int(value.depth)))
+    return QueryPage(
+        tuple(items),
+        _decode_optional(native.lib.pp_dependency_query_set_next_cursor(matches)),
+        bool(native.lib.pp_dependency_query_set_traversal_truncated(matches)),
+    )
+
+
 def _regeneration_plan_at(
     native: NativeLibrary,
     plans: _Pointer[RegenerationPlanSet],
@@ -3304,6 +3381,16 @@ def _job_state(value: int) -> JobState:
     if result is None:
         raise RuntimeError("job has an unknown state")
     return result
+
+
+def _native_job_state(value: JobState) -> int:
+    return {
+        JobState.REQUESTED: _abi.PP_JOB_REQUESTED,
+        JobState.CLAIMED: _abi.PP_JOB_CLAIMED,
+        JobState.SUCCEEDED: _abi.PP_JOB_SUCCEEDED,
+        JobState.FAILED: _abi.PP_JOB_FAILED,
+        JobState.CANCELLED: _abi.PP_JOB_CANCELLED,
+    }[value]
 
 
 def _dependency_set_status(value: int) -> DependencySetStatus:

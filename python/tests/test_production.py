@@ -140,7 +140,9 @@ class ProductionTests(unittest.TestCase):
                     )
                 )
 
-            jobs = production.jobs
+            jobs_page = production.jobs(limit=1000)
+            jobs = jobs_page.items
+            self.assertIsNone(jobs_page.next_cursor)
             self.assertEqual(len(jobs), 1)
             self.assertEqual(jobs[0].id, job_id)
             self.assertEqual(jobs[0].kind, "org.postproject:generate-proxy")
@@ -161,7 +163,7 @@ class ProductionTests(unittest.TestCase):
             )
             with production.transaction() as transaction:
                 claim_id = transaction.claim_job(job_id, worker, agent, 10, 20)
-            claimed = production.jobs[0]
+            claimed = production.jobs(limit=1000).items[0]
             self.assertEqual(claimed.state, JobState.CLAIMED)
             self.assertIsNotNone(claimed.claim)
             assert claimed.claim is not None
@@ -172,14 +174,16 @@ class ProductionTests(unittest.TestCase):
 
             with production.transaction() as transaction:
                 transaction.renew_job_claim(job_id, claim_id, 11, 30)
-            renewed = production.jobs[0]
+            renewed = production.jobs(limit=1000).items[0]
             self.assertIsNotNone(renewed.claim)
             assert renewed.claim is not None
             self.assertEqual(renewed.claim.expires_at_unix_micros, 30)
 
             with production.transaction() as transaction:
                 transaction.release_job_claim(job_id, claim_id)
-            self.assertEqual(production.jobs[0].state, JobState.REQUESTED)
+            self.assertEqual(
+                production.jobs(limit=1000).items[0].state, JobState.REQUESTED
+            )
 
             with production.transaction() as transaction:
                 second_claim_id = transaction.claim_job(job_id, worker, None, 31, 40)
@@ -198,7 +202,7 @@ class ProductionTests(unittest.TestCase):
             with production.transaction() as transaction:
                 transaction.cancel_job(cancelled_job_id)
 
-            final_jobs = {job.id: job for job in production.jobs}
+            final_jobs = {job.id: job for job in production.jobs(limit=1000).items}
             self.assertEqual(final_jobs[job_id].state, JobState.FAILED)
             self.assertIsNone(final_jobs[job_id].claim)
             self.assertEqual(final_jobs[job_id].failure_diagnostic, "encoder exited")
@@ -248,7 +252,9 @@ class ProductionTests(unittest.TestCase):
                     completion_activity_id,
                 )
 
-            completed_jobs = {job.id: job for job in production.jobs}
+            completed_jobs = {
+                job.id: job for job in production.jobs(limit=1000).items
+            }
             completed_job = completed_jobs[completed_job_id]
             self.assertEqual(completed_job.state, JobState.SUCCEEDED)
             self.assertIsNotNone(completed_job.completion)
@@ -264,6 +270,23 @@ class ProductionTests(unittest.TestCase):
             self.assertEqual(len(producing), 1)
             self.assertIsNotNone(producing[0].outputs[0].snapshot)
 
+            first_page = production.jobs(limit=1)
+            self.assertIsNotNone(first_page.next_cursor)
+            paged_jobs = list(first_page.items)
+            cursor = first_page.next_cursor
+            while cursor is not None:
+                page = production.jobs(limit=1, cursor=cursor)
+                paged_jobs.extend(page.items)
+                cursor = page.next_cursor
+            self.assertEqual(
+                {job.id for job in paged_jobs},
+                {job_id, cancelled_job_id, completed_job_id},
+            )
+            failed_page = production.jobs(limit=10, state=JobState.FAILED)
+            self.assertEqual(
+                tuple(job.id for job in failed_page.items), (job_id,)
+            )
+
     def test_representations_are_typed_keyed_and_copied(self) -> None:
         with Production.create(
             self.production_path, library_path=LIBRARY_PATH
@@ -272,7 +295,12 @@ class ProductionTests(unittest.TestCase):
                 asset_id = transaction.import_media(self.media_path)
             representations = production.representations[asset_id]
             self.assertIsNone(production.dependency_set(representations[0].id))
-            self.assertEqual(production.dependents(asset_id), ())
+            self.assertEqual(
+                production.dependents(
+                    asset_id, max_depth=1, max_representations=1000, limit=1000
+                ).items,
+                (),
+            )
 
         self.assertEqual(len(representations), 1)
         representation = representations[0]
@@ -506,7 +534,19 @@ class ProductionTests(unittest.TestCase):
             self.assertGreater(recorded.recorded_at_revision, 0)
             self.assertEqual(recorded.status, DependencySetStatus.CURRENT)
             self.assertEqual(recorded.dependencies, (dependency,))
-            self.assertEqual(production.dependents(asset_id), (proxy_id,))
+            dependents = production.dependents(
+                asset_id, max_depth=1, max_representations=1000, limit=1000
+            )
+            self.assertEqual(
+                tuple(match.target for match in dependents.items), (proxy_id,)
+            )
+            self.assertEqual(tuple(match.depth for match in dependents.items), (1,))
+            dependencies = production.dependencies(
+                proxy_id, max_depth=2, max_representations=1000, limit=1000
+            )
+            self.assertEqual(
+                tuple(match.target for match in dependencies.items), (asset_id,)
+            )
 
             with production.transaction() as transaction:
                 transaction.record_dependency_set(proxy_id, ())
@@ -515,7 +555,12 @@ class ProductionTests(unittest.TestCase):
             self.assertIsNotNone(empty)
             assert empty is not None
             self.assertEqual(empty.dependencies, ())
-            self.assertEqual(production.dependents(asset_id), ())
+            self.assertEqual(
+                production.dependents(
+                    asset_id, max_depth=1, max_representations=1000, limit=1000
+                ).items,
+                (),
+            )
 
     def test_host_bindings_are_keyed_and_round_trip_through_native_abi(self) -> None:
         with Production.create(
@@ -1064,7 +1109,7 @@ class ProductionTests(unittest.TestCase):
                     ),
                 ),
             )
-            self.assertEqual(production.jobs, ())
+            self.assertEqual(production.jobs(limit=1000).items, ())
             self.assertEqual(production.latest_revision, revision)
 
 

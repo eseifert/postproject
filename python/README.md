@@ -41,6 +41,14 @@ with Production.create("production.pproj", "Documentary") as production:
     assert revision is not None
     for event in production.revision_events[revision.id]:
         print(event.position, event.payload)
+
+    page = production.jobs(limit=100)
+    while True:
+        for job in page.items:
+            print(job.id, job.state)
+        if page.next_cursor is None:
+            break
+        page = production.jobs(limit=100, cursor=page.next_cursor)
 ```
 
 Production and transaction handles support deterministic `close()` and context
@@ -55,3 +63,5 @@ and semantic event payloads are copied Python values; they remain valid after th
 temporary native result handles are released. Resolution results likewise copy
 the complete nested candidate, evidence, issue, and missing-frame details before
 releasing their native result handle.
+Query cursors are opaque and must be reused with the same page size, filters,
+root, and traversal bounds that produced them.

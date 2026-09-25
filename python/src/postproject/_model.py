@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TypeAlias
+from typing import Generic, TypeAlias, TypeVar
 from uuid import UUID
 
 
@@ -108,6 +108,17 @@ ObjectReference: TypeAlias = (
     ProductionId | AssetId | RepresentationId | ResourceId | ActivityId | JobId
 )
 
+QueryItem = TypeVar("QueryItem")
+
+
+@dataclass(frozen=True, slots=True)
+class QueryPage(Generic[QueryItem]):
+    """One bounded page from a named domain query."""
+
+    items: tuple[QueryItem, ...]
+    next_cursor: str | None
+    traversal_truncated: bool = False
+
 
 @dataclass(frozen=True, slots=True)
 class HostObjectBinding:
@@ -153,6 +164,14 @@ class DependencySet:
     recorded_at_revision: int
     status: DependencySetStatus
     dependencies: tuple[Dependency, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DependencyMatch:
+    """One dependency-query target and its shortest observed depth."""
+
+    target: AssetId | RepresentationId
+    depth: int
 
 
 @dataclass(frozen=True, slots=True)
