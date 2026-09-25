@@ -30,6 +30,11 @@ Development version: `0.4.0-alpha.1`.
   provenance, stale-artifact, and changed-object pages. Producing and consuming
   activity selection now occurs in SQL, and representation pages use
   set-oriented structure and fingerprint loading.
+- Added SQLite schema 12 query-support tables for unresolved memberships,
+  representations under a logical root, and activity-output kind and tool keys.
+  Triggers maintain them on every write path, and migration backfills them from
+  existing knowledge, so those pages read rows proportional to the page rather
+  than to the production.
 - Added SQLite schema 11 query indexes and optional durable logical-root
   knowledge on confirmed locators. Existing locators migrate without fabricated
   root knowledge.

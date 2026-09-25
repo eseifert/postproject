@@ -4,7 +4,7 @@ use postproject_core::{Error, ErrorKind, Result, Timestamp};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 /// The newest schema understood by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 11;
+pub const CURRENT_SCHEMA_VERSION: u32 = 12;
 
 struct Migration {
     version: u32,
@@ -55,6 +55,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 11,
         sql: include_str!("migrations/011_domain_query_indexes.sql"),
+    },
+    Migration {
+        version: 12,
+        sql: include_str!("migrations/012_query_support.sql"),
     },
 ];
 
@@ -158,7 +162,7 @@ mod tests {
             .expect("query migration history")
             .collect::<std::result::Result<_, _>>()
             .expect("read migration history");
-        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
         for table in [
             "productions",
             "assets",
@@ -191,6 +195,8 @@ mod tests {
             "activity_input_dependency_fingerprint_snapshots",
             "jobs",
             "job_inputs",
+            "unresolved_memberships",
+            "activity_output_keys",
         ] {
             let count: u32 = connection
                 .query_row(
@@ -246,6 +252,154 @@ mod tests {
                 Some("file:///mnt/media".to_owned()),
             )
         );
+    }
+
+    #[test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one migrated production verifies backfill and every maintaining trigger"
+    )]
+    fn schema_eleven_backfills_and_maintains_query_support() {
+        let mut connection = Connection::open_in_memory().expect("open database");
+        for migration in &MIGRATIONS[..11] {
+            apply_migration(&mut connection, migration).expect("apply old migration");
+        }
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 INSERT INTO productions (
+                    singleton, id, schema_version, created_at_micros, display_name
+                 ) VALUES (1, zeroblob(16), 11, 0, NULL);
+                 INSERT INTO assets VALUES (x'01010101010101010101010101010101', 0, NULL, NULL);",
+            )
+            .expect("insert production and asset");
+        for label in [2_u8, 3] {
+            connection
+                .execute(
+                    "INSERT INTO representations VALUES (?1, ?2, 3, 0)",
+                    params![vec![label; 16], vec![1_u8; 16]],
+                )
+                .expect("insert representation");
+            connection
+                .execute(
+                    "INSERT INTO resources (id) VALUES (?1)",
+                    [vec![label + 10; 16]],
+                )
+                .expect("insert resource");
+            connection
+                .execute(
+                    "INSERT INTO representation_resources VALUES (?1, ?2, 0, NULL, 1)",
+                    params![vec![label; 16], vec![label + 10; 16]],
+                )
+                .expect("insert membership");
+        }
+        connection
+            .execute(
+                "INSERT INTO media_roots (id, name, priority, enabled)
+                 VALUES (?1, 'media', 0, 1)",
+                [vec![30_u8; 16]],
+            )
+            .expect("insert media root");
+        connection
+            .execute(
+                "INSERT INTO locators (id, resource_id, uri, availability, media_root_name)
+                 VALUES (?1, ?2, 'file:///media/a.mov', 1, 'media')",
+                params![vec![20_u8; 16], vec![12_u8; 16]],
+            )
+            .expect("insert locator");
+        connection
+            .execute_batch(
+                "INSERT INTO activities (id, kind, tool_name)
+                 VALUES (x'04040404040404040404040404040404', 'example:transcode', 'tool');
+                 INSERT INTO activity_outputs (activity_id, representation_id, role)
+                 VALUES (x'04040404040404040404040404040404',
+                         x'03030303030303030303030303030303', 'a');",
+            )
+            .expect("insert activity");
+
+        migrate(&mut connection).expect("migrate schema eleven");
+
+        let unresolved = |connection: &Connection| -> Vec<Vec<u8>> {
+            connection
+                .prepare("SELECT representation_id FROM unresolved_memberships ORDER BY 1")
+                .expect("prepare unresolved query")
+                .query_map([], |row| row.get(0))
+                .expect("query unresolved")
+                .collect::<std::result::Result<_, _>>()
+                .expect("read unresolved")
+        };
+        assert_eq!(unresolved(&connection), [vec![3_u8; 16]]);
+        let keys: (String, Option<String>) = connection
+            .query_row(
+                "SELECT kind, tool_name FROM activity_output_keys",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read migrated output key");
+        assert_eq!(
+            keys,
+            ("example:transcode".to_owned(), Some("tool".to_owned()))
+        );
+        let rooted = |connection: &Connection| -> Vec<(String, Vec<u8>)> {
+            connection
+                .prepare(
+                    "SELECT media_root_name, representation_id
+                     FROM media_root_representations ORDER BY 1, 2",
+                )
+                .expect("prepare rooted query")
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .expect("query rooted")
+                .collect::<std::result::Result<_, _>>()
+                .expect("read rooted")
+        };
+        assert_eq!(rooted(&connection), [("media".to_owned(), vec![2_u8; 16])]);
+        connection
+            .execute("UPDATE media_roots SET name = 'renamed'", [])
+            .expect("rename media root");
+        assert_eq!(
+            rooted(&connection),
+            [("renamed".to_owned(), vec![2_u8; 16])]
+        );
+
+        connection
+            .execute(
+                "INSERT INTO locators (id, resource_id, uri, availability)
+                 VALUES (?1, ?2, 'file:///media/b.mov', 1)",
+                params![vec![21_u8; 16], vec![13_u8; 16]],
+            )
+            .expect("locate second resource");
+        assert!(unresolved(&connection).is_empty());
+        connection
+            .execute("DELETE FROM locators WHERE id = ?1", [vec![20_u8; 16]])
+            .expect("retire first locator");
+        assert_eq!(unresolved(&connection), [vec![2_u8; 16]]);
+        assert!(rooted(&connection).is_empty());
+
+        connection
+            .execute(
+                "INSERT INTO activity_outputs (activity_id, representation_id, role)
+                 VALUES (?1, ?2, 'b')",
+                params![vec![4_u8; 16], vec![3_u8; 16]],
+            )
+            .expect("insert second output role");
+        connection
+            .execute("DELETE FROM activity_outputs WHERE role = 'a'", [])
+            .expect("delete one output role");
+        let key_count: u32 = connection
+            .query_row("SELECT count(*) FROM activity_output_keys", [], |row| {
+                row.get(0)
+            })
+            .expect("count output keys");
+        assert_eq!(key_count, 1);
+        connection
+            .execute("DELETE FROM activity_outputs", [])
+            .expect("delete remaining output");
+        let key_count: u32 = connection
+            .query_row("SELECT count(*) FROM activity_output_keys", [], |row| {
+                row.get(0)
+            })
+            .expect("count output keys");
+        assert_eq!(key_count, 0);
     }
 
     #[test]

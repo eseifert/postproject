@@ -7,7 +7,7 @@ SQLite's per-connection value-length limit is reduced to 16 MiB before migration
 or queries run. This bounds allocations for strings, blobs, and result rows read
 from an untrusted production file while leaving ample room for production metadata.
 
-## Schema version 10
+## Schema version 12
 
 The current development schema stores a singleton production record plus assets,
 representations, content structures, resources, memberships, locators, typed
@@ -22,10 +22,23 @@ identities are 16-byte UUID values; SQLite row numbers are never exposed.
 
 Constraints enforce ID lengths, enumeration ranges, bounded text and blobs,
 non-empty fingerprint values, and referential integrity. Indexes support
-representations by asset, resources by representation, locators by resource,
-external identifiers by target and exact scheme/value, metadata by target or
-property, enabled media roots by priority, and jobs by state and kind or by
-kind alone. Job indexes include the stable ID key used for cursor continuation.
+assets by creation order, representations by asset, resources by
+representation, locators by resource, external identifiers by target and exact
+scheme/value, metadata by target, property, or property and exact encoded value,
+enabled media roots by priority, provenance edges by representation, revision
+events by target, and jobs by state and kind or by kind alone. Each index used
+by a paginated domain query ends in the stable key used for cursor continuation.
+
+Some domain queries select by a fact that spans tables, which no single SQLite
+index can express. Schema 12 therefore keeps three derived query-support tables:
+required memberships whose resource has no locator, representations reachable
+through a locator recorded under each logical root, and each activity output
+keyed by its activity kind and tool identity. Triggers maintain them on every
+insert, update, and delete of the authoritative rows, and the migration
+backfills them from existing knowledge. They hold no knowledge of their own, are
+never written directly, and let unresolved-media, media-root, and
+activity-output pages read rows proportional to the page even when matches are
+sparse.
 
 External identifiers and metadata assertions use polymorphic typed targets.
 Jobs are valid targets alongside production, asset, representation, resource,

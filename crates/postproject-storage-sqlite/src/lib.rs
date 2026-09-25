@@ -649,11 +649,10 @@ impl SqliteProduction {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT DISTINCT rr.representation_id
-                 FROM locators l
-                 JOIN representation_resources rr ON rr.resource_id = l.resource_id
-                 WHERE l.media_root_name = ?1 AND rr.representation_id > ?2
-                 ORDER BY rr.representation_id LIMIT ?3",
+                "SELECT DISTINCT representation_id
+                 FROM media_root_representations
+                 WHERE media_root_name = ?1 AND representation_id > ?2
+                 ORDER BY representation_id LIMIT ?3",
             )
             .map_err(sqlite_error("prepare media-root representation query"))?;
         let ids = statement
@@ -685,13 +684,10 @@ impl SqliteProduction {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT DISTINCT rr.representation_id
-                 FROM representation_resources rr
-                 WHERE rr.required = 1 AND rr.representation_id > ?1
-                   AND NOT EXISTS (
-                       SELECT 1 FROM locators l WHERE l.resource_id = rr.resource_id
-                   )
-                 ORDER BY rr.representation_id LIMIT ?2",
+                "SELECT DISTINCT representation_id
+                 FROM unresolved_memberships
+                 WHERE representation_id > ?1
+                 ORDER BY representation_id LIMIT ?2",
             )
             .map_err(sqlite_error("prepare unresolved-media query"))?;
         let mut ids = statement
@@ -1322,7 +1318,7 @@ impl SqliteProduction {
     ) -> Result<QueryPage<RepresentationId>> {
         let (predicate, mut parameters, signature) = match query {
             ActivityOutputQuery::Kind(kind) => (
-                "a.kind = ?".to_owned(),
+                "outputs.kind = ?".to_owned(),
                 vec![Value::Text(kind.as_str().to_owned())],
                 query_cursor::signature(&[b"kind", kind.as_str().as_bytes()]),
             ),
@@ -1330,7 +1326,8 @@ impl SqliteProduction {
                 let version = tool.version().unwrap_or_default();
                 let uri = tool.uri().unwrap_or_default();
                 (
-                    "a.tool_name = ? AND a.tool_version IS ? AND a.tool_uri IS ?".to_owned(),
+                    "outputs.tool_name = ? AND outputs.tool_version IS ? AND outputs.tool_uri IS ?"
+                        .to_owned(),
                     vec![
                         Value::Text(tool.name().to_owned()),
                         tool.version()
@@ -1367,8 +1364,7 @@ impl SqliteProduction {
         parameters.push(Value::Integer(i64::from(page.limit()) + 1));
         let sql = format!(
             "SELECT DISTINCT outputs.representation_id
-             FROM activities a
-             JOIN activity_outputs outputs ON outputs.activity_id = a.id
+             FROM activity_output_keys outputs
              WHERE {predicate} AND outputs.representation_id > ?
              ORDER BY outputs.representation_id LIMIT ?"
         );

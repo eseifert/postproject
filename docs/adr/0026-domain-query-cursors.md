@@ -72,6 +72,25 @@ deduplicate metadata-capable semantic targets touched after the supplied
 revision sequence; media-root lifecycle events identify the production, while
 locator lifecycle events identify their owning resource.
 
+A query whose predicate spans tables cannot be proportional to its page through
+an ordinary index when matches are sparse: SQLite would walk the stable key and
+probe the predicate for every row in the production. Schema 12 therefore adds
+derived query-support tables keyed by predicate and stable key — required
+memberships without a locator, representations reachable under each recorded
+logical root, and activity outputs keyed by activity kind and tool identity.
+Triggers maintain them on every write to the authoritative rows, the migration
+backfills them, and nothing else writes them, so they cannot diverge through a
+forgotten write path. Activities are immutable complete facts, so copying their
+kind and tool onto output keys never goes stale. The schema 11 indexes those
+tables replace are dropped.
+
+Two queries remain bounded by something other than the page. Stale-artifact
+pages evaluate at most one page of candidate outputs, so their cost is the page
+size times one bounded artifact evaluation. Changed-object pages deduplicate the
+journal suffix after the supplied sequence, so their cost grows with the number
+of events after that cursor, not with the production; callers keep that suffix
+short by advancing their cursor.
+
 Pages are weakly consistent across commits. A later page sees current durable
 state after its key; callers that need change tracking use the semantic
 revision feed. A concurrent insertion before an already-consumed key is not
