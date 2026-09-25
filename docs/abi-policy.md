@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 21 is pre-release and may change during the 0.x series, with every
+ABI version 22 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
@@ -138,6 +138,11 @@ failure, and administrative cancellation. Claim returns a random capability
 token before commit so a caller can retain it, but the token becomes usable
 only after the transaction commits successfully. Lease time remains explicitly
 caller-supplied.
+
+ABI version 22 adds atomic job completion by binding a representation and
+activity already staged in the same transaction. This reuses every public
+representation shape while ensuring the output, its resources, provenance
+snapshots, and terminal job state commit or roll back together.
 
 ## External identifiers
 

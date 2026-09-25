@@ -909,6 +909,13 @@ PP_API pp_error_code_t pp_transaction_renew_job_claim(
 PP_API pp_error_code_t pp_transaction_release_job_claim(
     pp_transaction_t *transaction, const pp_uuid_t *job_id,
     const pp_uuid_t *claim_id, pp_error_t **out_error);
+/* Atomically completes a job with a representation and activity already
+ * staged, in that order, in this transaction. */
+PP_API pp_error_code_t pp_transaction_complete_job(
+    pp_transaction_t *transaction, const pp_uuid_t *job_id,
+    const pp_uuid_t *claim_id, int64_t now_unix_micros,
+    const pp_uuid_t *output_representation_id,
+    const pp_uuid_t *activity_id, pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_fail_job(
     pp_transaction_t *transaction, const pp_uuid_t *job_id,
     const pp_uuid_t *claim_id, int64_t now_unix_micros,

@@ -134,6 +134,7 @@ pp_transaction_add_single_file_representation
 pp_transaction_cancel_job
 pp_transaction_claim_job
 pp_transaction_commit
+pp_transaction_complete_job
 pp_transaction_confirm_locator
 pp_transaction_create_activity
 pp_transaction_fail_job

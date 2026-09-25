@@ -557,6 +557,7 @@ EXPORTED_SYMBOLS = (
     "pp_transaction_cancel_job",
     "pp_transaction_claim_job",
     "pp_transaction_commit",
+    "pp_transaction_complete_job",
     "pp_transaction_confirm_locator",
     "pp_transaction_create_activity",
     "pp_transaction_fail_job",
@@ -871,6 +872,8 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_transaction_renew_job_claim.restype = ErrorCode
     lib.pp_transaction_release_job_claim.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_release_job_claim.restype = ErrorCode
+    lib.pp_transaction_complete_job.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), ctypes.POINTER(Uuid), ctypes.c_int64, ctypes.POINTER(Uuid), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_transaction_complete_job.restype = ErrorCode
     lib.pp_transaction_fail_job.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), ctypes.POINTER(Uuid), ctypes.c_int64, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_fail_job.restype = ErrorCode
     lib.pp_transaction_cancel_job.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]

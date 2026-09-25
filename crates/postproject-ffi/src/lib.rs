@@ -148,7 +148,7 @@ const PP_REVISION_JOB_FAILED: u32 = 25;
 const PP_REVISION_JOB_CANCELLED: u32 = 26;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 21;
+pub const ABI_VERSION: u32 = 22;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -359,6 +359,13 @@ enum StagedMutation {
     },
     RenewJobClaim(JobId, JobClaimId, Timestamp, Timestamp),
     ReleaseJobClaim(JobId, JobClaimId),
+    CompleteJob {
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now: Timestamp,
+        output: RepresentationImport,
+        activity: Box<Activity>,
+    },
     FailJob(JobId, JobClaimId, Timestamp, JobFailure),
     CancelJob(JobId),
 }
@@ -4507,6 +4514,92 @@ pub unsafe extern "C" fn pp_transaction_release_job_claim(
     }
 }
 
+/// Binds a staged representation and activity into one atomic job completion.
+///
+/// The representation must have been staged before the activity in this same
+/// transaction. Neither fact is persisted separately if completion fails.
+///
+/// # Safety
+///
+/// The transaction must be live; all four IDs must be readable; `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_complete_job(
+    transaction: *mut PpTransaction,
+    job_id: *const PpUuid,
+    claim_id: *const PpUuid,
+    now_unix_micros: i64,
+    output_representation_id: *const PpUuid,
+    activity_id: *const PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: IDs are checked before dereference and copied immediately.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let (job_id, claim_id) = required_job_claim_ids(job_id, claim_id)?;
+            let output_id = output_representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("output_representation_id must not be null"))?;
+            let output_id = RepresentationId::from_bytes(output_id.bytes);
+            let activity_id = activity_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("activity_id must not be null"))?;
+            let activity_id = ActivityId::from_bytes(activity_id.bytes);
+            let output_index = transaction
+                .mutations
+                .iter()
+                .position(|mutation| {
+                    matches!(
+                        mutation,
+                        StagedMutation::Representation(output)
+                            if output.representation().id() == output_id
+                    )
+                })
+                .ok_or_else(|| {
+                    invalid_argument("output representation is not staged in this transaction")
+                })?;
+            let activity_index = transaction
+                .mutations
+                .iter()
+                .position(|mutation| {
+                    matches!(
+                        mutation,
+                        StagedMutation::Activity(activity) if activity.id() == activity_id
+                    )
+                })
+                .ok_or_else(|| invalid_argument("activity is not staged in this transaction"))?;
+            if output_index >= activity_index {
+                return Err(invalid_argument(
+                    "job output representation must be staged before its activity",
+                ));
+            }
+            let StagedMutation::Activity(activity) = transaction.mutations.remove(activity_index)
+            else {
+                unreachable!("activity index was selected by its mutation variant");
+            };
+            let StagedMutation::Representation(output) = transaction.mutations.remove(output_index)
+            else {
+                unreachable!("output index was selected by its mutation variant");
+            };
+            transaction.mutations.insert(
+                output_index,
+                StagedMutation::CompleteJob {
+                    job_id,
+                    claim_id,
+                    now: Timestamp::from_unix_micros(now_unix_micros),
+                    output,
+                    activity: Box::new(activity),
+                },
+            );
+            Ok(())
+        })
+    }
+}
+
 /// Stages failure of an active unexpired job claim.
 ///
 /// # Safety
@@ -5783,6 +5876,15 @@ impl PpTransaction {
                     }
                     StagedMutation::ReleaseJobClaim(job_id, claim_id) => {
                         transaction.release_job_claim(*job_id, *claim_id)?;
+                    }
+                    StagedMutation::CompleteJob {
+                        job_id,
+                        claim_id,
+                        now,
+                        output,
+                        activity,
+                    } => {
+                        transaction.complete_job(*job_id, *claim_id, *now, output, activity)?;
                     }
                     StagedMutation::FailJob(job_id, claim_id, now, failure) => {
                         transaction.fail_job(*job_id, *claim_id, *now, failure)?;
