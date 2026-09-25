@@ -6,8 +6,11 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 int main(int argc, char **argv) {
   if (argc != 2) {
@@ -87,6 +90,12 @@ int main(int argc, char **argv) {
         assets[0].display_name != std::string("C++ asset") ||
         assets[0].import_source.has_value()) {
       return 24;
+    }
+    const auto asset_page = production.assets(1);
+    if (asset_page.items.size() != 1 || asset_page.items[0].id != asset_id ||
+        asset_page.items[0].display_name != std::string("C++ asset") ||
+        asset_page.next_cursor.has_value() || asset_page.traversal_truncated) {
+      return 40;
     }
     const auto roots = production.mediaRoots();
     if (roots.size() != 1 || roots[0].id != root_id ||
@@ -209,6 +218,10 @@ int main(int argc, char **argv) {
         {},
         {{resolutions[0].representation_id,
           std::string("org.postproject:output.master")}}};
+    const auto pre_provenance_revision = production.latestRevision();
+    if (!pre_provenance_revision.has_value()) {
+      return 41;
+    }
     auto provenance = production.beginTransaction();
     const auto activity_id = provenance.createActivity(activity_spec);
     std::vector<postproject::MetadataInput> metadata_items;
@@ -223,11 +236,83 @@ int main(int argc, char **argv) {
     provenance.addMetadataValue(
         {postproject::ObjectKind::activity, activity_id},
         "com.example.ingest", "details", metadata);
+    provenance.addMetadataValue(asset_ref, "com.example.ingest", "title",
+                                postproject::MetadataInput::plainString(
+                                    "Interview"));
     provenance.commit();
+
+    const auto title_matches = production.queryMetadata(
+        "com.example.ingest", "title",
+        postproject::MetadataInput::plainString("Interview"), 10);
+    const auto title_misses = production.queryMetadata(
+        "com.example.ingest", "title",
+        postproject::MetadataInput::plainString("Other"), 10);
+    const auto detail_matches =
+        production.queryMetadata("com.example.ingest", "details", 1);
+    if (title_matches.items.size() != 1 ||
+        !(title_matches.items[0].target == asset_ref) ||
+        title_matches.items[0].vocabulary != "com.example.ingest" ||
+        title_matches.items[0].property != "title" ||
+        title_matches.next_cursor.has_value() ||
+        !title_misses.items.empty() || title_misses.next_cursor.has_value() ||
+        detail_matches.items.size() != 1 ||
+        !(detail_matches.items[0].target ==
+          postproject::ObjectRef{postproject::ObjectKind::activity,
+                                 activity_id}) ||
+        detail_matches.next_cursor.has_value()) {
+      return 42;
+    }
+    try {
+      static_cast<void>(production.queryMetadata(
+          "com.example.ingest", "details", metadata, 10));
+      return 43;
+    } catch (const postproject::Error &error) {
+      if (error.code() != postproject::ErrorCode::invalid_argument) {
+        return 43;
+      }
+    }
+
+    std::vector<postproject::ObjectRef> changed_objects;
+    std::optional<std::string> changed_cursor;
+    do {
+      const auto changed = production.objectsChangedSince(
+          pre_provenance_revision->sequence, 1, changed_cursor);
+      if (changed.items.size() > 1 || changed.traversal_truncated) {
+        return 44;
+      }
+      changed_objects.insert(changed_objects.end(), changed.items.begin(),
+                             changed.items.end());
+      changed_cursor = changed.next_cursor;
+    } while (changed_cursor.has_value());
+    const auto contains_object = [&](const postproject::ObjectRef &object) {
+      return std::any_of(changed_objects.begin(), changed_objects.end(),
+                         [&](const postproject::ObjectRef &candidate) {
+                           return candidate == object;
+                         });
+    };
+    if (changed_objects.size() < 2 || !contains_object(asset_ref) ||
+        !contains_object({postproject::ObjectKind::activity, activity_id})) {
+      return 44;
+    }
 
     const auto activities = production.activities();
     const auto producing =
         production.activitiesProducing(resolutions[0].representation_id);
+    const auto producing_page =
+        production.activitiesProducing(resolutions[0].representation_id, 1);
+    const auto ingest_outputs =
+        production.outputsByActivityKind("org.postproject:ingest", 1);
+    if (producing_page.items.size() != 1 ||
+        producing_page.items[0].id != activity_id ||
+        producing_page.items[0].kind != "org.postproject:ingest" ||
+        producing_page.next_cursor.has_value() ||
+        ingest_outputs.items !=
+            std::vector<postproject::Uuid>{resolutions[0].representation_id} ||
+        ingest_outputs.next_cursor.has_value() ||
+        ingest_outputs.traversal_truncated ||
+        !production.unresolvedMedia(100).items.empty()) {
+      return 45;
+    }
     if (activities.size() != 1 || producing.size() != 1 ||
         activities[0].id != activity_id ||
         activities[0].kind != "org.postproject:ingest" ||
@@ -266,13 +351,53 @@ int main(int argc, char **argv) {
       return 28;
     }
     auto confirmation = production.beginTransaction();
-    confirmation.confirmLocator(
+    confirmation.confirmLocatorUnderRoot(
         resolutions[0].resources[0].resource_id,
-        resolutions[0].resources[0].candidates[0].uri);
+        resolutions[0].resources[0].candidates[0].uri, "fixtures");
     confirmation.setMediaRootEnabled(root_id, false);
     confirmation.retireLocator(
         representations[0].resources[0].locators[0].id);
     confirmation.commit();
+
+    const auto rooted = production.representationsUnderMediaRoot("fixtures", 1);
+    const auto resource_page =
+        production.resources(resolutions[0].representation_id, 1);
+    const auto locator_page =
+        production.locators(resolutions[0].resources[0].resource_id, 10);
+    const auto rooted_locator = std::find_if(
+        locator_page.items.begin(), locator_page.items.end(),
+        [&](const postproject::ResourceLocator &candidate) {
+          return candidate.locator.uri ==
+                 resolutions[0].resources[0].candidates[0].uri;
+        });
+    if (rooted.items.size() != 1 ||
+        rooted.items[0].id != resolutions[0].representation_id ||
+        rooted.items[0].resources.size() != 1 ||
+        rooted.next_cursor.has_value() ||
+        resource_page.items !=
+            std::vector<postproject::Uuid>{
+                resolutions[0].resources[0].resource_id} ||
+        resource_page.next_cursor.has_value() ||
+        locator_page.items.empty() || locator_page.next_cursor.has_value() ||
+        rooted_locator == locator_page.items.end() ||
+        rooted_locator->resource_id !=
+            resolutions[0].resources[0].resource_id ||
+        rooted_locator->media_root != std::string("fixtures") ||
+        rooted_locator->locator.availability !=
+            postproject::LocatorAvailability::online ||
+        !rooted_locator->locator.last_seen_unix_micros.has_value()) {
+      return 46;
+    }
+    try {
+      static_cast<void>(
+          production.locators(resolutions[0].resources[0].resource_id, 10,
+                              std::string_view("not-a-cursor")));
+      return 47;
+    } catch (const postproject::Error &error) {
+      if (error.code() != postproject::ErrorCode::invalid_argument) {
+        return 47;
+      }
+    }
     const auto disabled_roots = production.mediaRoots();
     if (disabled_roots.size() != 1 || disabled_roots[0].enabled) {
       return 26;
@@ -545,6 +670,63 @@ int main(int argc, char **argv) {
       return 36;
     }
 
+    const auto consuming_page =
+        reopened.activitiesConsuming(resolutions[0].representation_id, 1);
+    const auto tool_outputs = reopened.outputsByTool(
+        {"C++ worker", std::nullopt, std::nullopt}, 10);
+    const auto versioned_tool_outputs = reopened.outputsByTool(
+        {"C++ worker", std::string("1.0"), std::nullopt}, 10);
+    const auto ancestor_page =
+        reopened.ancestors(completed_representation_id, 4, 1000, 10);
+    const auto descendant_page =
+        reopened.descendants(resolutions[0].representation_id, 4, 1000, 10);
+    if (consuming_page.items.size() != 1 ||
+        consuming_page.items[0].id != completion_activity_id ||
+        consuming_page.next_cursor.has_value() ||
+        tool_outputs.items !=
+            std::vector<postproject::Uuid>{completed_representation_id} ||
+        tool_outputs.next_cursor.has_value() ||
+        !versioned_tool_outputs.items.empty() ||
+        ancestor_page.items.size() != 1 ||
+        !(ancestor_page.items[0].object ==
+          postproject::ObjectRef{postproject::ObjectKind::representation,
+                                 resolutions[0].representation_id}) ||
+        ancestor_page.items[0].depth != 1 ||
+        ancestor_page.next_cursor.has_value() ||
+        ancestor_page.traversal_truncated ||
+        descendant_page.items.size() != 1 ||
+        descendant_page.items[0].object.id != completed_representation_id ||
+        descendant_page.items[0].depth != 1 ||
+        descendant_page.next_cursor.has_value() ||
+        descendant_page.traversal_truncated) {
+      return 48;
+    }
+
+    const auto all_representations = reopened.representations(asset_id);
+    std::vector<postproject::Uuid> paged_representation_ids;
+    std::optional<std::string> representation_cursor;
+    do {
+      const auto page =
+          reopened.representations(asset_id, 2, representation_cursor);
+      if (page.items.empty() || page.items.size() > 2) {
+        return 49;
+      }
+      for (const auto &representation : page.items) {
+        paged_representation_ids.push_back(representation.id);
+      }
+      representation_cursor = page.next_cursor;
+    } while (representation_cursor.has_value());
+    if (paged_representation_ids.size() != all_representations.size() ||
+        !std::all_of(all_representations.begin(), all_representations.end(),
+                     [&](const postproject::Representation &representation) {
+                       return std::find(paged_representation_ids.begin(),
+                                        paged_representation_ids.end(),
+                                        representation.id) !=
+                              paged_representation_ids.end();
+                     })) {
+      return 49;
+    }
+
     const auto first_job_page = reopened.jobs(1);
     if (first_job_page.items.size() != 1 ||
         !first_job_page.next_cursor.has_value()) {
@@ -581,6 +763,32 @@ int main(int argc, char **argv) {
         regeneration_plans[0].parameters[0].property != "details" ||
         reopened.jobs(1000).items.size() != 3) {
       return 37;
+    }
+
+    const auto stale_before = reopened.staleArtifacts(64, 1000, 100);
+    if (!stale_before.items.empty() || stale_before.next_cursor.has_value() ||
+        stale_before.traversal_truncated) {
+      return 50;
+    }
+    auto invalidation = reopened.beginTransaction();
+    invalidation.recordRepresentationFingerprint(
+        resolutions[0].representation_id,
+        {"cpp-smoke-tree", 1, {UINT8_C(0x31), UINT8_C(0x41)}});
+    invalidation.commit();
+    const auto stale_all = reopened.staleArtifacts(64, 1000, 100);
+    const auto stale_downstream = reopened.staleArtifacts(
+        64, 1000, 100, std::nullopt, resolutions[0].representation_id);
+    const auto contains_id = [](const std::vector<postproject::Uuid> &ids,
+                                const postproject::Uuid &id) {
+      return std::find(ids.begin(), ids.end(), id) != ids.end();
+    };
+    if (!contains_id(stale_all.items, completed_representation_id) ||
+        stale_all.next_cursor.has_value() ||
+        stale_downstream.items !=
+            std::vector<postproject::Uuid>{completed_representation_id} ||
+        stale_downstream.next_cursor.has_value() ||
+        stale_downstream.traversal_truncated) {
+      return 51;
     }
 
     try {

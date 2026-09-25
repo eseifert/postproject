@@ -140,6 +140,13 @@ template <typename T> struct QueryPage final {
   bool traversal_truncated;
 };
 
+// One object reached by a paginated query. Depth is the shortest traversal
+// distance for provenance queries and zero for non-traversal queries.
+struct ObjectMatch final {
+  ObjectRef object;
+  std::uint32_t depth;
+};
+
 struct FingerprintSnapshot final {
   std::string algorithm;
   std::uint16_t version;
@@ -537,6 +544,14 @@ struct Locator final {
   std::optional<std::int64_t> last_seen_unix_micros;
 };
 
+// A locator returned by a paginated locator query, with its owning resource
+// and the logical media root it was confirmed under, when one was recorded.
+struct ResourceLocator final {
+  Uuid resource_id;
+  Locator locator;
+  std::optional<std::string> media_root;
+};
+
 struct Resource final {
   Uuid id;
   std::optional<std::uint64_t> file_size;
@@ -729,6 +744,24 @@ struct ObjectRefSetDeleter final {
 using ObjectRefSetHandle =
     std::unique_ptr<pp_object_ref_set_t, ObjectRefSetDeleter>;
 
+struct ObjectQuerySetDeleter final {
+  void operator()(pp_object_query_set_t *objects) const noexcept {
+    pp_object_query_set_release(objects);
+  }
+};
+
+using ObjectQuerySetHandle =
+    std::unique_ptr<pp_object_query_set_t, ObjectQuerySetDeleter>;
+
+struct LocatorQuerySetDeleter final {
+  void operator()(pp_locator_query_set_t *locators) const noexcept {
+    pp_locator_query_set_release(locators);
+  }
+};
+
+using LocatorQuerySetHandle =
+    std::unique_ptr<pp_locator_query_set_t, LocatorQuerySetDeleter>;
+
 struct DependencySetDeleter final {
   void operator()(pp_dependency_set_t *dependencies) const noexcept {
     pp_dependency_set_release(dependencies);
@@ -898,6 +931,32 @@ checked_optional_string(const std::optional<std::string> &value,
   return value.has_value()
              ? std::optional<std::string>(checked_string(*value, label))
              : std::nullopt;
+}
+
+inline std::optional<std::string>
+checked_cursor(const std::optional<std::string_view> &cursor) {
+  return cursor.has_value()
+             ? std::optional<std::string>(checked_string(*cursor, "query cursor"))
+             : std::nullopt;
+}
+
+inline const char *
+optional_c_str(const std::optional<std::string> &value) noexcept {
+  return value.has_value() ? value->c_str() : nullptr;
+}
+
+inline Asset asset(const pp_asset_set_t *assets, std::uint64_t index) {
+  pp_uuid_t id{};
+  std::int64_t created_at_unix_micros = 0;
+  const char *display_name = nullptr;
+  const char *import_source = nullptr;
+  pp_error_t *error = nullptr;
+  const pp_error_code_t status =
+      pp_asset_set_get(assets, index, &id, &created_at_unix_micros,
+                       &display_name, &import_source, &error);
+  throw_if_error(status, error);
+  return {uuid(id), created_at_unix_micros, optional_string(display_name),
+          optional_string(import_source)};
 }
 
 inline Fingerprint representation_fingerprint(
@@ -1306,6 +1365,73 @@ dependency_query_page(DependencyQuerySetHandle matches) {
           pp_dependency_query_set_traversal_truncated(matches.get()) != 0};
 }
 
+inline QueryPage<ObjectMatch> object_query_page(ObjectQuerySetHandle objects) {
+  std::vector<ObjectMatch> items;
+  const std::uint64_t count = pp_object_query_set_count(objects.get());
+  items.reserve(static_cast<std::size_t>(count));
+  for (std::uint64_t index = 0; index < count; ++index) {
+    pp_object_ref_t object{};
+    std::uint32_t depth = 0;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_object_query_set_get(
+        objects.get(), index, &object, &depth, &error);
+    throw_if_error(status, error);
+    items.push_back({object_ref(object), depth});
+  }
+  const char *cursor = pp_object_query_set_next_cursor(objects.get());
+  return {std::move(items), optional_string(cursor),
+          pp_object_query_set_traversal_truncated(objects.get()) != 0};
+}
+
+inline QueryPage<ObjectRef> object_ref_page(QueryPage<ObjectMatch> page) {
+  std::vector<ObjectRef> items;
+  items.reserve(page.items.size());
+  for (const ObjectMatch &match : page.items) {
+    items.push_back(match.object);
+  }
+  return {std::move(items), std::move(page.next_cursor),
+          page.traversal_truncated};
+}
+
+inline QueryPage<Uuid> object_id_page(QueryPage<ObjectMatch> page,
+                                      ObjectKind kind) {
+  std::vector<Uuid> items;
+  items.reserve(page.items.size());
+  for (const ObjectMatch &match : page.items) {
+    if (match.object.kind != kind) {
+      throw Error(ErrorCode::internal,
+                  "object query returned an unexpected object kind");
+    }
+    items.push_back(match.object.id);
+  }
+  return {std::move(items), std::move(page.next_cursor),
+          page.traversal_truncated};
+}
+
+inline QueryPage<Representation>
+representation_page(RepresentationSetHandle representations) {
+  std::vector<Representation> items;
+  const std::uint64_t count =
+      pp_representation_set_count(representations.get());
+  items.reserve(static_cast<std::size_t>(count));
+  for (std::uint64_t index = 0; index < count; ++index) {
+    items.push_back(representation(representations.get(), index));
+  }
+  const char *cursor = pp_representation_set_next_cursor(representations.get());
+  return {std::move(items), optional_string(cursor), false};
+}
+
+inline QueryPage<Activity> activity_page(ActivitySetHandle activities) {
+  std::vector<Activity> items;
+  const std::uint64_t count = pp_activity_set_count(activities.get());
+  items.reserve(static_cast<std::size_t>(count));
+  for (std::uint64_t index = 0; index < count; ++index) {
+    items.push_back(activity(activities.get(), index));
+  }
+  const char *cursor = pp_activity_set_next_cursor(activities.get());
+  return {std::move(items), optional_string(cursor), false};
+}
+
 inline Revision revision(const pp_revision_set_t *revisions,
                          std::uint64_t index) {
   pp_uuid_t id{};
@@ -1651,6 +1777,7 @@ public:
 
 private:
   friend class Transaction;
+  friend class Production;
 
   explicit MetadataInput(pp_metadata_input_t *input) noexcept : input_(input) {}
 
@@ -1708,6 +1835,13 @@ inline MetadataInput MetadataInput::structure(
 }
 
 struct RegenerationParameter final {
+  std::string vocabulary;
+  std::string property;
+  MetadataInput value;
+};
+
+struct MetadataAssertion final {
+  ObjectRef target;
   std::string vocabulary;
   std::string property;
   MetadataInput value;
@@ -1840,6 +1974,29 @@ inline MetadataInput metadata_input(const pp_metadata_value_t *value) {
   }
 }
 
+inline QueryPage<MetadataAssertion> metadata_page(MetadataSetHandle metadata) {
+  std::vector<MetadataAssertion> items;
+  const std::uint64_t count = pp_metadata_set_count(metadata.get());
+  items.reserve(static_cast<std::size_t>(count));
+  for (std::uint64_t index = 0; index < count; ++index) {
+    pp_object_ref_t target{};
+    const char *vocabulary = nullptr;
+    const char *property = nullptr;
+    const pp_metadata_value_t *value = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_metadata_set_get(
+        metadata.get(), index, &target, &vocabulary, &property, &value, &error);
+    throw_if_error(status, error);
+    if (vocabulary == nullptr || property == nullptr || value == nullptr) {
+      throw Error(ErrorCode::internal, "metadata assertion is incomplete");
+    }
+    items.push_back({object_ref(target), std::string(vocabulary),
+                     std::string(property), metadata_input(value)});
+  }
+  const char *cursor = pp_metadata_set_next_cursor(metadata.get());
+  return {std::move(items), optional_string(cursor), false};
+}
+
 } // namespace detail
 
 // Move-only and caller-serialized. Do not call one Transaction concurrently.
@@ -1964,6 +2121,19 @@ public:
     pp_error_t *error = nullptr;
     const pp_error_code_t status = pp_transaction_confirm_locator(
         transaction_, &id, native_uri.c_str(), &error);
+    detail::throw_if_error(status, error);
+  }
+
+  // Confirms a locator and records the logical media root it lives under.
+  void confirmLocatorUnderRoot(const Uuid &resource_id, std::string_view uri,
+                               std::string_view root_name) {
+    const pp_uuid_t id = detail::native_uuid(resource_id);
+    const std::string native_uri = detail::checked_string(uri, "uri");
+    const std::string native_root =
+        detail::checked_string(root_name, "root name");
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_confirm_locator_under_root(
+        transaction_, &id, native_uri.c_str(), native_root.c_str(), &error);
     detail::throw_if_error(status, error);
   }
 
@@ -2487,25 +2657,32 @@ public:
     const std::uint64_t count = pp_asset_set_count(assets.get());
     result.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t index = 0; index < count; ++index) {
-      pp_uuid_t id{};
-      std::int64_t created_at_unix_micros = 0;
-      const char *display_name = nullptr;
-      const char *import_source = nullptr;
-      pp_error_t *item_error = nullptr;
-      const pp_error_code_t item_status = pp_asset_set_get(
-          assets.get(), index, &id, &created_at_unix_micros, &display_name,
-          &import_source, &item_error);
-      detail::throw_if_error(item_status, item_error);
-      result.push_back(
-          {detail::uuid(id), created_at_unix_micros,
-           display_name != nullptr
-               ? std::optional<std::string>(std::string(display_name))
-               : std::nullopt,
-           import_source != nullptr
-               ? std::optional<std::string>(std::string(import_source))
-               : std::nullopt});
+      result.push_back(detail::asset(assets.get(), index));
     }
     return result;
+  }
+
+  [[nodiscard]] QueryPage<Asset>
+  assets(std::uint32_t limit,
+         std::optional<std::string_view> cursor = std::nullopt) const {
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_asset_set_t *raw_assets = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_assets_page(
+        production_, limit, detail::optional_c_str(checked_cursor), &raw_assets,
+        &error);
+    detail::throw_if_error(status, error);
+    detail::AssetSetHandle assets(raw_assets);
+
+    std::vector<Asset> items;
+    const std::uint64_t count = pp_asset_set_count(assets.get());
+    items.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      items.push_back(detail::asset(assets.get(), index));
+    }
+    const char *next_cursor = pp_asset_set_next_cursor(assets.get());
+    return {std::move(items), detail::optional_string(next_cursor), false};
   }
 
   [[nodiscard]] std::vector<MediaRoot> mediaRoots() const {
@@ -2566,6 +2743,122 @@ public:
     return result;
   }
 
+  [[nodiscard]] QueryPage<Representation>
+  representations(const Uuid &asset_id, std::uint32_t limit,
+                  std::optional<std::string_view> cursor = std::nullopt) const {
+    const pp_uuid_t native_asset_id = detail::native_uuid(asset_id);
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_representation_set_t *raw_representations = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_representations_page(
+        production_, &native_asset_id, limit,
+        detail::optional_c_str(checked_cursor), &raw_representations, &error);
+    detail::throw_if_error(status, error);
+    return detail::representation_page(
+        detail::RepresentationSetHandle(raw_representations));
+  }
+
+  // Representations with a locator confirmed under the named logical root.
+  [[nodiscard]] QueryPage<Representation> representationsUnderMediaRoot(
+      std::string_view root_name, std::uint32_t limit,
+      std::optional<std::string_view> cursor = std::nullopt) const {
+    const std::string native_root =
+        detail::checked_string(root_name, "root name");
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_representation_set_t *raw_representations = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_production_representations_under_media_root(
+            production_, native_root.c_str(), limit,
+            detail::optional_c_str(checked_cursor), &raw_representations,
+            &error);
+    detail::throw_if_error(status, error);
+    return detail::representation_page(
+        detail::RepresentationSetHandle(raw_representations));
+  }
+
+  // Resource identities of one representation in structure order.
+  [[nodiscard]] QueryPage<Uuid>
+  resources(const Uuid &representation_id, std::uint32_t limit,
+            std::optional<std::string_view> cursor = std::nullopt) const {
+    const pp_uuid_t native_id = detail::native_uuid(representation_id);
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_object_query_set_t *raw_objects = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_resources_page(
+        production_, &native_id, limit, detail::optional_c_str(checked_cursor),
+        &raw_objects, &error);
+    detail::throw_if_error(status, error);
+    return detail::object_id_page(
+        detail::object_query_page(detail::ObjectQuerySetHandle(raw_objects)),
+        ObjectKind::resource);
+  }
+
+  [[nodiscard]] QueryPage<ResourceLocator>
+  locators(const Uuid &resource_id, std::uint32_t limit,
+           std::optional<std::string_view> cursor = std::nullopt) const {
+    const pp_uuid_t native_id = detail::native_uuid(resource_id);
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_locator_query_set_t *raw_locators = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_locators_page(
+        production_, &native_id, limit, detail::optional_c_str(checked_cursor),
+        &raw_locators, &error);
+    detail::throw_if_error(status, error);
+    detail::LocatorQuerySetHandle locators(raw_locators);
+
+    std::vector<ResourceLocator> items;
+    const std::uint64_t count = pp_locator_query_set_count(locators.get());
+    items.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      pp_uuid_t id{};
+      pp_uuid_t owner_id{};
+      const char *uri = nullptr;
+      pp_locator_availability_t availability = 0;
+      std::uint8_t has_last_seen = 0;
+      std::int64_t last_seen = 0;
+      const char *media_root = nullptr;
+      pp_error_t *item_error = nullptr;
+      const pp_error_code_t item_status = pp_locator_query_set_get(
+          locators.get(), index, &id, &owner_id, &uri, &availability,
+          &has_last_seen, &last_seen, &media_root, &item_error);
+      detail::throw_if_error(item_status, item_error);
+      if (uri == nullptr) {
+        throw Error(ErrorCode::internal, "locator has no URI");
+      }
+      items.push_back(
+          {detail::uuid(owner_id),
+           Locator{detail::uuid(id), std::string(uri),
+                   static_cast<LocatorAvailability>(availability),
+                   has_last_seen != 0 ? std::optional<std::int64_t>(last_seen)
+                                      : std::nullopt},
+           detail::optional_string(media_root)});
+    }
+    const char *next_cursor = pp_locator_query_set_next_cursor(locators.get());
+    return {std::move(items), detail::optional_string(next_cursor), false};
+  }
+
+  // Representations with a required resource that has no locator knowledge.
+  [[nodiscard]] QueryPage<Uuid>
+  unresolvedMedia(std::uint32_t limit,
+                  std::optional<std::string_view> cursor = std::nullopt) const {
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_object_query_set_t *raw_objects = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_unresolved_media(
+        production_, limit, detail::optional_c_str(checked_cursor),
+        &raw_objects, &error);
+    detail::throw_if_error(status, error);
+    return detail::object_id_page(
+        detail::object_query_page(detail::ObjectQuerySetHandle(raw_objects)),
+        ObjectKind::representation);
+  }
+
   [[nodiscard]] std::optional<DependencySet>
   dependencySet(const Uuid &representation_id) const {
     const pp_uuid_t native_id = detail::native_uuid(representation_id);
@@ -2623,15 +2916,12 @@ public:
                std::optional<std::string_view> cursor = std::nullopt) const {
     const pp_uuid_t native_id = detail::native_uuid(representation_id);
     const std::optional<std::string> checked_cursor =
-        cursor.has_value()
-            ? std::optional<std::string>(
-                  detail::checked_string(*cursor, "query cursor"))
-            : std::nullopt;
+        detail::checked_cursor(cursor);
     pp_dependency_query_set_t *raw_matches = nullptr;
     pp_error_t *error = nullptr;
     const pp_error_code_t status = pp_production_dependencies(
         production_, &native_id, max_depth, max_representations, limit,
-        checked_cursor.has_value() ? checked_cursor->c_str() : nullptr,
+        detail::optional_c_str(checked_cursor),
         &raw_matches, &error);
     detail::throw_if_error(status, error);
     return detail::dependency_query_page(
@@ -2644,15 +2934,12 @@ public:
              std::optional<std::string_view> cursor = std::nullopt) const {
     const pp_object_ref_t native_target = detail::native_object_ref(target);
     const std::optional<std::string> checked_cursor =
-        cursor.has_value()
-            ? std::optional<std::string>(
-                  detail::checked_string(*cursor, "query cursor"))
-            : std::nullopt;
+        detail::checked_cursor(cursor);
     pp_dependency_query_set_t *raw_matches = nullptr;
     pp_error_t *error = nullptr;
     const pp_error_code_t status = pp_production_dependents(
         production_, &native_target, max_depth, max_representations, limit,
-        checked_cursor.has_value() ? checked_cursor->c_str() : nullptr,
+        detail::optional_c_str(checked_cursor),
         &raw_matches, &error);
     detail::throw_if_error(status, error);
     return detail::dependency_query_page(
@@ -2717,6 +3004,22 @@ public:
       result.push_back(detail::object_ref(object));
     }
     return result;
+  }
+
+  // Assertions of one property, optionally restricted to an exact scalar value.
+  [[nodiscard]] QueryPage<MetadataAssertion>
+  queryMetadata(std::string_view vocabulary, std::string_view property,
+                std::uint32_t limit,
+                std::optional<std::string_view> cursor = std::nullopt) const {
+    return query_metadata_impl(vocabulary, property, nullptr, limit, cursor);
+  }
+
+  [[nodiscard]] QueryPage<MetadataAssertion>
+  queryMetadata(std::string_view vocabulary, std::string_view property,
+                const MetadataInput &exact_value, std::uint32_t limit,
+                std::optional<std::string_view> cursor = std::nullopt) const {
+    return query_metadata_impl(vocabulary, property, exact_value.input_, limit,
+                               cursor);
   }
 
   [[nodiscard]] std::vector<RepresentationResolution>
@@ -2874,10 +3177,7 @@ public:
        std::optional<JobState> state = std::nullopt,
        std::optional<std::string_view> kind = std::nullopt) const {
     const std::optional<std::string> checked_cursor =
-        cursor.has_value()
-            ? std::optional<std::string>(
-                  detail::checked_string(*cursor, "query cursor"))
-            : std::nullopt;
+        detail::checked_cursor(cursor);
     const std::optional<std::string> checked_kind =
         kind.has_value()
             ? std::optional<std::string>(detail::checked_string(*kind, "job kind"))
@@ -2888,7 +3188,7 @@ public:
         production_,
         state.has_value() ? static_cast<pp_job_state_t>(*state) : 0,
         checked_kind.has_value() ? checked_kind->c_str() : nullptr, limit,
-        checked_cursor.has_value() ? checked_cursor->c_str() : nullptr,
+        detail::optional_c_str(checked_cursor),
         &raw_jobs, &error);
     detail::throw_if_error(status, error);
     detail::JobSetHandle jobs(raw_jobs);
@@ -2976,6 +3276,67 @@ public:
         representation_id, pp_production_activities_consuming);
   }
 
+  [[nodiscard]] QueryPage<Activity>
+  activitiesProducing(const Uuid &representation_id, std::uint32_t limit,
+                      std::optional<std::string_view> cursor =
+                          std::nullopt) const {
+    return activity_page_for_representation(
+        representation_id, limit, cursor,
+        pp_production_activities_producing_page);
+  }
+
+  [[nodiscard]] QueryPage<Activity>
+  activitiesConsuming(const Uuid &representation_id, std::uint32_t limit,
+                      std::optional<std::string_view> cursor =
+                          std::nullopt) const {
+    return activity_page_for_representation(
+        representation_id, limit, cursor,
+        pp_production_activities_consuming_page);
+  }
+
+  // Representations produced by activities of an exact kind.
+  [[nodiscard]] QueryPage<Uuid>
+  outputsByActivityKind(std::string_view kind, std::uint32_t limit,
+                        std::optional<std::string_view> cursor =
+                            std::nullopt) const {
+    const std::string native_kind =
+        detail::checked_string(kind, "activity kind");
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_object_query_set_t *raw_objects = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_outputs_by_activity_kind(
+        production_, native_kind.c_str(), limit,
+        detail::optional_c_str(checked_cursor), &raw_objects, &error);
+    detail::throw_if_error(status, error);
+    return detail::object_id_page(
+        detail::object_query_page(detail::ObjectQuerySetHandle(raw_objects)),
+        ObjectKind::representation);
+  }
+
+  // Representations produced by activities with exactly this tool identity.
+  [[nodiscard]] QueryPage<Uuid>
+  outputsByTool(const ToolIdentity &tool, std::uint32_t limit,
+                std::optional<std::string_view> cursor = std::nullopt) const {
+    const std::string name = detail::checked_string(tool.name, "tool name");
+    const std::optional<std::string> version =
+        detail::checked_optional_string(tool.version, "tool version");
+    const std::optional<std::string> uri =
+        detail::checked_optional_string(tool.uri, "tool URI");
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_object_query_set_t *raw_objects = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_outputs_by_tool(
+        production_, name.c_str(), detail::optional_c_str(version),
+        detail::optional_c_str(uri), limit,
+        detail::optional_c_str(checked_cursor), &raw_objects, &error);
+    detail::throw_if_error(status, error);
+    return detail::object_id_page(
+        detail::object_query_page(detail::ObjectQuerySetHandle(raw_objects)),
+        ObjectKind::representation);
+  }
+
   [[nodiscard]] std::vector<Uuid>
   ancestors(const Uuid &representation_id) const {
     return provenance_relatives(representation_id,
@@ -2986,6 +3347,26 @@ public:
   descendants(const Uuid &representation_id) const {
     return provenance_relatives(representation_id,
                                 pp_production_provenance_descendants);
+  }
+
+  // Bounded provenance ancestors with their shortest depth.
+  [[nodiscard]] QueryPage<ObjectMatch>
+  ancestors(const Uuid &representation_id, std::uint32_t max_depth,
+            std::uint32_t max_representations, std::uint32_t limit,
+            std::optional<std::string_view> cursor = std::nullopt) const {
+    return provenance_page(representation_id, max_depth, max_representations,
+                           limit, cursor,
+                           pp_production_provenance_ancestors_page);
+  }
+
+  // Bounded provenance descendants with their shortest depth.
+  [[nodiscard]] QueryPage<ObjectMatch>
+  descendants(const Uuid &representation_id, std::uint32_t max_depth,
+              std::uint32_t max_representations, std::uint32_t limit,
+              std::optional<std::string_view> cursor = std::nullopt) const {
+    return provenance_page(representation_id, max_depth, max_representations,
+                           limit, cursor,
+                           pp_production_provenance_descendants_page);
   }
 
   [[nodiscard]] ArtifactEvaluation
@@ -3163,6 +3544,34 @@ public:
             detail::optional_string(activity_kind), std::move(issues)};
   }
 
+  // Produced representations currently evaluated as stale. A source limits the
+  // candidates to its provenance descendants.
+  [[nodiscard]] QueryPage<Uuid>
+  staleArtifacts(std::uint32_t evaluation_max_depth,
+                 std::uint32_t evaluation_max_representations,
+                 std::uint32_t limit,
+                 std::optional<std::string_view> cursor = std::nullopt,
+                 std::optional<Uuid> source_representation_id =
+                     std::nullopt) const {
+    const std::optional<pp_uuid_t> native_source =
+        source_representation_id.has_value()
+            ? std::optional<pp_uuid_t>(
+                  detail::native_uuid(*source_representation_id))
+            : std::nullopt;
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_object_query_set_t *raw_objects = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_stale_artifacts(
+        production_, native_source.has_value() ? &*native_source : nullptr,
+        evaluation_max_depth, evaluation_max_representations, limit,
+        detail::optional_c_str(checked_cursor), &raw_objects, &error);
+    detail::throw_if_error(status, error);
+    return detail::object_id_page(
+        detail::object_query_page(detail::ObjectQuerySetHandle(raw_objects)),
+        ObjectKind::representation);
+  }
+
   [[nodiscard]] std::optional<Revision> latestRevision() const {
     pp_revision_set_t *raw_revisions = nullptr;
     pp_error_t *error = nullptr;
@@ -3191,6 +3600,23 @@ public:
       result.push_back(detail::revision(revisions.get(), index));
     }
     return result;
+  }
+
+  // Distinct semantic objects touched by revisions after `sequence`.
+  [[nodiscard]] QueryPage<ObjectRef>
+  objectsChangedSince(std::uint64_t sequence, std::uint32_t limit,
+                      std::optional<std::string_view> cursor =
+                          std::nullopt) const {
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_object_query_set_t *raw_objects = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_objects_changed_since(
+        production_, sequence, limit, detail::optional_c_str(checked_cursor),
+        &raw_objects, &error);
+    detail::throw_if_error(status, error);
+    return detail::object_ref_page(
+        detail::object_query_page(detail::ObjectQuerySetHandle(raw_objects)));
   }
 
   [[nodiscard]] std::vector<RevisionEvent>
@@ -3231,6 +3657,13 @@ private:
   using ProvenanceQuery = pp_error_code_t (*)(
       const pp_production_t *, const pp_uuid_t *, pp_object_ref_set_t **,
       pp_error_t **);
+  using ActivityPageQuery = pp_error_code_t (*)(
+      const pp_production_t *, const pp_uuid_t *, std::uint32_t, const char *,
+      pp_activity_set_t **, pp_error_t **);
+  using ProvenancePageQuery = pp_error_code_t (*)(
+      const pp_production_t *, const pp_uuid_t *, std::uint32_t,
+      std::uint32_t, std::uint32_t, const char *, pp_object_query_set_t **,
+      pp_error_t **);
 
   explicit Production(pp_production_t *production) noexcept : production_(production) {}
 
@@ -3252,6 +3685,60 @@ private:
       result.push_back(detail::activity(activities.get(), index));
     }
     return result;
+  }
+
+  [[nodiscard]] QueryPage<Activity> activity_page_for_representation(
+      const Uuid &representation_id, std::uint32_t limit,
+      const std::optional<std::string_view> &cursor,
+      ActivityPageQuery query) const {
+    const pp_uuid_t native_id = detail::native_uuid(representation_id);
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_activity_set_t *raw_activities = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        query(production_, &native_id, limit,
+              detail::optional_c_str(checked_cursor), &raw_activities, &error);
+    detail::throw_if_error(status, error);
+    return detail::activity_page(detail::ActivitySetHandle(raw_activities));
+  }
+
+  [[nodiscard]] QueryPage<ObjectMatch>
+  provenance_page(const Uuid &representation_id, std::uint32_t max_depth,
+                  std::uint32_t max_representations, std::uint32_t limit,
+                  const std::optional<std::string_view> &cursor,
+                  ProvenancePageQuery query) const {
+    const pp_uuid_t native_id = detail::native_uuid(representation_id);
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_object_query_set_t *raw_objects = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        query(production_, &native_id, max_depth, max_representations, limit,
+              detail::optional_c_str(checked_cursor), &raw_objects, &error);
+    detail::throw_if_error(status, error);
+    return detail::object_query_page(detail::ObjectQuerySetHandle(raw_objects));
+  }
+
+  [[nodiscard]] QueryPage<MetadataAssertion>
+  query_metadata_impl(std::string_view vocabulary, std::string_view property,
+                      const pp_metadata_input_t *exact_value,
+                      std::uint32_t limit,
+                      const std::optional<std::string_view> &cursor) const {
+    const std::string native_vocabulary =
+        detail::checked_string(vocabulary, "metadata vocabulary");
+    const std::string native_property =
+        detail::checked_string(property, "metadata property");
+    const std::optional<std::string> checked_cursor =
+        detail::checked_cursor(cursor);
+    pp_metadata_set_t *raw_metadata = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_query_metadata(
+        production_, native_vocabulary.c_str(), native_property.c_str(),
+        exact_value, limit, detail::optional_c_str(checked_cursor),
+        &raw_metadata, &error);
+    detail::throw_if_error(status, error);
+    return detail::metadata_page(detail::MetadataSetHandle(raw_metadata));
   }
 
   [[nodiscard]] std::vector<Uuid>
