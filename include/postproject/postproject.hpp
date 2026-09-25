@@ -545,6 +545,47 @@ struct Representation final {
   std::vector<Resource> resources;
 };
 
+enum class JobState : std::uint32_t {
+  requested = PP_JOB_REQUESTED,
+  claimed = PP_JOB_CLAIMED,
+  succeeded = PP_JOB_SUCCEEDED,
+  failed = PP_JOB_FAILED,
+  cancelled = PP_JOB_CANCELLED,
+};
+
+struct JobClaim final {
+  Uuid id;
+  ToolIdentity tool;
+  std::optional<AgentIdentity> agent;
+  std::int64_t expires_at_unix_micros;
+};
+
+struct JobCompletion final {
+  Uuid activity_id;
+  Uuid representation_id;
+};
+
+struct Job final {
+  Uuid id;
+  std::string kind;
+  std::vector<Uuid> inputs;
+  Uuid output_asset_id;
+  RepresentationKind output_representation_kind;
+  std::optional<std::string> target_root;
+  JobState state;
+  std::optional<JobClaim> claim;
+  std::optional<JobCompletion> completion;
+  std::optional<std::string> failure_diagnostic;
+};
+
+struct JobRequest final {
+  std::string kind;
+  std::vector<Uuid> inputs;
+  Uuid output_asset_id;
+  RepresentationKind output_representation_kind;
+  std::optional<std::string> target_root;
+};
+
 enum class RepresentationAvailability : std::uint32_t {
   online = PP_AVAILABILITY_ONLINE,
   partial = PP_AVAILABILITY_PARTIAL,
@@ -694,6 +735,14 @@ struct ActivitySetDeleter final {
 
 using ActivitySetHandle =
     std::unique_ptr<pp_activity_set_t, ActivitySetDeleter>;
+
+struct JobSetDeleter final {
+  void operator()(pp_job_set_t *jobs) const noexcept {
+    pp_job_set_release(jobs);
+  }
+};
+
+using JobSetHandle = std::unique_ptr<pp_job_set_t, JobSetDeleter>;
 
 struct ArtifactEvaluationDeleter final {
   void operator()(pp_artifact_evaluation_t *evaluation) const noexcept {
@@ -1767,6 +1816,31 @@ public:
     detail::throw_if_error(status, error);
   }
 
+  Uuid requestJob(const JobRequest &request) {
+    const std::string kind = detail::checked_string(request.kind, "job kind");
+    const std::optional<std::string> target_root =
+        detail::checked_optional_string(request.target_root,
+                                        "job target root");
+    std::vector<pp_uuid_t> inputs;
+    inputs.reserve(request.inputs.size());
+    for (const Uuid &input : request.inputs) {
+      inputs.push_back(detail::native_uuid(input));
+    }
+    const pp_uuid_t output_asset_id =
+        detail::native_uuid(request.output_asset_id);
+    pp_uuid_t job_id{};
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_request_job(
+        transaction_, kind.c_str(), inputs.empty() ? nullptr : inputs.data(),
+        static_cast<std::uint64_t>(inputs.size()), &output_asset_id,
+        static_cast<pp_representation_kind_t>(
+            request.output_representation_kind),
+        target_root.has_value() ? target_root->c_str() : nullptr, &job_id,
+        &error);
+    detail::throw_if_error(status, error);
+    return detail::uuid(job_id);
+  }
+
   Uuid createActivity(const ActivitySpec &spec) {
     const std::string kind = detail::checked_string(spec.kind, "kind");
     std::vector<pp_activity_edge_t> inputs;
@@ -2418,6 +2492,81 @@ public:
     result.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t index = 0; index < count; ++index) {
       result.push_back(detail::activity(activities.get(), index));
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::vector<Job> jobs() const {
+    pp_job_set_t *raw_jobs = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_production_jobs(production_, &raw_jobs, &error);
+    detail::throw_if_error(status, error);
+    detail::JobSetHandle jobs(raw_jobs);
+
+    std::vector<Job> result;
+    const std::uint64_t count = pp_job_set_count(jobs.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      pp_job_t native{};
+      pp_error_t *item_error = nullptr;
+      const pp_error_code_t item_status =
+          pp_job_set_get(jobs.get(), index, &native, &item_error);
+      detail::throw_if_error(item_status, item_error);
+
+      std::vector<Uuid> inputs;
+      inputs.reserve(static_cast<std::size_t>(native.input_count));
+      for (std::uint64_t input_index = 0; input_index < native.input_count;
+           ++input_index) {
+        pp_uuid_t input{};
+        pp_error_t *input_error = nullptr;
+        const pp_error_code_t input_status = pp_job_set_get_input(
+            jobs.get(), index, input_index, &input, &input_error);
+        detail::throw_if_error(input_status, input_error);
+        inputs.push_back(detail::uuid(input));
+      }
+
+      const JobState state = static_cast<JobState>(native.state);
+      std::optional<JobClaim> claim;
+      if (state == JobState::claimed) {
+        std::optional<ExternalIdentifier> identifier;
+        if (native.claim_agent_identifier_scheme != nullptr &&
+            native.claim_agent_identifier_value != nullptr) {
+          identifier = ExternalIdentifier{
+              std::string(native.claim_agent_identifier_scheme),
+              std::string(native.claim_agent_identifier_value),
+              detail::optional_string(
+                  native.claim_agent_identifier_qualifier)};
+        }
+        std::optional<AgentIdentity> agent;
+        if (native.claim_agent_name != nullptr || identifier.has_value()) {
+          agent = AgentIdentity{detail::optional_string(native.claim_agent_name),
+                                std::move(identifier)};
+        }
+        claim = JobClaim{
+            detail::uuid(native.claim_id),
+            ToolIdentity{
+                native.claim_tool_name != nullptr
+                    ? std::string(native.claim_tool_name)
+                    : std::string(),
+                detail::optional_string(native.claim_tool_version),
+                detail::optional_string(native.claim_tool_uri)},
+            std::move(agent), native.claim_expires_at_unix_micros};
+      }
+      std::optional<JobCompletion> completion;
+      if (state == JobState::succeeded) {
+        completion = JobCompletion{
+            detail::uuid(native.completion_activity_id),
+            detail::uuid(native.completion_representation_id)};
+      }
+      result.push_back(
+          {detail::uuid(native.id),
+           native.kind != nullptr ? std::string(native.kind) : std::string(),
+           std::move(inputs), detail::uuid(native.output_asset_id),
+           static_cast<RepresentationKind>(native.output_representation_kind),
+           detail::optional_string(native.target_root), state, std::move(claim),
+           std::move(completion),
+           detail::optional_string(native.failure_diagnostic)});
     }
     return result;
   }

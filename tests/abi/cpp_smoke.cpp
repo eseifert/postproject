@@ -396,6 +396,26 @@ int main(int argc, char **argv) {
       return 31;
     }
 
+    auto job_request = reopened.beginTransaction();
+    const auto job_id = job_request.requestJob(
+        {"org.postproject:generate-proxy", {resolutions[0].representation_id},
+         asset_id, postproject::RepresentationKind::proxy, std::nullopt});
+    job_request.commit();
+    const auto jobs = reopened.jobs();
+    if (jobs.size() != 1 || jobs[0].id != job_id ||
+        jobs[0].kind != "org.postproject:generate-proxy" ||
+        jobs[0].inputs !=
+            std::vector<postproject::Uuid>{resolutions[0].representation_id} ||
+        jobs[0].output_asset_id != asset_id ||
+        jobs[0].output_representation_kind !=
+            postproject::RepresentationKind::proxy ||
+        jobs[0].target_root.has_value() ||
+        jobs[0].state != postproject::JobState::requested ||
+        jobs[0].claim.has_value() || jobs[0].completion.has_value() ||
+        jobs[0].failure_diagnostic.has_value()) {
+      return 33;
+    }
+
     try {
       static_cast<void>(postproject::Production::open(path + ".missing"));
       return 6;
