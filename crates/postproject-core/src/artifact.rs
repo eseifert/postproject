@@ -204,6 +204,17 @@ pub enum ArtifactKnowledgeReason {
         /// Current fingerprint bytes.
         current_value: Vec<u8>,
     },
+    /// Dependency content changed and its aggregate fingerprint is not current yet.
+    DependencyFingerprintRecomputationPending {
+        /// Activity owning the input.
+        activity_id: ActivityId,
+        /// Direct activity input.
+        input_representation_id: RepresentationId,
+        /// Dependency representation awaiting recomputation.
+        representation_id: RepresentationId,
+        /// Captured typed path to the dependency.
+        path: Vec<ArtifactDependencyPathSegment>,
+    },
     /// A dependency lacks comparable captured or current fingerprint evidence.
     DependencyFingerprintEvidenceMissing {
         /// Activity owning the input.
