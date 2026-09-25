@@ -28,24 +28,26 @@ use std::{
 };
 
 use postproject_core::{
-    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
-    ArtifactEvaluationLimits, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, Dependency,
-    DependencyKind, DependencyQueryLimits, DependencyTarget, Error, ErrorKind, EvidenceKind,
-    ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern, Job,
-    JobClaimId, JobFailure, JobId, JobKind, JobQuery, JobStateKind, Locator, MAX_ACTIVITY_EDGES,
-    MAX_CONTENT_MEMBERS, MAX_DEPENDENCIES_PER_SET, MAX_JOB_INPUTS, MAX_SEQUENCE_EXCEPTIONS,
-    MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity,
-    OriginalMediaImport, ProductionId, PropertyId, QueryCursor, QueryPageRequest, RationalRate,
-    RepresentationAvailability, RepresentationFingerprint, RepresentationId, RepresentationImport,
-    RepresentationKind, RepresentationResolution, RequestedJobOutput, ResolutionEvidence,
-    ResourceFingerprint, ResourceId, ResourceResolutionState, ResourceRole, RevisionContext,
-    RevisionId, Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
+    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityOutputQuery,
+    ActivityRole, AgentIdentity, ArtifactEvaluationLimits, Asset, AssetId, AvailabilityIssue,
+    AvailabilityIssueKind, Dependency, DependencyKind, DependencyQueryLimits, DependencyTarget,
+    Error, ErrorKind, EvidenceKind, ExternalIdentifier, FrameRange, HostObjectBinding,
+    IdentifierScheme, ImageSequencePattern, Job, JobClaimId, JobFailure, JobId, JobKind, JobQuery,
+    JobStateKind, Locator, LocatorAvailability, LocatorId, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS,
+    MAX_DEPENDENCIES_PER_SET, MAX_JOB_INPUTS, MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MediaRootId,
+    MetadataProperty, MetadataQuery, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport,
+    ProductionId, PropertyId, ProvenanceQueryLimits, ProvenanceQueryMatch, QueryCursor,
+    QueryPageRequest, RationalRate, RepresentationAvailability, RepresentationFingerprint,
+    RepresentationId, RepresentationImport, RepresentationKind, RepresentationResolution,
+    RequestedJobOutput, ResolutionEvidence, ResourceFingerprint, ResourceId,
+    ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, StaleArtifactQuery,
+    Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, MediaRootMapping,
-    prepare_confirmed_locator, prepare_image_sequence_representation,
-    prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
-    prepare_single_file_representation,
+    prepare_confirmed_locator, prepare_confirmed_locator_under_root,
+    prepare_image_sequence_representation, prepare_ordered_parts_representation,
+    prepare_original_media, prepare_package_representation, prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
 
@@ -148,7 +150,7 @@ const PP_REVISION_JOB_FAILED: u32 = 25;
 const PP_REVISION_JOB_CANCELLED: u32 = 26;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 24;
+pub const ABI_VERSION: u32 = 25;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -269,6 +271,7 @@ pub struct PpTransaction {
 /// Opaque immutable asset result set owned by the C caller.
 pub struct PpAssetSet {
     assets: Vec<AbiAsset>,
+    next_cursor: Option<CString>,
 }
 
 /// Opaque immutable media-root result set owned by the C caller.
@@ -390,6 +393,28 @@ struct AbiExternalIdentifier {
 /// Opaque immutable object-reference result set owned by the C caller.
 pub struct PpObjectRefSet {
     objects: Vec<PpObjectRef>,
+}
+
+/// Opaque paginated object-query result set owned by the C caller.
+pub struct PpObjectQuerySet {
+    objects: Vec<(PpObjectRef, u32)>,
+    next_cursor: Option<CString>,
+    traversal_truncated: bool,
+}
+
+/// Opaque paginated locator result set owned by the C caller.
+pub struct PpLocatorQuerySet {
+    locators: Vec<AbiQueryLocator>,
+    next_cursor: Option<CString>,
+}
+
+struct AbiQueryLocator {
+    id: LocatorId,
+    resource_id: ResourceId,
+    uri: CString,
+    availability: u32,
+    last_seen: Option<i64>,
+    media_root: Option<CString>,
 }
 
 /// Opaque set of immutable media-resolution results owned by the C caller.
@@ -675,10 +700,67 @@ pub unsafe extern "C" fn pp_production_assets(
                 .iter()
                 .map(AbiAsset::try_from)
                 .collect::<Result<Vec<_>, Error>>()?;
-            out_assets.write(Box::into_raw(Box::new(PpAssetSet { assets })));
+            out_assets.write(Box::into_raw(Box::new(PpAssetSet {
+                assets,
+                next_cursor: None,
+            })));
             Ok(())
         })
     }
+}
+
+/// Queries one bounded page of assets in creation and identity order.
+///
+/// # Safety
+///
+/// `production` must be live; `cursor` must be null or NUL-terminated UTF-8;
+/// `out_assets` must be writable; and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_assets_page(
+    production: *const PpProduction,
+    limit: u32,
+    cursor: *const c_char,
+    out_assets: *mut *mut PpAssetSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_output(out_assets);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            require_output(out_assets, "out_assets")?;
+            let page_request = query_page_request(limit, cursor)?;
+            let page = lock_production(&production.state).assets_page(&page_request)?;
+            let assets = page
+                .items()
+                .iter()
+                .map(AbiAsset::try_from)
+                .collect::<Result<Vec<_>, Error>>()?;
+            out_assets.write(Box::into_raw(Box::new(PpAssetSet {
+                assets,
+                next_cursor: query_cursor_to_cstring(page.next_cursor())?,
+            })));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the borrowed next-page cursor, or null for the last page.
+///
+/// # Safety
+///
+/// `assets` must be null or a live asset set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_asset_set_next_cursor(assets: *const PpAssetSet) -> *const c_char {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        assets.as_ref().map_or(ptr::null(), |set| {
+            set.next_cursor
+                .as_ref()
+                .map_or(ptr::null(), |cursor| cursor.as_ptr())
+        })
+    }))
+    .unwrap_or(ptr::null())
 }
 
 /// Returns the number of assets in a result set. Null returns zero.
@@ -1114,6 +1196,604 @@ pub unsafe extern "C" fn pp_object_ref_set_release(objects: *mut PpObjectRefSet)
     }));
 }
 
+/// Returns the number of values in a paginated object-query result.
+///
+/// # Safety
+///
+/// `objects` must be null or a live object-query set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_object_query_set_count(objects: *const PpObjectQuerySet) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        objects.as_ref().map_or(0, |set| {
+            u64::try_from(set.objects.len()).unwrap_or(u64::MAX)
+        })
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one typed object and its shortest traversal depth.
+///
+/// # Safety
+///
+/// `objects` must be live, outputs writable, and `out_error` null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_object_query_set_get(
+    objects: *const PpObjectQuerySet,
+    index: u64,
+    out_object: *mut PpObjectRef,
+    out_depth: *mut u32,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_object_ref(out_object);
+        initialize_value(out_depth, 0);
+        ffi_call(out_error, || {
+            require_output(out_object, "out_object")?;
+            require_output(out_depth, "out_depth")?;
+            let objects = objects
+                .as_ref()
+                .ok_or_else(|| invalid_argument("objects must not be null"))?;
+            let (object, depth) = item_at(&objects.objects, index, "query object")?;
+            out_object.write(*object);
+            out_depth.write(*depth);
+            Ok(())
+        })
+    }
+}
+
+/// Returns the borrowed continuation cursor, or null for the last page.
+///
+/// # Safety
+///
+/// `objects` must be null or a live object-query set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_object_query_set_next_cursor(
+    objects: *const PpObjectQuerySet,
+) -> *const c_char {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        objects.as_ref().map_or(ptr::null(), |set| {
+            set.next_cursor
+                .as_ref()
+                .map_or(ptr::null(), |cursor| cursor.as_ptr())
+        })
+    }))
+    .unwrap_or(ptr::null())
+}
+
+/// Returns one when an explicit traversal bound truncated the result.
+///
+/// # Safety
+///
+/// `objects` must be null or a live object-query set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_object_query_set_traversal_truncated(
+    objects: *const PpObjectQuerySet,
+) -> u8 {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        objects
+            .as_ref()
+            .map_or(0, |set| u8::from(set.traversal_truncated))
+    }))
+    .unwrap_or(0)
+}
+
+/// Releases a paginated object-query result. Null is accepted.
+///
+/// # Safety
+///
+/// A non-null pointer must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_object_query_set_release(objects: *mut PpObjectQuerySet) {
+    if !objects.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+            drop(Box::from_raw(objects));
+        }));
+    }
+}
+
+/// Returns the number of locators in a query page.
+///
+/// # Safety
+///
+/// `locators` must be null or a live locator-query set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_locator_query_set_count(locators: *const PpLocatorQuerySet) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        locators.as_ref().map_or(0, |set| {
+            u64::try_from(set.locators.len()).unwrap_or(u64::MAX)
+        })
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one locator query result. Strings borrow the result set.
+///
+/// # Safety
+///
+/// `locators` must be live, outputs writable, and `out_error` null or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn pp_locator_query_set_get(
+    locators: *const PpLocatorQuerySet,
+    index: u64,
+    out_id: *mut PpUuid,
+    out_resource_id: *mut PpUuid,
+    out_uri: *mut *const c_char,
+    out_availability: *mut u32,
+    out_has_last_seen: *mut u8,
+    out_last_seen_unix_micros: *mut i64,
+    out_media_root: *mut *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_uuid(out_id);
+        initialize_uuid(out_resource_id);
+        initialize_const_output(out_uri);
+        initialize_value(out_availability, 0);
+        initialize_value(out_has_last_seen, 0);
+        initialize_value(out_last_seen_unix_micros, 0);
+        initialize_const_output(out_media_root);
+        ffi_call(out_error, || {
+            require_output(out_id, "out_id")?;
+            require_output(out_resource_id, "out_resource_id")?;
+            require_output(out_uri, "out_uri")?;
+            require_output(out_availability, "out_availability")?;
+            require_output(out_has_last_seen, "out_has_last_seen")?;
+            require_output(out_last_seen_unix_micros, "out_last_seen_unix_micros")?;
+            require_output(out_media_root, "out_media_root")?;
+            let locators = locators
+                .as_ref()
+                .ok_or_else(|| invalid_argument("locators must not be null"))?;
+            let locator = item_at(&locators.locators, index, "locator")?;
+            out_id.write(PpUuid {
+                bytes: locator.id.into_bytes(),
+            });
+            out_resource_id.write(PpUuid {
+                bytes: locator.resource_id.into_bytes(),
+            });
+            out_uri.write(locator.uri.as_ptr());
+            out_availability.write(locator.availability);
+            if let Some(last_seen) = locator.last_seen {
+                out_has_last_seen.write(1);
+                out_last_seen_unix_micros.write(last_seen);
+            }
+            out_media_root.write(
+                locator
+                    .media_root
+                    .as_ref()
+                    .map_or(ptr::null(), |root| root.as_ptr()),
+            );
+            Ok(())
+        })
+    }
+}
+
+/// Returns the borrowed locator-page continuation cursor.
+///
+/// # Safety
+///
+/// `locators` must be null or a live locator-query set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_locator_query_set_next_cursor(
+    locators: *const PpLocatorQuerySet,
+) -> *const c_char {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        locators.as_ref().map_or(ptr::null(), |set| {
+            set.next_cursor
+                .as_ref()
+                .map_or(ptr::null(), |cursor| cursor.as_ptr())
+        })
+    }))
+    .unwrap_or(ptr::null())
+}
+
+/// Releases a locator query page. Null is accepted.
+///
+/// # Safety
+///
+/// A non-null pointer must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_locator_query_set_release(locators: *mut PpLocatorQuerySet) {
+    if !locators.is_null() {
+        let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+            drop(Box::from_raw(locators));
+        }));
+    }
+}
+
+/// Queries one bounded page of resources in representation structure order.
+///
+/// # Safety
+///
+/// `production` and `representation_id` must be live, `cursor` null or UTF-8,
+/// `out_objects` writable, and `out_error` null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_resources_page(
+    production: *const PpProduction,
+    representation_id: *const PpUuid,
+    limit: u32,
+    cursor: *const c_char,
+    out_objects: *mut *mut PpObjectQuerySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_output(out_objects);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            let representation_id = representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+            require_output(out_objects, "out_objects")?;
+            let request = query_page_request(limit, cursor)?;
+            let page = lock_production(&production.state).resources_page(
+                RepresentationId::from_bytes(representation_id.bytes),
+                &request,
+            )?;
+            out_objects.write(Box::into_raw(Box::new(object_query_set(
+                page.items()
+                    .iter()
+                    .map(|resource| (ObjectRef::Resource(resource.id()), 0)),
+                page.next_cursor(),
+                false,
+            )?)));
+            Ok(())
+        })
+    }
+}
+
+/// Queries one bounded page of locators belonging to a resource.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_production_resources_page`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_locators_page(
+    production: *const PpProduction,
+    resource_id: *const PpUuid,
+    limit: u32,
+    cursor: *const c_char,
+    out_locators: *mut *mut PpLocatorQuerySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_output(out_locators);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            let resource_id = resource_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("resource_id must not be null"))?;
+            require_output(out_locators, "out_locators")?;
+            let request = query_page_request(limit, cursor)?;
+            let page = lock_production(&production.state)
+                .locators_page(ResourceId::from_bytes(resource_id.bytes), &request)?;
+            out_locators.write(Box::into_raw(Box::new(locator_query_set(
+                page.items(),
+                page.next_cursor(),
+            )?)));
+            Ok(())
+        })
+    }
+}
+
+/// Queries representations with required resources lacking locator knowledge.
+///
+/// # Safety
+///
+/// `production` must be live, `cursor` null or UTF-8, `out_objects` writable,
+/// and `out_error` null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_unresolved_media(
+    production: *const PpProduction,
+    limit: u32,
+    cursor: *const c_char,
+    out_objects: *mut *mut PpObjectQuerySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_output(out_objects);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            require_output(out_objects, "out_objects")?;
+            let request = query_page_request(limit, cursor)?;
+            let page = lock_production(&production.state).unresolved_media(&request)?;
+            out_objects.write(Box::into_raw(Box::new(object_query_set(
+                page.items()
+                    .iter()
+                    .map(|id| (ObjectRef::Representation(*id), 0)),
+                page.next_cursor(),
+                false,
+            )?)));
+            Ok(())
+        })
+    }
+}
+
+/// Queries output representations produced by an exact activity kind.
+///
+/// # Safety
+///
+/// `kind` is required UTF-8; other pointer rules match
+/// [`pp_production_unresolved_media`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_outputs_by_activity_kind(
+    production: *const PpProduction,
+    kind: *const c_char,
+    limit: u32,
+    cursor: *const c_char,
+    out_objects: *mut *mut PpObjectQuerySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_output(out_objects);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            require_output(out_objects, "out_objects")?;
+            let query = ActivityOutputQuery::Kind(ActivityKind::new(required_utf8(kind, "kind")?)?);
+            let request = query_page_request(limit, cursor)?;
+            let page = lock_production(&production.state).activity_outputs(&query, &request)?;
+            out_objects.write(Box::into_raw(Box::new(object_query_set(
+                page.items()
+                    .iter()
+                    .map(|id| (ObjectRef::Representation(*id), 0)),
+                page.next_cursor(),
+                false,
+            )?)));
+            Ok(())
+        })
+    }
+}
+
+/// Queries output representations produced by one exact tool identity.
+///
+/// # Safety
+///
+/// `name` is required UTF-8; `version`, `uri`, and `cursor` may be null or
+/// UTF-8; outputs follow [`pp_production_unresolved_media`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_outputs_by_tool(
+    production: *const PpProduction,
+    name: *const c_char,
+    version: *const c_char,
+    uri: *const c_char,
+    limit: u32,
+    cursor: *const c_char,
+    out_objects: *mut *mut PpObjectQuerySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_output(out_objects);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            require_output(out_objects, "out_objects")?;
+            let query = ActivityOutputQuery::Tool(ToolIdentity::new(
+                required_utf8(name, "name")?,
+                optional_utf8(version, "version")?.map(str::to_owned),
+                optional_utf8(uri, "uri")?.map(str::to_owned),
+            )?);
+            let request = query_page_request(limit, cursor)?;
+            let page = lock_production(&production.state).activity_outputs(&query, &request)?;
+            out_objects.write(Box::into_raw(Box::new(object_query_set(
+                page.items()
+                    .iter()
+                    .map(|id| (ObjectRef::Representation(*id), 0)),
+                page.next_cursor(),
+                false,
+            )?)));
+            Ok(())
+        })
+    }
+}
+
+/// Queries one bounded page of activities producing a representation.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_production_resources_page`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_activities_producing_page(
+    production: *const PpProduction,
+    representation_id: *const PpUuid,
+    limit: u32,
+    cursor: *const c_char,
+    out_activities: *mut *mut PpActivitySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        production_activities_page(
+            production,
+            representation_id,
+            limit,
+            cursor,
+            true,
+            out_activities,
+            out_error,
+        )
+    }
+}
+
+/// Queries one bounded page of activities consuming a representation.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_production_activities_producing_page`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_activities_consuming_page(
+    production: *const PpProduction,
+    representation_id: *const PpUuid,
+    limit: u32,
+    cursor: *const c_char,
+    out_activities: *mut *mut PpActivitySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        production_activities_page(
+            production,
+            representation_id,
+            limit,
+            cursor,
+            false,
+            out_activities,
+            out_error,
+        )
+    }
+}
+
+/// Queries bounded shortest-depth provenance ancestors.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_production_resources_page`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_provenance_ancestors_page(
+    production: *const PpProduction,
+    representation_id: *const PpUuid,
+    max_depth: u32,
+    max_representations: u32,
+    limit: u32,
+    cursor: *const c_char,
+    out_objects: *mut *mut PpObjectQuerySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        production_provenance_page(
+            production,
+            representation_id,
+            max_depth,
+            max_representations,
+            limit,
+            cursor,
+            true,
+            out_objects,
+            out_error,
+        )
+    }
+}
+
+/// Queries bounded shortest-depth provenance descendants.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_production_provenance_ancestors_page`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_provenance_descendants_page(
+    production: *const PpProduction,
+    representation_id: *const PpUuid,
+    max_depth: u32,
+    max_representations: u32,
+    limit: u32,
+    cursor: *const c_char,
+    out_objects: *mut *mut PpObjectQuerySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        production_provenance_page(
+            production,
+            representation_id,
+            max_depth,
+            max_representations,
+            limit,
+            cursor,
+            false,
+            out_objects,
+            out_error,
+        )
+    }
+}
+
+/// Queries produced representations currently evaluated as stale.
+///
+/// A null `source_representation_id` selects all produced representations.
+///
+/// # Safety
+///
+/// `production` must be live; optional pointers must be null or readable;
+/// result pointers must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_stale_artifacts(
+    production: *const PpProduction,
+    source_representation_id: *const PpUuid,
+    evaluation_max_depth: u32,
+    evaluation_max_representations: u32,
+    limit: u32,
+    cursor: *const c_char,
+    out_objects: *mut *mut PpObjectQuerySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_output(out_objects);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            require_output(out_objects, "out_objects")?;
+            let source = source_representation_id
+                .as_ref()
+                .map(|id| RepresentationId::from_bytes(id.bytes));
+            let query = StaleArtifactQuery::new(
+                source,
+                ArtifactEvaluationLimits::new(
+                    evaluation_max_depth,
+                    evaluation_max_representations,
+                )?,
+            );
+            let request = query_page_request(limit, cursor)?;
+            let page = lock_production(&production.state).stale_artifacts(query, &request)?;
+            out_objects.write(Box::into_raw(Box::new(object_query_set(
+                page.items()
+                    .iter()
+                    .map(|id| (ObjectRef::Representation(*id), 0)),
+                page.next_cursor(),
+                page.traversal_truncated(),
+            )?)));
+            Ok(())
+        })
+    }
+}
+
+/// Queries distinct semantic objects touched after a revision sequence.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_production_unresolved_media`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_objects_changed_since(
+    production: *const PpProduction,
+    sequence: u64,
+    limit: u32,
+    cursor: *const c_char,
+    out_objects: *mut *mut PpObjectQuerySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_output(out_objects);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            require_output(out_objects, "out_objects")?;
+            let request = query_page_request(limit, cursor)?;
+            let page =
+                lock_production(&production.state).objects_changed_since(sequence, &request)?;
+            out_objects.write(Box::into_raw(Box::new(object_query_set(
+                page.items().iter().map(|object| (*object, 0)),
+                page.next_cursor(),
+                false,
+            )?)));
+            Ok(())
+        })
+    }
+}
+
 /// Loads typed metadata assertions attached to one object.
 ///
 /// Returned strings and value pointers are borrowed until the result set is
@@ -1182,6 +1862,53 @@ pub unsafe extern "C" fn pp_production_find_metadata(
     }
 }
 
+/// Queries one bounded page of assertions by property and optional exact value.
+///
+/// A null `exact_value` selects every value for the property. A non-null value
+/// must be scalar; list and struct predicates are rejected.
+///
+/// # Safety
+///
+/// `production` must be live; strings must be NUL-terminated UTF-8;
+/// `exact_value` must be null or a live metadata input; `cursor` must be null or
+/// UTF-8; `out_metadata` must be writable; and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the C ABI exposes filter and pagination inputs explicitly"
+)]
+pub unsafe extern "C" fn pp_production_query_metadata(
+    production: *const PpProduction,
+    vocabulary: *const c_char,
+    property: *const c_char,
+    exact_value: *const PpMetadataInput,
+    limit: u32,
+    cursor: *const c_char,
+    out_metadata: *mut *mut PpMetadataSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are copied after validation and output ownership is explicit.
+    unsafe {
+        initialize_output(out_metadata);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            require_output(out_metadata, "out_metadata")?;
+            let property = metadata_property_from_abi(vocabulary, property)?;
+            let exact_value = exact_value.as_ref().map(|input| input.value.clone());
+            let query = MetadataQuery::new(property, exact_value)?;
+            let request = query_page_request(limit, cursor)?;
+            let page = lock_production(&production.state).metadata_query(&query, &request)?;
+            out_metadata.write(Box::into_raw(Box::new(PpMetadataSet::from_page(
+                page.items(),
+                page.next_cursor(),
+            )?)));
+            Ok(())
+        })
+    }
+}
+
 /// Returns the number of assertions in a metadata result set. Null returns zero.
 ///
 /// # Safety
@@ -1196,6 +1923,25 @@ pub unsafe extern "C" fn pp_metadata_set_count(metadata: *const PpMetadataSet) -
         })
     }))
     .unwrap_or(0)
+}
+
+/// Returns the borrowed metadata-page continuation cursor, or null.
+///
+/// # Safety
+///
+/// `metadata` must be null or a live metadata set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_metadata_set_next_cursor(
+    metadata: *const PpMetadataSet,
+) -> *const c_char {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        metadata.as_ref().map_or(ptr::null(), |set| {
+            set.next_cursor
+                .as_ref()
+                .map_or(ptr::null(), |cursor| cursor.as_ptr())
+        })
+    }))
+    .unwrap_or(ptr::null())
 }
 
 /// Reads one assertion and a borrowed pointer to its recursive value.
@@ -1996,6 +2742,25 @@ pub unsafe extern "C" fn pp_activity_set_count(activities: *const PpActivitySet)
         })
     }))
     .unwrap_or(0)
+}
+
+/// Returns the borrowed activity-page continuation cursor, or null.
+///
+/// # Safety
+///
+/// `activities` must be null or a live activity set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_activity_set_next_cursor(
+    activities: *const PpActivitySet,
+) -> *const c_char {
+    catch_unwind(AssertUnwindSafe(|| unsafe {
+        activities.as_ref().map_or(ptr::null(), |set| {
+            set.next_cursor
+                .as_ref()
+                .map_or(ptr::null(), |cursor| cursor.as_ptr())
+        })
+    }))
+    .unwrap_or(ptr::null())
 }
 
 /// Reads one activity's identity, kind, timing, and edge counts.
@@ -4316,6 +5081,46 @@ pub unsafe extern "C" fn pp_transaction_confirm_locator(
     }
 }
 
+/// Stages an explicitly confirmed URI associated with a logical media root.
+///
+/// Confirmation is not durable until the transaction commits. The root name is
+/// retained as query evidence; it does not require a currently enabled mapping.
+///
+/// # Safety
+///
+/// `transaction` must be live, `resource_id` readable, `uri` and `root_name`
+/// must be NUL-terminated UTF-8, and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_confirm_locator_under_root(
+    transaction: *mut PpTransaction,
+    resource_id: *const PpUuid,
+    uri: *const c_char,
+    root_name: *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Required pointers are checked before copied values are staged.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let resource_id = resource_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("resource_id must not be null"))?;
+            let uri = required_utf8(uri, "uri")?;
+            let root_name = required_utf8(root_name, "root_name")?;
+            let locator = prepare_confirmed_locator_under_root(
+                ResourceId::from_bytes(resource_id.bytes),
+                uri.to_owned(),
+                root_name.to_owned(),
+            )?;
+            transaction.mutations.push(StagedMutation::Locator(locator));
+            Ok(())
+        })
+    }
+}
+
 /// Stages retirement of one superseded resource locator.
 ///
 /// # Safety
@@ -5290,6 +6095,47 @@ unsafe fn production_activities_for_representation(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the C ABI carries explicit page inputs and result outputs"
+)]
+unsafe fn production_activities_page(
+    production: *const PpProduction,
+    representation_id: *const PpUuid,
+    limit: u32,
+    cursor: *const c_char,
+    producing: bool,
+    out_activities: *mut *mut PpActivitySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and all pointers checked before use.
+    unsafe {
+        initialize_output(out_activities);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            let representation_id = representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+            require_output(out_activities, "out_activities")?;
+            let request = query_page_request(limit, cursor)?;
+            let inner = lock_production(&production.state);
+            let representation_id = RepresentationId::from_bytes(representation_id.bytes);
+            let page = if producing {
+                inner.activities_producing_page(representation_id, &request)
+            } else {
+                inner.activities_consuming_page(representation_id, &request)
+            }?;
+            out_activities.write(Box::into_raw(Box::new(PpActivitySet::new_page(
+                page.items(),
+                page.next_cursor(),
+            )?)));
+            Ok(())
+        })
+    }
+}
+
 #[derive(Clone, Copy)]
 enum ProvenanceDirection {
     Ancestors,
@@ -5330,6 +6176,56 @@ unsafe fn production_provenance_relatives(
                 })
                 .collect();
             out_representations.write(Box::into_raw(Box::new(PpObjectRefSet { objects })));
+            Ok(())
+        })
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the C ABI carries explicit traversal bounds and page outputs"
+)]
+unsafe fn production_provenance_page(
+    production: *const PpProduction,
+    representation_id: *const PpUuid,
+    max_depth: u32,
+    max_representations: u32,
+    limit: u32,
+    cursor: *const c_char,
+    ancestors: bool,
+    out_objects: *mut *mut PpObjectQuerySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and all pointers checked before use.
+    unsafe {
+        initialize_output(out_objects);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            let representation_id = representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+            require_output(out_objects, "out_objects")?;
+            let limits = ProvenanceQueryLimits::new(max_depth, max_representations)?;
+            let request = query_page_request(limit, cursor)?;
+            let inner = lock_production(&production.state);
+            let representation_id = RepresentationId::from_bytes(representation_id.bytes);
+            let page = if ancestors {
+                inner.ancestors_page(representation_id, limits, &request)
+            } else {
+                inner.descendants_page(representation_id, limits, &request)
+            }?;
+            out_objects.write(Box::into_raw(Box::new(object_query_set(
+                page.items().iter().map(|matched: &ProvenanceQueryMatch| {
+                    (
+                        ObjectRef::Representation(matched.representation_id()),
+                        matched.depth(),
+                    )
+                }),
+                page.next_cursor(),
+                page.traversal_truncated(),
+            )?)));
             Ok(())
         })
     }
@@ -5620,6 +6516,57 @@ unsafe fn query_page_request(limit: u32, cursor: *const c_char) -> Result<QueryP
         .map(QueryCursor::new)
         .transpose()?;
     QueryPageRequest::new(limit, cursor)
+}
+
+fn query_cursor_to_cstring(cursor: Option<&QueryCursor>) -> Result<Option<CString>, Error> {
+    cursor
+        .map(|cursor| exact_cstring(cursor.as_str(), "query cursor"))
+        .transpose()
+}
+
+fn object_query_set(
+    objects: impl IntoIterator<Item = (ObjectRef, u32)>,
+    next_cursor: Option<&QueryCursor>,
+    traversal_truncated: bool,
+) -> Result<PpObjectQuerySet, Error> {
+    Ok(PpObjectQuerySet {
+        objects: objects
+            .into_iter()
+            .map(|(object, depth)| Ok((object_ref_to_abi(object)?, depth)))
+            .collect::<Result<Vec<_>, Error>>()?,
+        next_cursor: query_cursor_to_cstring(next_cursor)?,
+        traversal_truncated,
+    })
+}
+
+fn locator_query_set(
+    locators: &[Locator],
+    next_cursor: Option<&QueryCursor>,
+) -> Result<PpLocatorQuerySet, Error> {
+    Ok(PpLocatorQuerySet {
+        locators: locators
+            .iter()
+            .map(|locator| {
+                Ok(AbiQueryLocator {
+                    id: locator.id(),
+                    resource_id: locator.resource_id(),
+                    uri: exact_cstring(locator.uri(), "locator URI")?,
+                    availability: match locator.availability() {
+                        LocatorAvailability::Unknown => 1,
+                        LocatorAvailability::Online => 2,
+                        LocatorAvailability::Offline => 3,
+                        _ => 0,
+                    },
+                    last_seen: locator.last_seen().map(Timestamp::as_unix_micros),
+                    media_root: locator
+                        .media_root()
+                        .map(|name| exact_cstring(name, "locator media root"))
+                        .transpose()?,
+                })
+            })
+            .collect::<Result<Vec<_>, Error>>()?,
+        next_cursor: query_cursor_to_cstring(next_cursor)?,
+    })
 }
 
 unsafe fn required_bytes<'a>(

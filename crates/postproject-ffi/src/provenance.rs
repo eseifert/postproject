@@ -2,13 +2,16 @@
 
 use std::ffi::CString;
 
-use postproject_core::{Activity, ActivityEdgeSnapshot, ActivityId, Error, RepresentationId};
+use postproject_core::{
+    Activity, ActivityEdgeSnapshot, ActivityId, Error, QueryCursor, RepresentationId,
+};
 
 use crate::exact_cstring;
 
 /// Opaque immutable activity result set owned by the C caller.
 pub struct PpActivitySet {
     pub(crate) activities: Vec<AbiActivity>,
+    pub(crate) next_cursor: Option<CString>,
 }
 
 pub(crate) struct AbiActivity {
@@ -59,7 +62,21 @@ impl PpActivitySet {
             .iter()
             .map(AbiActivity::try_from)
             .collect::<Result<_, _>>()?;
-        Ok(Self { activities })
+        Ok(Self {
+            activities,
+            next_cursor: None,
+        })
+    }
+
+    pub(crate) fn new_page(
+        activities: &[Activity],
+        next_cursor: Option<&QueryCursor>,
+    ) -> Result<Self, Error> {
+        let mut set = Self::new(activities)?;
+        set.next_cursor = next_cursor
+            .map(|cursor| exact_cstring(cursor.as_str(), "activity query cursor"))
+            .transpose()?;
+        Ok(set)
     }
 }
 

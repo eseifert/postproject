@@ -27,6 +27,8 @@ typedef struct pp_representation_set pp_representation_set_t;
 typedef struct pp_resolution_set pp_resolution_set_t;
 typedef struct pp_external_identifier_set pp_external_identifier_set_t;
 typedef struct pp_object_ref_set pp_object_ref_set_t;
+typedef struct pp_object_query_set pp_object_query_set_t;
+typedef struct pp_locator_query_set pp_locator_query_set_t;
 typedef struct pp_metadata_set pp_metadata_set_t;
 typedef struct pp_metadata_value pp_metadata_value_t;
 typedef struct pp_metadata_input pp_metadata_input_t;
@@ -409,7 +411,11 @@ PP_API pp_error_code_t pp_production_asset_exists(const pp_production_t *product
 PP_API pp_error_code_t pp_production_assets(
     const pp_production_t *production, pp_asset_set_t **out_assets,
     pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_assets_page(
+    const pp_production_t *production, uint32_t limit, const char *cursor,
+    pp_asset_set_t **out_assets, pp_error_t **out_error);
 PP_API uint64_t pp_asset_set_count(const pp_asset_set_t *assets);
+PP_API const char *pp_asset_set_next_cursor(const pp_asset_set_t *assets);
 PP_API pp_error_code_t pp_asset_set_get(
     const pp_asset_set_t *assets, uint64_t index, pp_uuid_t *out_id,
     int64_t *out_created_at_unix_micros, const char **out_display_name,
@@ -431,7 +437,17 @@ PP_API void pp_media_root_set_release(pp_media_root_set_t *roots);
 PP_API pp_error_code_t pp_production_representations(
     const pp_production_t *production, const pp_uuid_t *asset_id,
     pp_representation_set_t **out_representations, pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_representations_page(
+    const pp_production_t *production, const pp_uuid_t *asset_id,
+    uint32_t limit, const char *cursor,
+    pp_representation_set_t **out_representations, pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_representations_under_media_root(
+    const pp_production_t *production, const char *root_name,
+    uint32_t limit, const char *cursor,
+    pp_representation_set_t **out_representations, pp_error_t **out_error);
 PP_API uint64_t pp_representation_set_count(
+    const pp_representation_set_t *representations);
+PP_API const char *pp_representation_set_next_cursor(
     const pp_representation_set_t *representations);
 PP_API pp_error_code_t pp_representation_set_get(
     const pp_representation_set_t *representations, uint64_t index,
@@ -504,6 +520,45 @@ PP_API pp_error_code_t pp_object_ref_set_get(
     const pp_object_ref_set_t *objects, uint64_t index,
     pp_object_ref_t *out_object, pp_error_t **out_error);
 PP_API void pp_object_ref_set_release(pp_object_ref_set_t *objects);
+/* Paginated object queries return a depth of zero for non-traversal results.
+ * Cursors and result strings borrow the owning set. */
+PP_API uint64_t pp_object_query_set_count(
+    const pp_object_query_set_t *objects);
+PP_API pp_error_code_t pp_object_query_set_get(
+    const pp_object_query_set_t *objects, uint64_t index,
+    pp_object_ref_t *out_object, uint32_t *out_depth,
+    pp_error_t **out_error);
+PP_API const char *pp_object_query_set_next_cursor(
+    const pp_object_query_set_t *objects);
+PP_API uint8_t pp_object_query_set_traversal_truncated(
+    const pp_object_query_set_t *objects);
+PP_API void pp_object_query_set_release(pp_object_query_set_t *objects);
+PP_API pp_error_code_t pp_production_resources_page(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
+    uint32_t limit, const char *cursor, pp_object_query_set_t **out_objects,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_locators_page(
+    const pp_production_t *production, const pp_uuid_t *resource_id,
+    uint32_t limit, const char *cursor,
+    pp_locator_query_set_t **out_locators, pp_error_t **out_error);
+PP_API uint64_t pp_locator_query_set_count(
+    const pp_locator_query_set_t *locators);
+PP_API pp_error_code_t pp_locator_query_set_get(
+    const pp_locator_query_set_t *locators, uint64_t index,
+    pp_uuid_t *out_id, pp_uuid_t *out_resource_id, const char **out_uri,
+    pp_locator_availability_t *out_availability,
+    uint8_t *out_has_last_seen, int64_t *out_last_seen_unix_micros,
+    const char **out_media_root, pp_error_t **out_error);
+PP_API const char *pp_locator_query_set_next_cursor(
+    const pp_locator_query_set_t *locators);
+PP_API void pp_locator_query_set_release(pp_locator_query_set_t *locators);
+PP_API pp_error_code_t pp_production_unresolved_media(
+    const pp_production_t *production, uint32_t limit, const char *cursor,
+    pp_object_query_set_t **out_objects, pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_objects_changed_since(
+    const pp_production_t *production, uint64_t sequence, uint32_t limit,
+    const char *cursor, pp_object_query_set_t **out_objects,
+    pp_error_t **out_error);
 /* Metadata result sets own every returned string and recursively typed value.
  * All pointers borrowed from a set become invalid when that set is released. */
 PP_API pp_error_code_t pp_production_metadata(
@@ -512,7 +567,14 @@ PP_API pp_error_code_t pp_production_metadata(
 PP_API pp_error_code_t pp_production_find_metadata(
     const pp_production_t *production, const char *vocabulary, const char *property,
     pp_metadata_set_t **out_metadata, pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_query_metadata(
+    const pp_production_t *production, const char *vocabulary,
+    const char *property, const pp_metadata_input_t *exact_value,
+    uint32_t limit, const char *cursor, pp_metadata_set_t **out_metadata,
+    pp_error_t **out_error);
 PP_API uint64_t pp_metadata_set_count(const pp_metadata_set_t *metadata);
+PP_API const char *pp_metadata_set_next_cursor(
+    const pp_metadata_set_t *metadata);
 PP_API pp_error_code_t pp_metadata_set_get(
     const pp_metadata_set_t *metadata, uint64_t index,
     pp_object_ref_t *out_target, const char **out_vocabulary,
@@ -678,13 +740,48 @@ PP_API pp_error_code_t pp_production_activities_producing(
 PP_API pp_error_code_t pp_production_activities_consuming(
     const pp_production_t *production, const pp_uuid_t *representation_id,
     pp_activity_set_t **out_activities, pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_activities_producing_page(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
+    uint32_t limit, const char *cursor, pp_activity_set_t **out_activities,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_activities_consuming_page(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
+    uint32_t limit, const char *cursor, pp_activity_set_t **out_activities,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_outputs_by_activity_kind(
+    const pp_production_t *production, const char *kind, uint32_t limit,
+    const char *cursor, pp_object_query_set_t **out_objects,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_outputs_by_tool(
+    const pp_production_t *production, const char *name, const char *version,
+    const char *uri, uint32_t limit, const char *cursor,
+    pp_object_query_set_t **out_objects, pp_error_t **out_error);
 PP_API pp_error_code_t pp_production_provenance_ancestors(
     const pp_production_t *production, const pp_uuid_t *representation_id,
     pp_object_ref_set_t **out_representations, pp_error_t **out_error);
 PP_API pp_error_code_t pp_production_provenance_descendants(
     const pp_production_t *production, const pp_uuid_t *representation_id,
     pp_object_ref_set_t **out_representations, pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_provenance_ancestors_page(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
+    uint32_t max_depth, uint32_t max_representations, uint32_t limit,
+    const char *cursor, pp_object_query_set_t **out_objects,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_provenance_descendants_page(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
+    uint32_t max_depth, uint32_t max_representations, uint32_t limit,
+    const char *cursor, pp_object_query_set_t **out_objects,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_production_stale_artifacts(
+    const pp_production_t *production,
+    const pp_uuid_t *source_representation_id,
+    uint32_t evaluation_max_depth,
+    uint32_t evaluation_max_representations, uint32_t limit,
+    const char *cursor, pp_object_query_set_t **out_objects,
+    pp_error_t **out_error);
 PP_API uint64_t pp_activity_set_count(const pp_activity_set_t *activities);
+PP_API const char *pp_activity_set_next_cursor(
+    const pp_activity_set_t *activities);
 PP_API pp_error_code_t pp_activity_set_get(
     const pp_activity_set_t *activities, uint64_t index, pp_uuid_t *out_id,
     const char **out_kind, uint8_t *out_has_started_at,
@@ -889,6 +986,9 @@ PP_API pp_error_code_t pp_transaction_remove_media_root(
 PP_API pp_error_code_t pp_transaction_confirm_locator(
     pp_transaction_t *transaction, const pp_uuid_t *resource_id,
     const char *uri, pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_confirm_locator_under_root(
+    pp_transaction_t *transaction, const pp_uuid_t *resource_id,
+    const char *uri, const char *root_name, pp_error_t **out_error);
 PP_API pp_error_code_t pp_transaction_retire_locator(
     pp_transaction_t *transaction, const pp_uuid_t *locator_id,
     pp_error_t **out_error);

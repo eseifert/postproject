@@ -64,6 +64,10 @@ Development version: `0.4.0-alpha.1`.
 
 ### Changed
 
+- Bumped the pre-release C ABI to version 25 with bounded domain-query pages,
+  scalar metadata predicates, activity-output filters, explicit provenance
+  bounds, stale-artifact and changed-object queries, and root-aware locator
+  confirmation.
 - Bumped the pre-release C ABI to version 24. Complete dependent and job lists
   are replaced by bounded pages, and forward dependency traversal is public.
 - Bumped the pre-release C ABI to version 23 with read-only regeneration plans

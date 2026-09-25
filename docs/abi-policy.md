@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 24 is pre-release and may change during the 0.x series, with every
+ABI version 25 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
@@ -9,7 +9,8 @@ release, but removals or signature changes require an explicit ABI-version bump.
 
 Productions, transactions, asset sets, media-root sets, representation sets,
 resolution sets, activity sets, external-identifier sets, object-reference sets,
-dependency-query sets, job sets, metadata inputs, and errors are opaque handles. A
+object-query sets, locator-query sets, dependency-query sets, job sets, metadata
+inputs, and errors are opaque handles. A
 successful creation/open call transfers one production ownership reference to the
 caller, which releases it exactly once with `pp_production_release`. Failed calls
 optionally transfer an error object, released exactly once with
@@ -155,6 +156,13 @@ borrowed opaque continuation cursors. A cursor remains valid only while its
 owning result-set handle is live, so callers must copy it before releasing the
 set. Dependency pages separately report when their depth or
 visited-representation bound truncated traversal.
+
+ABI version 25 adds bounded pages for assets, representations, resources,
+locators, metadata, activity relations, provenance, stale artifacts, and changed
+objects. It also adds exact activity-kind and tool-output filters, unresolved and
+media-root queries, and logical-root evidence when confirming a locator. Opaque
+page cursors borrow their result handles; provenance and stale-artifact pages
+report traversal truncation separately from ordinary pagination.
 
 ## External identifiers
 

@@ -4,7 +4,7 @@ use std::ffi::CString;
 
 use postproject_core::{
     Error, ErrorKind, MetadataAssertion, MetadataField, MetadataMatch, MetadataValue,
-    MetadataValueKind, ObjectRef,
+    MetadataValueKind, ObjectRef, QueryCursor,
 };
 
 use crate::{PpObjectRef, exact_cstring, object_ref_to_abi};
@@ -26,6 +26,7 @@ pub(crate) const PP_METADATA_REFERENCE: u32 = 13;
 /// Opaque immutable metadata result set owned by the C caller.
 pub struct PpMetadataSet {
     pub(crate) assertions: Vec<AbiMetadataAssertion>,
+    pub(crate) next_cursor: Option<CString>,
 }
 
 pub(crate) struct AbiMetadataAssertion {
@@ -79,7 +80,10 @@ impl PpMetadataSet {
             .iter()
             .map(|assertion| AbiMetadataAssertion::new(target, assertion))
             .collect::<Result<_, _>>()?;
-        Ok(Self { assertions })
+        Ok(Self {
+            assertions,
+            next_cursor: None,
+        })
     }
 
     pub(crate) fn from_matches(matches: &[MetadataMatch]) -> Result<Self, Error> {
@@ -89,7 +93,21 @@ impl PpMetadataSet {
                 AbiMetadataAssertion::new(object_ref_to_abi(matched.target())?, matched.assertion())
             })
             .collect::<Result<_, _>>()?;
-        Ok(Self { assertions })
+        Ok(Self {
+            assertions,
+            next_cursor: None,
+        })
+    }
+
+    pub(crate) fn from_page(
+        matches: &[MetadataMatch],
+        next_cursor: Option<&QueryCursor>,
+    ) -> Result<Self, Error> {
+        let mut set = Self::from_matches(matches)?;
+        set.next_cursor = next_cursor
+            .map(|cursor| exact_cstring(cursor.as_str(), "metadata query cursor"))
+            .transpose()?;
+        Ok(set)
     }
 }
 

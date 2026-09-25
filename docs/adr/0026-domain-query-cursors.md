@@ -91,6 +91,14 @@ journal suffix after the supplied sequence, so their cost grows with the number
 of events after that cursor, not with the production; callers keep that suffix
 short by advancing their cursor.
 
+Every native surface projects a page the same way. In C a query returns one
+owned result-set handle, released once, that exposes the item count and items,
+a nullable next-cursor string borrowed from that handle, and, for traversals, a
+separate truncation flag. The C++ wrapper, Python, and Rust return an owned page
+value with items, an optional cursor, and the truncation flag; the CLI prints
+the same three fields as a JSON page object. Whole-set enumerations in the
+integration-preview subset remain until that subset is revised.
+
 Pages are weakly consistent across commits. A later page sees current durable
 state after its key; callers that need change tracking use the semantic
 revision feed. A concurrent insertion before an already-consumed key is not

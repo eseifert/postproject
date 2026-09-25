@@ -2,13 +2,15 @@ use std::{ffi::CString, os::raw::c_char, ptr};
 
 use postproject_core::{
     AssetId, ContentStructure, ContentStructureKind, Error, ErrorKind, Locator,
-    LocatorAvailability, LocatorId, Representation, RepresentationId, RepresentationKind, Resource,
-    ResourceId,
+    LocatorAvailability, LocatorId, QueryCursor, Representation, RepresentationId,
+    RepresentationKind, Resource, ResourceId,
 };
+use postproject_storage_sqlite::SqliteProduction;
 
 use crate::{
     PpError, PpProduction, PpUuid, exact_cstring, ffi_call, initialize_const_output,
-    initialize_output, initialize_uuid, initialize_value, item_at, lock_production, require_output,
+    initialize_output, initialize_uuid, initialize_value, item_at, lock_production,
+    query_page_request, require_output, required_utf8,
 };
 
 const PP_REPRESENTATION_ORIGINAL: u32 = 1;
@@ -28,6 +30,7 @@ const PP_LOCATOR_OFFLINE: u32 = 3;
 /// Opaque immutable representation result set owned by the C caller.
 pub struct PpRepresentationSet {
     representations: Vec<AbiRepresentation>,
+    next_cursor: Option<CString>,
 }
 
 struct AbiRepresentation {
@@ -120,10 +123,103 @@ pub unsafe extern "C" fn pp_production_representations(
             }
             out_representations.write(Box::into_raw(Box::new(PpRepresentationSet {
                 representations,
+                next_cursor: None,
             })));
             Ok(())
         })
     }
+}
+
+/// Queries one bounded page of representations belonging to an asset.
+///
+/// # Safety
+///
+/// Input handles and IDs must be live, `cursor` must be null or NUL-terminated
+/// UTF-8, outputs must be writable, and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_representations_page(
+    production: *const PpProduction,
+    asset_id: *const PpUuid,
+    limit: u32,
+    cursor: *const c_char,
+    out_representations: *mut *mut PpRepresentationSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_output(out_representations);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            let asset_id = asset_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("asset_id must not be null"))?;
+            require_output(out_representations, "out_representations")?;
+            let page_request = query_page_request(limit, cursor)?;
+            let inner = lock_production(&production.state);
+            let page =
+                inner.representations_page(AssetId::from_bytes(asset_id.bytes), &page_request)?;
+            out_representations.write(Box::into_raw(Box::new(PpRepresentationSet::new_page(
+                &inner,
+                page.items(),
+                page.next_cursor(),
+            )?)));
+            Ok(())
+        })
+    }
+}
+
+/// Queries representations with confirmed locator knowledge under a logical root.
+///
+/// # Safety
+///
+/// Pointer rules match [`pp_production_representations_page`]; `root_name` is
+/// required NUL-terminated UTF-8.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_representations_under_media_root(
+    production: *const PpProduction,
+    root_name: *const c_char,
+    limit: u32,
+    cursor: *const c_char,
+    out_representations: *mut *mut PpRepresentationSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    unsafe {
+        initialize_output(out_representations);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            let root_name = required_utf8(root_name, "root_name")?;
+            require_output(out_representations, "out_representations")?;
+            let page_request = query_page_request(limit, cursor)?;
+            let inner = lock_production(&production.state);
+            let page = inner.representations_under_media_root(root_name, &page_request)?;
+            out_representations.write(Box::into_raw(Box::new(PpRepresentationSet::new_page(
+                &inner,
+                page.items(),
+                page.next_cursor(),
+            )?)));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the borrowed next-page cursor, or null for the last page.
+///
+/// # Safety
+///
+/// `representations` must be null or a live representation set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_representation_set_next_cursor(
+    representations: *const PpRepresentationSet,
+) -> *const c_char {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        representations
+            .as_ref()
+            .map_or(ptr::null(), PpRepresentationSet::next_cursor)
+    }))
+    .unwrap_or(ptr::null())
 }
 
 /// Returns the number of representations. Null input returns zero.
@@ -565,6 +661,36 @@ pub unsafe extern "C" fn pp_representation_set_release(representations: *mut PpR
     }));
 }
 
+impl PpRepresentationSet {
+    pub(crate) fn new_page(
+        production: &SqliteProduction,
+        values: &[Representation],
+        next_cursor: Option<&QueryCursor>,
+    ) -> Result<Self, Error> {
+        let mut representations = Vec::with_capacity(values.len());
+        for representation in values {
+            let mut resources = Vec::new();
+            for resource in production.resources(representation.id())? {
+                let locators = production.locators(resource.id())?;
+                resources.push(AbiResource::new(&resource, locators)?);
+            }
+            representations.push(AbiRepresentation::new(representation, resources)?);
+        }
+        Ok(Self {
+            representations,
+            next_cursor: next_cursor
+                .map(|cursor| exact_cstring(cursor.as_str(), "representation query cursor"))
+                .transpose()?,
+        })
+    }
+
+    pub(crate) fn next_cursor(&self) -> *const c_char {
+        self.next_cursor
+            .as_ref()
+            .map_or(ptr::null(), |cursor| cursor.as_ptr())
+    }
+}
+
 impl AbiRepresentation {
     fn new(representation: &Representation, resources: Vec<AbiResource>) -> Result<Self, Error> {
         let structure = representation.content_structure();
@@ -781,6 +907,7 @@ mod tests {
             representations: vec![
                 AbiRepresentation::new(&representation, Vec::new()).expect("ABI representation"),
             ],
+            next_cursor: None,
         };
         let mut prefix = ptr::null();
         let mut suffix = ptr::null();
