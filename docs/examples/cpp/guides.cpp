@@ -11,6 +11,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -182,6 +183,75 @@ void record_render(postproject::Production &production,
 }
 // [/provenance]
 
+// [artifact-knowledge]
+void inspect_artifact(const postproject::Production &production,
+                      const postproject::Uuid &artifact_id) {
+  const auto evaluation = production.evaluateArtifact(artifact_id, 64, 1000);
+  std::cout << "artifact state: " << static_cast<std::uint32_t>(evaluation.state)
+            << '\n';
+  for (const auto &reason : evaluation.reasons) {
+    std::cout << "reason: " << static_cast<std::uint32_t>(reason.kind) << '\n';
+  }
+
+  const auto reproducibility = production.artifactReproducibility(artifact_id);
+  std::cout << "reproducible: " << reproducibility.reproducible
+            << ", missing conditions: " << reproducibility.issues.size()
+            << '\n';
+}
+// [/artifact-knowledge]
+
+// [dependency-queries]
+void record_and_query_dependencies(postproject::Production &production,
+                                   const postproject::Uuid &source_id,
+                                   const postproject::Uuid &target_asset_id,
+                                   const postproject::Uuid &resolved_id) {
+  const postproject::ObjectRef target{postproject::ObjectKind::asset,
+                                      target_asset_id};
+  const postproject::Dependency dependency{
+      std::nullopt, "org.example:character-reference", target, resolved_id,
+      true, "characters/lead.usd"};
+  auto transaction = production.beginTransaction();
+  transaction.recordDependencySet(source_id, {dependency});
+  transaction.commit();
+
+  const auto dependencies = production.dependencies(source_id, 4, 1000, 100);
+  for (const auto &match : dependencies.items) {
+    std::cout << "dependency at depth " << match.depth << '\n';
+  }
+  require(!dependencies.traversal_truncated, "complete dependency traversal");
+
+  const auto dependents = production.dependents(target, 4, 1000, 100);
+  require(dependents.items.size() == 1 &&
+              dependents.items.front().target.id == source_id,
+          "reverse dependency query");
+}
+// [/dependency-queries]
+
+// [job-query-pages]
+void request_and_page_jobs(postproject::Production &production,
+                           const postproject::Uuid &input_id,
+                           const postproject::Uuid &output_asset_id) {
+  const postproject::JobRequest request{
+      "org.example:generate-proxy", {input_id}, output_asset_id,
+      postproject::RepresentationKind::proxy, std::nullopt};
+  auto transaction = production.beginTransaction();
+  transaction.requestJob(request);
+  transaction.requestJob(request);
+  transaction.commit();
+
+  std::optional<std::string> cursor;
+  std::size_t count = 0;
+  do {
+    const auto page = production.jobs(
+        1, cursor, postproject::JobState::requested,
+        std::string_view("org.example:generate-proxy"));
+    count += page.items.size();
+    cursor = page.next_cursor;
+  } while (cursor.has_value());
+  require(count == 2, "two requested proxy jobs");
+}
+// [/job-query-pages]
+
 void handle_event(const postproject::RevisionEvent &event) {
   std::cout << "event " << event.position << ": alternative "
             << event.payload.index() << '\n';
@@ -251,6 +321,10 @@ int main(int argc, char **argv) {
     const auto sequence_id = add_render_sequence(
         production, asset_id, work + "/renders/shot010");
     record_render(production, original_id, sequence_id);
+    inspect_artifact(production, sequence_id);
+    record_and_query_dependencies(production, sequence_id, asset_id,
+                                  original_id);
+    request_and_page_jobs(production, original_id, asset_id);
 
     const auto cursor = process_changes(production, 0);
     require(cursor == production.latestRevision()->sequence, "feed cursor");

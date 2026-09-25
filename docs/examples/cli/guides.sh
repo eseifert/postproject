@@ -93,6 +93,51 @@ postproject activity ancestors production.pproj "$SEQUENCE_ID"
 test "$(postproject --json activity ancestors production.pproj "$SEQUENCE_ID" |
   jq -r '.[0].representation_id')" = "$ORIGINAL_ID"
 
+# [artifact-knowledge]
+postproject --json artifact evaluate production.pproj "$SEQUENCE_ID" \
+  --max-depth 64 --max-representations 1000 |
+  jq '{state, reasons, visited_representations, truncated}'
+postproject --json artifact reproducibility production.pproj "$SEQUENCE_ID" |
+  jq '{reproducible, issues}'
+# [/artifact-knowledge]
+
+# [dependency-queries]
+cat > dependency.json <<EOF
+[
+  {
+    "kind": "org.example:character-reference",
+    "target": {"kind": "asset", "id": "$ASSET_ID"},
+    "resolved_representation_id": "$ORIGINAL_ID",
+    "required": true,
+    "authored_reference": "characters/lead.usd"
+  }
+]
+EOF
+postproject dependency record production.pproj "$SEQUENCE_ID" dependency.json
+postproject --json dependency dependencies production.pproj "$SEQUENCE_ID" \
+  --max-depth 4 --max-representations 1000 --limit 100 |
+  jq '.items[] | {target, depth}'
+postproject dependency dependents production.pproj asset "$ASSET_ID" \
+  --max-depth 4 --max-representations 1000 --limit 100
+# [/dependency-queries]
+
+# [job-query-pages]
+for _ in 1 2; do
+  postproject job request production.pproj org.example:generate-proxy \
+    "$ASSET_ID" proxy --input "$ORIGINAL_ID"
+done
+CURSOR=
+while :; do
+  ARGS=(--json job list production.pproj --state requested \
+    --kind org.example:generate-proxy --limit 1)
+  [[ -n "$CURSOR" ]] && ARGS+=(--cursor "$CURSOR")
+  PAGE=$(postproject "${ARGS[@]}")
+  jq '.items[] | {id, kind, state}' <<<"$PAGE"
+  CURSOR=$(jq -r '.next_cursor // empty' <<<"$PAGE")
+  [[ -z "$CURSOR" ]] && break
+done
+# [/job-query-pages]
+
 # [revision-feed]
 CURSOR=0
 while :; do

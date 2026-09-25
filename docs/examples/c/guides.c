@@ -389,6 +389,163 @@ static pp_error_code_t record_render(pp_production_t *production,
 }
 /* [/provenance] */
 
+/* [artifact-knowledge] */
+static pp_error_code_t inspect_artifact(const pp_production_t *production,
+                                        const pp_uuid_t *artifact_id,
+                                        pp_error_t **error) {
+  pp_artifact_evaluation_t *evaluation = NULL;
+  pp_artifact_reproducibility_t *report = NULL;
+  pp_uuid_t evaluated_id;
+  pp_artifact_knowledge_state_t state;
+  uint32_t visited = 0;
+  uint8_t truncated = 0;
+  uint64_t reason_count = 0;
+  pp_error_code_t status = pp_production_evaluate_artifact(
+      production, artifact_id, UINT32_C(64), UINT32_C(1000), &evaluation,
+      error);
+  if (status == PP_OK) {
+    status = pp_artifact_evaluation_get(
+        evaluation, &evaluated_id, &state, &visited, &truncated, &reason_count,
+        error);
+  }
+  if (status == PP_OK) {
+    printf("artifact state: %u, reasons: %llu\n", state,
+           (unsigned long long)reason_count);
+    status = pp_production_artifact_reproducibility(
+        production, artifact_id, &report, error);
+  }
+  if (status == PP_OK) {
+    uint8_t reproducible = 0;
+    uint8_t has_activity = 0;
+    pp_uuid_t activity_id;
+    const char *activity_kind = NULL;
+    uint64_t issue_count = 0;
+    status = pp_artifact_reproducibility_get(
+        report, &evaluated_id, &reproducible, &has_activity, &activity_id,
+        &activity_kind, &issue_count, error);
+    if (status == PP_OK) {
+      printf("reproducible: %u, missing conditions: %llu\n", reproducible,
+             (unsigned long long)issue_count);
+    }
+  }
+
+  pp_artifact_reproducibility_release(report);
+  pp_artifact_evaluation_release(evaluation);
+  return status;
+}
+/* [/artifact-knowledge] */
+
+/* [dependency-queries] */
+static pp_error_code_t
+record_and_query_dependencies(pp_production_t *production,
+                              const pp_uuid_t *source_id,
+                              const pp_uuid_t *target_asset_id,
+                              const pp_uuid_t *resolved_id,
+                              pp_error_t **error) {
+  pp_dependency_t dependency = {0};
+  dependency.kind = "org.example:character-reference";
+  dependency.target.kind = PP_OBJECT_ASSET;
+  dependency.target.id = *target_asset_id;
+  dependency.has_resolved_representation = UINT8_C(1);
+  dependency.resolved_representation_id = *resolved_id;
+  dependency.required = UINT8_C(1);
+  dependency.authored_reference = "characters/lead.usd";
+
+  pp_transaction_t *transaction = NULL;
+  pp_dependency_query_set_t *dependencies = NULL;
+  pp_dependency_query_set_t *dependents = NULL;
+  pp_error_code_t status =
+      pp_production_begin_transaction(production, &transaction, error);
+  if (status == PP_OK) {
+    status = pp_transaction_record_dependency_set(
+        transaction, source_id, &dependency, UINT64_C(1), error);
+  }
+  if (status == PP_OK) {
+    status = pp_transaction_commit(transaction, error);
+  }
+  if (status == PP_OK) {
+    status = pp_production_dependencies(production, source_id, UINT32_C(4),
+                                        UINT32_C(1000), UINT32_C(100), NULL,
+                                        &dependencies, error);
+  }
+  for (uint64_t i = 0;
+       status == PP_OK && i < pp_dependency_query_set_count(dependencies);
+       ++i) {
+    pp_dependency_match_t match;
+    status = pp_dependency_query_set_get(dependencies, i, &match, error);
+    if (status == PP_OK) {
+      printf("dependency at depth %u\n", match.depth);
+    }
+  }
+  const pp_object_ref_t target = {PP_OBJECT_ASSET, *target_asset_id};
+  if (status == PP_OK) {
+    status = pp_production_dependents(production, &target, UINT32_C(4),
+                                      UINT32_C(1000), UINT32_C(100), NULL,
+                                      &dependents, error);
+  }
+  if (status == PP_OK &&
+      (pp_dependency_query_set_traversal_truncated(dependencies) != 0 ||
+       pp_dependency_query_set_count(dependents) != UINT64_C(1))) {
+    status = PP_ERROR_INTERNAL;
+  }
+
+  pp_dependency_query_set_release(dependents);
+  pp_dependency_query_set_release(dependencies);
+  pp_transaction_release(transaction);
+  return status;
+}
+/* [/dependency-queries] */
+
+/* [job-query-pages] */
+static pp_error_code_t request_and_page_jobs(pp_production_t *production,
+                                             const pp_uuid_t *input_id,
+                                             const pp_uuid_t *output_asset_id,
+                                             pp_error_t **error) {
+  const char *kind = "org.example:generate-proxy";
+  pp_transaction_t *transaction = NULL;
+  pp_uuid_t job_id;
+  pp_error_code_t status =
+      pp_production_begin_transaction(production, &transaction, error);
+  for (uint32_t i = 0; status == PP_OK && i < UINT32_C(2); ++i) {
+    status = pp_transaction_request_job(
+        transaction, kind, input_id, UINT64_C(1), output_asset_id,
+        PP_REPRESENTATION_PROXY, NULL, &job_id, error);
+  }
+  if (status == PP_OK) {
+    status = pp_transaction_commit(transaction, error);
+  }
+
+  char cursor_storage[2049] = {0};
+  const char *cursor = NULL;
+  uint64_t count = 0;
+  while (status == PP_OK) {
+    pp_job_set_t *page = NULL;
+    status = pp_production_jobs(production, PP_JOB_REQUESTED, kind,
+                                UINT32_C(1), cursor, &page, error);
+    count += status == PP_OK ? pp_job_set_count(page) : 0;
+    const char *next =
+        status == PP_OK ? pp_job_set_next_cursor(page) : NULL;
+    if (next == NULL) {
+      pp_job_set_release(page);
+      break;
+    }
+    const int copied = snprintf(cursor_storage, sizeof cursor_storage, "%s", next);
+    pp_job_set_release(page);
+    if (copied < 0 || (size_t)copied >= sizeof cursor_storage) {
+      status = PP_ERROR_INTERNAL;
+      break;
+    }
+    cursor = cursor_storage;
+  }
+  if (status == PP_OK && count != UINT64_C(2)) {
+    status = PP_ERROR_INTERNAL;
+  }
+
+  pp_transaction_release(transaction);
+  return status;
+}
+/* [/job-query-pages] */
+
 static void handle_event(const pp_revision_event_t *event) {
   printf("event %u: kind %u\n", event->position, event->kind);
 }
@@ -553,6 +710,16 @@ int main(int argc, char **argv) {
   }
   if (status == PP_OK) {
     status = record_render(production, &original_id, &sequence_id, &error);
+  }
+  if (status == PP_OK) {
+    status = inspect_artifact(production, &sequence_id, &error);
+  }
+  if (status == PP_OK) {
+    status = record_and_query_dependencies(
+        production, &sequence_id, &asset_id, &original_id, &error);
+  }
+  if (status == PP_OK) {
+    status = request_and_page_jobs(production, &original_id, &asset_id, &error);
   }
   if (status == PP_OK) {
     status = process_changes(production, &cursor, &error);
