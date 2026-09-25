@@ -252,9 +252,7 @@ class ProductionTests(unittest.TestCase):
                     completion_activity_id,
                 )
 
-            completed_jobs = {
-                job.id: job for job in production.jobs(limit=1000).items
-            }
+            completed_jobs = {job.id: job for job in production.jobs(limit=1000).items}
             completed_job = completed_jobs[completed_job_id]
             self.assertEqual(completed_job.state, JobState.SUCCEEDED)
             self.assertIsNotNone(completed_job.completion)
@@ -283,9 +281,7 @@ class ProductionTests(unittest.TestCase):
                 {job_id, cancelled_job_id, completed_job_id},
             )
             failed_page = production.jobs(limit=10, state=JobState.FAILED)
-            self.assertEqual(
-                tuple(job.id for job in failed_page.items), (job_id,)
-            )
+            self.assertEqual(tuple(job.id for job in failed_page.items), (job_id,))
 
     def test_representations_are_typed_keyed_and_copied(self) -> None:
         with Production.create(

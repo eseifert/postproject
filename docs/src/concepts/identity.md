@@ -20,4 +20,8 @@ The following example serializes a typed host-object binding and parses it back
 without collapsing the production or object kind into raw UUID text:
 
 ```{code-variants} host-binding
+:::{no-variant} cli
+The CLI does not format or parse host-object bindings. Use one of the library
+surfaces.
+:::
 ```

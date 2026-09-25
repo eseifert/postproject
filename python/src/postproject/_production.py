@@ -448,8 +448,7 @@ class Production:
             count = self._native.lib.pp_job_set_count(handle)
             return QueryPage(
                 tuple(
-                    _job_at(self._native, handle, index)
-                    for index in range(int(count))
+                    _job_at(self._native, handle, index) for index in range(int(count))
                 ),
                 _decode_optional(self._native.lib.pp_job_set_next_cursor(handle)),
             )
