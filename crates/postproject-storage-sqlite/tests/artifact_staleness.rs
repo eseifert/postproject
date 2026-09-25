@@ -12,6 +12,82 @@ use postproject_storage_sqlite::SqliteProduction;
 use rusqlite::Connection;
 
 #[test]
+fn changed_dependency_fingerprint_makes_render_stale_not_source() {
+    let directory = tempfile::tempdir().expect("create fixture directory");
+    let production_path = directory.path().join("changed-dependency.pproj");
+    let paths =
+        ["shot.usda", "character.usda", "render.mov"].map(|name| directory.path().join(name));
+    for (index, path) in paths.iter().enumerate() {
+        fs::write(path, format!("media-{index}")).expect("write media fixture");
+    }
+    let imports =
+        paths.map(|path| prepare_original_media(path, None, None).expect("prepare media fixture"));
+    let shot_id = imports[0].representation().id();
+    let character_id = imports[1].representation().id();
+    let render_id = imports[2].representation().id();
+    let dependency = Dependency::new(
+        None,
+        DependencyKind::new("org.openusd:reference").expect("kind"),
+        DependencyTarget::Asset(imports[1].asset().id()),
+        Some(character_id),
+        true,
+        "../assets/Character.usda",
+    )
+    .expect("dependency");
+    let mut production = SqliteProduction::create(&production_path, None).expect("create");
+    let mut transaction = production.begin_transaction().expect("begin setup");
+    for import in &imports {
+        transaction.import_original(import).expect("stage import");
+    }
+    transaction
+        .record_dependency_set(shot_id, &[dependency])
+        .expect("record dependency");
+    transaction.commit().expect("commit setup");
+    drop(transaction);
+    create_activity(
+        &mut production,
+        shot_id,
+        render_id,
+        "org.postproject:render",
+    );
+    assert_eq!(
+        evaluate(&production, render_id).state(),
+        ArtifactKnowledgeState::Current
+    );
+
+    let original = &imports[1].representation().fingerprints()[0];
+    let changed = RepresentationFingerprint::new(
+        original.algorithm(),
+        original.version(),
+        vec![0x42; original.value().len()],
+    )
+    .expect("changed fingerprint");
+    let mut transaction = production.begin_transaction().expect("begin observation");
+    transaction
+        .record_representation_fingerprint(character_id, &changed)
+        .expect("record character fingerprint");
+    transaction.commit().expect("commit observation");
+    drop(transaction);
+    let render = evaluate(&production, render_id);
+    assert_eq!(render.state(), ArtifactKnowledgeState::Stale);
+    assert!(render.reasons().iter().any(|reason| matches!(
+        reason,
+        ArtifactKnowledgeReason::DependencyFingerprintChanged {
+            representation_id,
+            path,
+            ..
+        } if *representation_id == character_id
+            && path.len() == 1
+            && path[0].source_representation_id() == shot_id
+            && path[0].kind().as_str() == "org.openusd:reference"
+    )));
+    assert_ne!(
+        evaluate(&production, shot_id).state(),
+        ArtifactKnowledgeState::Stale
+    );
+}
+
+#[test]
 fn changed_authored_dependency_path_makes_artifact_stale() {
     let directory = tempfile::tempdir().expect("create fixture directory");
     let production_path = directory.path().join("changed-dependency-path.pproj");

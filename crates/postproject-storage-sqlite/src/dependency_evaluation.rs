@@ -1,9 +1,12 @@
 //! Evaluation of dependency evidence captured on activity inputs.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use postproject_core::{
     Activity, ActivityInput, ArtifactDependencyIssue, ArtifactDependencyPathSegment,
     ArtifactKnowledgeReason, ArtifactKnowledgeState, AssetId, Dependency, DependencyKind,
-    DependencySetStatus, DependencyTarget, Error, ErrorKind, RepresentationId, ResourceId, Result,
+    DependencySetStatus, DependencyTarget, Error, ErrorKind, Representation, RepresentationId,
+    ResourceId, Result,
 };
 use rusqlite::params;
 
@@ -13,7 +16,11 @@ struct CapturedPath {
     status: i64,
     subject_representation_id: RepresentationId,
     segments: Vec<ArtifactDependencyPathSegment>,
+    fingerprints: Fingerprints,
 }
+
+type Fingerprints = BTreeMap<(String, u16), Vec<u8>>;
+type FingerprintDifference = (String, u16, Option<Vec<u8>>, Option<Vec<u8>>);
 
 pub(crate) struct DependencyEvaluation {
     pub(crate) state: ArtifactKnowledgeState,
@@ -126,7 +133,19 @@ fn evaluate_path(
             return Ok(());
         }
     }
-    Ok(())
+    if representation_fingerprint_dirty(production, path.subject_representation_id)? {
+        promote_state(&mut evaluation.state, ArtifactKnowledgeState::Stale);
+        evaluation.reasons.push(
+            ArtifactKnowledgeReason::DependencyFingerprintRecomputationPending {
+                activity_id: activity.id(),
+                input_representation_id: input.representation_id(),
+                representation_id: path.subject_representation_id,
+                path: path.segments,
+            },
+        );
+        return Ok(());
+    }
+    compare_fingerprints(production, activity, input, &path, evaluation)
 }
 
 fn segment_matches(segment: &ArtifactDependencyPathSegment, dependency: &Dependency) -> bool {
@@ -152,6 +171,87 @@ fn add_path_changed(
             input_representation_id: input.representation_id(),
             path: path.segments.clone(),
         });
+}
+
+fn compare_fingerprints(
+    production: &SqliteProduction,
+    activity: &Activity,
+    input: &ActivityInput,
+    path: &CapturedPath,
+    evaluation: &mut DependencyEvaluation,
+) -> Result<()> {
+    let current = current_fingerprints(
+        &production.load_representation_by_id(path.subject_representation_id)?,
+    );
+    let domains = path
+        .fingerprints
+        .keys()
+        .chain(current.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if domains.is_empty() {
+        add_missing_fingerprint(activity, input, path, None, evaluation);
+        return Ok(());
+    }
+    for (algorithm, version) in domains {
+        match (
+            path.fingerprints.get(&(algorithm.clone(), version)),
+            current.get(&(algorithm.clone(), version)),
+        ) {
+            (Some(snapshot), Some(current)) if snapshot != current => {
+                promote_state(&mut evaluation.state, ArtifactKnowledgeState::Stale);
+                evaluation
+                    .reasons
+                    .push(ArtifactKnowledgeReason::DependencyFingerprintChanged {
+                        activity_id: activity.id(),
+                        input_representation_id: input.representation_id(),
+                        representation_id: path.subject_representation_id,
+                        path: path.segments.clone(),
+                        algorithm,
+                        version,
+                        snapshot_value: snapshot.clone(),
+                        current_value: current.clone(),
+                    });
+            }
+            (Some(_), Some(_)) => {}
+            (snapshot, current) => add_missing_fingerprint(
+                activity,
+                input,
+                path,
+                Some((algorithm, version, snapshot.cloned(), current.cloned())),
+                evaluation,
+            ),
+        }
+    }
+    Ok(())
+}
+
+fn add_missing_fingerprint(
+    activity: &Activity,
+    input: &ActivityInput,
+    path: &CapturedPath,
+    difference: Option<FingerprintDifference>,
+    evaluation: &mut DependencyEvaluation,
+) {
+    promote_state(&mut evaluation.state, ArtifactKnowledgeState::Indeterminate);
+    let (algorithm, version, snapshot_value, current_value) = difference.map_or(
+        (None, None, None, None),
+        |(algorithm, version, snapshot, current)| {
+            (Some(algorithm), Some(version), snapshot, current)
+        },
+    );
+    evaluation.reasons.push(
+        ArtifactKnowledgeReason::DependencyFingerprintEvidenceMissing {
+            activity_id: activity.id(),
+            input_representation_id: input.representation_id(),
+            representation_id: path.subject_representation_id,
+            path: path.segments.clone(),
+            algorithm,
+            version,
+            snapshot_value,
+            current_value,
+        },
+    );
 }
 
 fn load_paths(production: &SqliteProduction, input_id: i64) -> Result<Vec<CapturedPath>> {
@@ -191,10 +291,41 @@ fn load_paths(production: &SqliteProduction, input_id: i64) -> Result<Vec<Captur
                         "dependency snapshot subject representation",
                     )?),
                     segments: load_segments(production, path_id)?,
+                    fingerprints: load_fingerprints(production, path_id)?,
                 })
             },
         )
         .collect()
+}
+
+fn load_fingerprints(production: &SqliteProduction, path_id: i64) -> Result<Fingerprints> {
+    let mut statement = production
+        .connection
+        .prepare(
+            "SELECT algorithm, algorithm_version, value
+             FROM activity_input_dependency_fingerprint_snapshots
+             WHERE path_id = ?1 ORDER BY algorithm, algorithm_version",
+        )
+        .map_err(sqlite_error(
+            "prepare dependency fingerprint snapshot query",
+        ))?;
+    let rows = statement
+        .query_map([path_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+            ))
+        })
+        .map_err(sqlite_error("query dependency fingerprint snapshots"))?;
+    rows.map(|row| {
+        let (algorithm, version, value) =
+            row.map_err(sqlite_error("read dependency fingerprint snapshot"))?;
+        let version = u16::try_from(version)
+            .map_err(|_| stored_invariant("dependency fingerprint version is invalid"))?;
+        Ok(((algorithm, version), value))
+    })
+    .collect()
 }
 
 fn load_segments(
@@ -309,6 +440,36 @@ fn captured_issue(status: i64) -> Result<Option<ArtifactDependencyIssue>> {
             "dependency snapshot path status is invalid",
         )),
     }
+}
+
+fn representation_fingerprint_dirty(
+    production: &SqliteProduction,
+    representation_id: RepresentationId,
+) -> Result<bool> {
+    production
+        .connection
+        .query_row(
+            "SELECT EXISTS (
+                SELECT 1 FROM representation_fingerprint_recomputations
+                WHERE representation_id = ?1
+             )",
+            [representation_id.as_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .map_err(sqlite_error("read dependency fingerprint marker"))
+}
+
+fn current_fingerprints(representation: &Representation) -> Fingerprints {
+    representation
+        .fingerprints()
+        .iter()
+        .map(|value| {
+            (
+                (value.algorithm().to_owned(), value.version()),
+                value.value().to_vec(),
+            )
+        })
+        .collect()
 }
 
 fn stored_invariant(message: &'static str) -> Error {
