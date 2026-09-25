@@ -18,6 +18,18 @@ fn run_json(arguments: &[&str]) -> Value {
     serde_json::from_slice(&assertion.get_output().stdout).expect("command emits valid JSON")
 }
 
+#[test]
+fn root_add_help_describes_a_logical_root() {
+    let assertion = cargo_bin_cmd!("postproject")
+        .args(["root", "add", "--help"])
+        .assert()
+        .success();
+    let help = std::str::from_utf8(&assertion.get_output().stdout).expect("UTF-8 help output");
+    assert!(help.contains("Add a logical media root to the production"));
+    assert!(help.contains("Portable logical name used by machine-local root mappings"));
+    assert!(!help.contains("Add a directory searched during media resolution"));
+}
+
 fn add_representation_from_spec(
     production: &str,
     asset_id: &str,

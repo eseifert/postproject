@@ -254,7 +254,7 @@ struct RootArgs {
 
 #[derive(Debug, Subcommand)]
 enum RootCommand {
-    /// Add a directory searched during media resolution.
+    /// Add a logical media root to the production.
     Add(RootAddArgs),
     /// List configured media roots in resolver order.
     List(ProductionArgs),
@@ -269,7 +269,9 @@ enum RootCommand {
 #[derive(Debug, Args)]
 struct RootAddArgs {
     production: PathBuf,
+    /// Portable logical name used by machine-local root mappings.
     name: String,
+    /// Optional human-readable description of the root.
     #[arg(long)]
     label: Option<String>,
     /// Lower priorities are searched first.
