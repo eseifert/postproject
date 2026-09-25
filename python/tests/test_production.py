@@ -155,6 +155,55 @@ class ProductionTests(unittest.TestCase):
             self.assertIsNone(jobs[0].completion)
             self.assertIsNone(jobs[0].failure_diagnostic)
 
+            worker = ToolIdentity("Python worker", "1.0")
+            agent = AgentIdentity(
+                "operator", ExternalIdentifier("com.example.worker", "worker-1")
+            )
+            with production.transaction() as transaction:
+                claim_id = transaction.claim_job(job_id, worker, agent, 10, 20)
+            claimed = production.jobs[0]
+            self.assertEqual(claimed.state, JobState.CLAIMED)
+            self.assertIsNotNone(claimed.claim)
+            assert claimed.claim is not None
+            self.assertEqual(claimed.claim.id, claim_id)
+            self.assertEqual(claimed.claim.tool, worker)
+            self.assertEqual(claimed.claim.agent, agent)
+            self.assertEqual(claimed.claim.expires_at_unix_micros, 20)
+
+            with production.transaction() as transaction:
+                transaction.renew_job_claim(job_id, claim_id, 11, 30)
+            renewed = production.jobs[0]
+            self.assertIsNotNone(renewed.claim)
+            assert renewed.claim is not None
+            self.assertEqual(renewed.claim.expires_at_unix_micros, 30)
+
+            with production.transaction() as transaction:
+                transaction.release_job_claim(job_id, claim_id)
+            self.assertEqual(production.jobs[0].state, JobState.REQUESTED)
+
+            with production.transaction() as transaction:
+                second_claim_id = transaction.claim_job(job_id, worker, None, 31, 40)
+            with production.transaction() as transaction:
+                transaction.fail_job(job_id, second_claim_id, 32, "encoder exited")
+
+            with production.transaction() as transaction:
+                cancelled_job_id = transaction.request_job(
+                    JobRequest(
+                        "org.postproject:generate-thumbnail",
+                        (source_id,),
+                        asset_id,
+                        RepresentationKind.DERIVED,
+                    )
+                )
+            with production.transaction() as transaction:
+                transaction.cancel_job(cancelled_job_id)
+
+            final_jobs = {job.id: job for job in production.jobs}
+            self.assertEqual(final_jobs[job_id].state, JobState.FAILED)
+            self.assertIsNone(final_jobs[job_id].claim)
+            self.assertEqual(final_jobs[job_id].failure_diagnostic, "encoder exited")
+            self.assertEqual(final_jobs[cancelled_job_id].state, JobState.CANCELLED)
+
     def test_representations_are_typed_keyed_and_copied(self) -> None:
         with Production.create(
             self.production_path, library_path=LIBRARY_PATH

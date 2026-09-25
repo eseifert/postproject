@@ -1384,6 +1384,113 @@ class Transaction:
         self._native.check(status, error)
         return JobId(_uuid(job_id))
 
+    def claim_job(
+        self,
+        job_id: JobId,
+        tool: ToolIdentity,
+        agent: AgentIdentity | None,
+        now_unix_micros: int,
+        expires_at_unix_micros: int,
+    ) -> JobClaimId:
+        """Stage an atomic claim and return its capability token."""
+
+        self._require_open()
+        native_job_id = _native_uuid(job_id.value)
+        identifier = agent.identifier if agent is not None else None
+        claim_id = Uuid()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_claim_job(
+            self._handle,
+            ctypes.byref(native_job_id),
+            _utf8(tool.name, "tool name"),
+            _optional_text(tool.version),
+            _optional_text(tool.uri),
+            _optional_text(agent.name if agent else None),
+            _optional_text(identifier.scheme if identifier else None),
+            _optional_text(identifier.value if identifier else None),
+            _optional_text(identifier.qualifier if identifier else None),
+            now_unix_micros,
+            expires_at_unix_micros,
+            ctypes.byref(claim_id),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        return JobClaimId(_uuid(claim_id))
+
+    def renew_job_claim(
+        self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now_unix_micros: int,
+        expires_at_unix_micros: int,
+    ) -> None:
+        """Stage renewal of an active job claim."""
+
+        self._require_open()
+        native_job_id = _native_uuid(job_id.value)
+        native_claim_id = _native_uuid(claim_id.value)
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_renew_job_claim(
+            self._handle,
+            ctypes.byref(native_job_id),
+            ctypes.byref(native_claim_id),
+            now_unix_micros,
+            expires_at_unix_micros,
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
+    def release_job_claim(self, job_id: JobId, claim_id: JobClaimId) -> None:
+        """Stage release of an active job claim."""
+
+        self._require_open()
+        native_job_id = _native_uuid(job_id.value)
+        native_claim_id = _native_uuid(claim_id.value)
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_release_job_claim(
+            self._handle,
+            ctypes.byref(native_job_id),
+            ctypes.byref(native_claim_id),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
+    def fail_job(
+        self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now_unix_micros: int,
+        diagnostic: str,
+    ) -> None:
+        """Stage failure of an active, unexpired job claim."""
+
+        self._require_open()
+        native_job_id = _native_uuid(job_id.value)
+        native_claim_id = _native_uuid(claim_id.value)
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_fail_job(
+            self._handle,
+            ctypes.byref(native_job_id),
+            ctypes.byref(native_claim_id),
+            now_unix_micros,
+            _utf8(diagnostic, "job failure diagnostic"),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
+    def cancel_job(self, job_id: JobId) -> None:
+        """Stage administrative cancellation of a requested or claimed job."""
+
+        self._require_open()
+        native_job_id = _native_uuid(job_id.value)
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_cancel_job(
+            self._handle,
+            ctypes.byref(native_job_id),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
     def create_activity(self, spec: ActivitySpec) -> ActivityId:
         """Stage one complete provenance activity."""
 
