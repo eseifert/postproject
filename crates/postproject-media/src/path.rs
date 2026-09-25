@@ -1,6 +1,9 @@
 //! Cross-platform conversion from native paths to canonical file URIs.
 
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use postproject_core::{Error, ErrorKind, Result};
 use url::Url;
@@ -37,6 +40,27 @@ pub fn canonical_file_uri(path: impl AsRef<Path>) -> Result<String> {
         })
 }
 
+/// Converts an absolute local `file:` URI to a native path.
+///
+/// # Errors
+///
+/// Returns [`ErrorKind::InvalidArgument`] for malformed, non-file, or
+/// non-local URIs. This conversion does not require the path to exist.
+pub fn local_file_path(uri: &str) -> Result<PathBuf> {
+    let url = Url::parse(uri).map_err(|error| {
+        Error::new(
+            ErrorKind::InvalidArgument,
+            format!("invalid file URI {uri}: {error}"),
+        )
+    })?;
+    url.to_file_path().map_err(|()| {
+        Error::new(
+            ErrorKind::InvalidArgument,
+            format!("URI is not a local file path: {uri}"),
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -50,5 +74,14 @@ mod tests {
         let uri = canonical_file_uri(&path).expect("convert path");
         assert!(uri.starts_with("file:"));
         assert!(uri.ends_with("clip%20with%20spaces.mov"));
+        assert_eq!(
+            local_file_path(&uri).expect("decode file URI"),
+            path.canonicalize().expect("canonical path")
+        );
+    }
+
+    #[test]
+    fn rejects_non_file_uris() {
+        assert!(local_file_path("https://example.com/media.mov").is_err());
     }
 }

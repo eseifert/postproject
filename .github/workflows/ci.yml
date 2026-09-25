@@ -64,6 +64,18 @@ jobs:
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all -- --check
       - run: cargo clippy --manifest-path fuzz/Cargo.toml --bins --locked -- -D warnings
 
+  real-ffmpeg:
+    name: Reference executor (real FFmpeg)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install --yes ffmpeg
+      - run: >-
+          cargo test --locked -p postproject-media --test executor
+          real_ffmpeg_encodes_the_shipped_fixture -- --ignored
+
   documentation:
     name: Unified documentation and links
     runs-on: ubuntu-latest
