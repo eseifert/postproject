@@ -132,6 +132,67 @@ fn exercise_job_claim_lifecycle(
     assert_eq!(cancelled["state"], "cancelled");
 }
 
+fn exercise_job_completion(
+    production: &str,
+    asset_id: &str,
+    representation_id: &str,
+    output_path: &str,
+) {
+    let completion_request = run_json(&[
+        "job",
+        "request",
+        production,
+        "org.postproject:generate-proxy",
+        asset_id,
+        "proxy",
+        "--input",
+        representation_id,
+    ]);
+    let completed_job_id = completion_request["id"].as_str().expect("completed job ID");
+    let completion_claim = run_json(&[
+        "job",
+        "claim",
+        production,
+        completed_job_id,
+        "--tool-name",
+        "CLI worker",
+        "--now-unix-micros",
+        "41",
+        "--expires-at-unix-micros",
+        "50",
+    ]);
+    let completed = run_json(&[
+        "job",
+        "complete",
+        production,
+        completed_job_id,
+        completion_claim["claim_id"]
+            .as_str()
+            .expect("completion claim ID"),
+        output_path,
+        "--now-unix-micros",
+        "42",
+    ]);
+    assert_eq!(completed["state"], "succeeded");
+    let output_id = completed["completion_representation_id"]
+        .as_str()
+        .expect("completion representation ID");
+
+    let third_process_jobs = run_json(&["job", "list", production]);
+    let observed = third_process_jobs
+        .as_array()
+        .expect("job array")
+        .iter()
+        .find(|job| job["id"] == completed_job_id)
+        .expect("completed job in third process");
+    assert_eq!(observed, &completed);
+    let producing = run_json(&["activity", "producing", production, output_id]);
+    assert_eq!(producing.as_array().expect("activity array").len(), 1);
+    assert_eq!(producing[0]["id"], completed["completion_activity_id"]);
+    assert!(producing[0]["inputs"][0]["snapshot"].is_object());
+    assert!(producing[0]["outputs"][0]["snapshot"].is_object());
+}
+
 fn exercise_dependencies(
     directory: &std::path::Path,
     production: &str,
@@ -944,5 +1005,11 @@ fn requests_and_lists_jobs() {
         requested["id"].as_str().expect("job ID"),
         asset_id,
         representation_id,
+    );
+    exercise_job_completion(
+        production_path,
+        asset_id,
+        representation_id,
+        original.to_str().expect("UTF-8 output path"),
     );
 }

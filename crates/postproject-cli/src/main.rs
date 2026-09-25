@@ -611,6 +611,8 @@ enum JobCommand {
     Renew(JobLeaseArgs),
     /// Release an active job claim back to requested state.
     Release(JobClaimTokenArgs),
+    /// Complete a claimed job with one single-file output and its activity.
+    Complete(JobCompleteArgs),
     /// Mark an actively claimed job as failed.
     Fail(JobFailArgs),
     /// Administratively cancel requested or claimed work.
@@ -675,6 +677,17 @@ struct JobClaimTokenArgs {
     production: PathBuf,
     job_id: String,
     claim_id: String,
+}
+
+#[derive(Debug, Args)]
+struct JobCompleteArgs {
+    production: PathBuf,
+    job_id: String,
+    claim_id: String,
+    /// Existing output file to fingerprint and record.
+    output: PathBuf,
+    #[arg(long)]
+    now_unix_micros: i64,
 }
 
 #[derive(Debug, Args)]
@@ -1441,6 +1454,7 @@ fn execute(cli: Cli) -> Result<()> {
             JobCommand::Claim(args) => job_claim(args, cli.json),
             JobCommand::Renew(args) => job_renew(&args, cli.json),
             JobCommand::Release(args) => job_release(&args, cli.json),
+            JobCommand::Complete(args) => job_complete(&args, cli.json),
             JobCommand::Fail(args) => job_fail(args, cli.json),
             JobCommand::Cancel(args) => job_cancel(&args, cli.json),
             JobCommand::List(args) => job_list(&args, cli.json),
@@ -2656,6 +2670,53 @@ fn job_release(args: &JobClaimTokenArgs, json: bool) -> Result<()> {
     transaction.commit().context("commit job claim release")?;
     drop(transaction);
     print_job_result(&production, job_id, json, "released")
+}
+
+fn job_complete(args: &JobCompleteArgs, json: bool) -> Result<()> {
+    let job_id = parse_job_id(&args.job_id)?;
+    let claim_id = parse_job_claim_id(&args.claim_id)?;
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let job = production.job(job_id).context("load claimed job")?;
+    let JobState::Claimed(claim) = job.state() else {
+        bail!("job must be claimed before completion");
+    };
+    let output = prepare_single_file_representation(
+        job.requested_output().asset_id(),
+        job.requested_output().representation_kind(),
+        &args.output,
+    )
+    .context("prepare job output")?;
+    let now = Timestamp::from_unix_micros(args.now_unix_micros);
+    let inputs = job
+        .inputs()
+        .iter()
+        .copied()
+        .map(|id| ActivityInput::new(id, None))
+        .collect();
+    let outputs = vec![ActivityOutput::new(output.representation().id(), None)];
+    let mut activity = Activity::new(
+        ActivityId::new(),
+        ActivityKind::new(job.kind().as_str()).context("validate completion activity kind")?,
+        inputs,
+        outputs,
+    )
+    .context("validate completion activity")?
+    .with_timing(None, Some(now))
+    .context("validate completion timing")?
+    .with_tool(claim.tool().clone());
+    if let Some(agent) = claim.agent() {
+        activity = activity.with_agent(agent.clone());
+    }
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin job completion")?;
+    set_cli_revision_context(&mut transaction, "Complete job")?;
+    transaction
+        .complete_job(job_id, claim_id, now, &output, &activity)
+        .context("complete job")?;
+    transaction.commit().context("commit job completion")?;
+    drop(transaction);
+    print_job_result(&production, job_id, json, "completed")
 }
 
 fn job_fail(args: JobFailArgs, json: bool) -> Result<()> {
