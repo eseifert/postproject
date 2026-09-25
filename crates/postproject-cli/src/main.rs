@@ -13,9 +13,9 @@ use postproject_core::{
     ArtifactReproducibilityIssue, ArtifactTraversalLimitKind, Asset, AssetId, AvailabilityIssue,
     AvailabilityIssueKind, DecimalValue, Dependency, DependencyKind, DependencySet,
     DependencySetStatus, DependencyTarget, EvidenceKind, ExternalIdentifier, FrameRange,
-    IdentifierScheme, ImageSequencePattern, Job, JobId, JobKind, JobState, Locator,
-    LocatorAvailability, LocatorId, MediaRoot, MediaRootId, MetadataAssertion, MetadataField,
-    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity,
+    IdentifierScheme, ImageSequencePattern, Job, JobClaimId, JobFailure, JobId, JobKind, JobState,
+    Locator, LocatorAvailability, LocatorId, MediaRoot, MediaRootId, MetadataAssertion,
+    MetadataField, MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity,
     OriginalMediaImport, ProductionId, ProductionStoreTransaction, PropertyId, RationalRate,
     RationalValue, Representation, RepresentationAvailability, RepresentationId,
     RepresentationKind, RepresentationResolution, RequestedJobOutput, ResolutionEvidence, Resource,
@@ -605,6 +605,16 @@ struct JobArgs {
 enum JobCommand {
     /// Request durable production work.
     Request(JobRequestArgs),
+    /// Atomically claim requested work with a caller-supplied lease.
+    Claim(JobClaimArgs),
+    /// Renew an active job claim.
+    Renew(JobLeaseArgs),
+    /// Release an active job claim back to requested state.
+    Release(JobClaimTokenArgs),
+    /// Mark an actively claimed job as failed.
+    Fail(JobFailArgs),
+    /// Administratively cancel requested or claimed work.
+    Cancel(JobIdArgs),
     /// List durable jobs in stable identity order.
     List(ProductionArgs),
 }
@@ -623,6 +633,64 @@ struct JobRequestArgs {
     /// Optional logical media-root name preferred for the output.
     #[arg(long)]
     target_root: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct JobClaimArgs {
+    production: PathBuf,
+    job_id: String,
+    #[arg(long)]
+    tool_name: String,
+    #[arg(long)]
+    tool_version: Option<String>,
+    #[arg(long)]
+    tool_uri: Option<String>,
+    #[arg(long)]
+    agent_name: Option<String>,
+    #[arg(long)]
+    agent_identifier_scheme: Option<String>,
+    #[arg(long)]
+    agent_identifier_value: Option<String>,
+    #[arg(long)]
+    agent_identifier_qualifier: Option<String>,
+    #[arg(long)]
+    now_unix_micros: i64,
+    #[arg(long)]
+    expires_at_unix_micros: i64,
+}
+
+#[derive(Debug, Args)]
+struct JobLeaseArgs {
+    production: PathBuf,
+    job_id: String,
+    claim_id: String,
+    #[arg(long)]
+    now_unix_micros: i64,
+    #[arg(long)]
+    expires_at_unix_micros: i64,
+}
+
+#[derive(Debug, Args)]
+struct JobClaimTokenArgs {
+    production: PathBuf,
+    job_id: String,
+    claim_id: String,
+}
+
+#[derive(Debug, Args)]
+struct JobFailArgs {
+    production: PathBuf,
+    job_id: String,
+    claim_id: String,
+    diagnostic: String,
+    #[arg(long)]
+    now_unix_micros: i64,
+}
+
+#[derive(Debug, Args)]
+struct JobIdArgs {
+    production: PathBuf,
+    job_id: String,
 }
 
 #[derive(Debug, Args)]
@@ -1370,6 +1438,11 @@ fn execute(cli: Cli) -> Result<()> {
         },
         Command::Job(args) => match args.command {
             JobCommand::Request(args) => job_request(args, cli.json),
+            JobCommand::Claim(args) => job_claim(args, cli.json),
+            JobCommand::Renew(args) => job_renew(&args, cli.json),
+            JobCommand::Release(args) => job_release(&args, cli.json),
+            JobCommand::Fail(args) => job_fail(args, cli.json),
+            JobCommand::Cancel(args) => job_cancel(&args, cli.json),
             JobCommand::List(args) => job_list(&args, cli.json),
         },
         Command::Revisions(args) => match args.command {
@@ -2505,6 +2578,137 @@ fn job_request(args: JobRequestArgs, json: bool) -> Result<()> {
     }
 }
 
+fn job_claim(args: JobClaimArgs, json: bool) -> Result<()> {
+    let job_id = parse_job_id(&args.job_id)?;
+    let tool = ToolIdentity::new(args.tool_name, args.tool_version, args.tool_uri)
+        .context("validate job worker tool")?;
+    let agent_identifier = match (args.agent_identifier_scheme, args.agent_identifier_value) {
+        (Some(scheme), Some(value)) => Some(
+            ExternalIdentifier::new(
+                IdentifierScheme::new(scheme).context("validate agent identifier scheme")?,
+                value,
+                args.agent_identifier_qualifier,
+            )
+            .context("validate agent identifier")?,
+        ),
+        (None, None) if args.agent_identifier_qualifier.is_none() => None,
+        _ => bail!(
+            "agent identifier scheme and value must be supplied together; qualifier is optional"
+        ),
+    };
+    let agent = if args.agent_name.is_some() || agent_identifier.is_some() {
+        Some(
+            AgentIdentity::new(args.agent_name, agent_identifier)
+                .context("validate job worker agent")?,
+        )
+    } else {
+        None
+    };
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let mut transaction = production.begin_transaction().context("begin job claim")?;
+    set_cli_revision_context(&mut transaction, "Claim job")?;
+    transaction
+        .claim_job(
+            job_id,
+            &tool,
+            agent.as_ref(),
+            Timestamp::from_unix_micros(args.now_unix_micros),
+            Timestamp::from_unix_micros(args.expires_at_unix_micros),
+        )
+        .context("claim job")?;
+    transaction.commit().context("commit job claim")?;
+    drop(transaction);
+    print_job_result(&production, job_id, json, "claimed")
+}
+
+fn job_renew(args: &JobLeaseArgs, json: bool) -> Result<()> {
+    let job_id = parse_job_id(&args.job_id)?;
+    let claim_id = parse_job_claim_id(&args.claim_id)?;
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin job claim renewal")?;
+    set_cli_revision_context(&mut transaction, "Renew job claim")?;
+    transaction
+        .renew_job_claim(
+            job_id,
+            claim_id,
+            Timestamp::from_unix_micros(args.now_unix_micros),
+            Timestamp::from_unix_micros(args.expires_at_unix_micros),
+        )
+        .context("renew job claim")?;
+    transaction.commit().context("commit job claim renewal")?;
+    drop(transaction);
+    print_job_result(&production, job_id, json, "renewed")
+}
+
+fn job_release(args: &JobClaimTokenArgs, json: bool) -> Result<()> {
+    let job_id = parse_job_id(&args.job_id)?;
+    let claim_id = parse_job_claim_id(&args.claim_id)?;
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin job claim release")?;
+    set_cli_revision_context(&mut transaction, "Release job claim")?;
+    transaction
+        .release_job_claim(job_id, claim_id)
+        .context("release job claim")?;
+    transaction.commit().context("commit job claim release")?;
+    drop(transaction);
+    print_job_result(&production, job_id, json, "released")
+}
+
+fn job_fail(args: JobFailArgs, json: bool) -> Result<()> {
+    let job_id = parse_job_id(&args.job_id)?;
+    let claim_id = parse_job_claim_id(&args.claim_id)?;
+    let failure = JobFailure::new(args.diagnostic).context("validate job failure")?;
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin job failure")?;
+    set_cli_revision_context(&mut transaction, "Fail job")?;
+    transaction
+        .fail_job(
+            job_id,
+            claim_id,
+            Timestamp::from_unix_micros(args.now_unix_micros),
+            &failure,
+        )
+        .context("fail job")?;
+    transaction.commit().context("commit job failure")?;
+    drop(transaction);
+    print_job_result(&production, job_id, json, "failed")
+}
+
+fn job_cancel(args: &JobIdArgs, json: bool) -> Result<()> {
+    let job_id = parse_job_id(&args.job_id)?;
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin job cancellation")?;
+    set_cli_revision_context(&mut transaction, "Cancel job")?;
+    transaction.cancel_job(job_id).context("cancel job")?;
+    transaction.commit().context("commit job cancellation")?;
+    drop(transaction);
+    print_job_result(&production, job_id, json, "cancelled")
+}
+
+fn print_job_result(
+    production: &SqliteProduction,
+    job_id: JobId,
+    json: bool,
+    action: &str,
+) -> Result<()> {
+    let job = production.job(job_id).context("reload job")?;
+    let view = job_view(&job);
+    if json {
+        print_json(&view)
+    } else {
+        println!("{action} job {}", view.id);
+        Ok(())
+    }
+}
+
 fn job_list(args: &ProductionArgs, json: bool) -> Result<()> {
     let production = SqliteProduction::open(&args.production).context("open production")?;
     let views = production
@@ -3422,6 +3626,14 @@ fn parse_asset_id(value: &str) -> Result<AssetId> {
 
 fn parse_representation_id(value: &str) -> Result<RepresentationId> {
     RepresentationId::from_str(value).context("parse representation ID")
+}
+
+fn parse_job_id(value: &str) -> Result<JobId> {
+    JobId::from_str(value).context("parse job ID")
+}
+
+fn parse_job_claim_id(value: &str) -> Result<JobClaimId> {
+    JobClaimId::from_str(value).context("parse job claim ID")
 }
 
 fn parse_dependency_target(kind: DependencyTargetKind, value: &str) -> Result<DependencyTarget> {

@@ -40,6 +40,98 @@ fn add_representation_from_spec(
     ])
 }
 
+fn exercise_job_claim_lifecycle(
+    production: &str,
+    job_id: &str,
+    asset_id: &str,
+    representation_id: &str,
+) {
+    let claimed = run_json(&[
+        "job",
+        "claim",
+        production,
+        job_id,
+        "--tool-name",
+        "CLI worker",
+        "--tool-version",
+        "1.0",
+        "--agent-name",
+        "operator",
+        "--now-unix-micros",
+        "10",
+        "--expires-at-unix-micros",
+        "20",
+    ]);
+    let claim_id = claimed["claim_id"].as_str().expect("claim ID");
+    assert_eq!(claimed["state"], "claimed");
+    assert_eq!(claimed["claim_tool"]["name"], "CLI worker");
+    assert_eq!(claimed["claim_tool"]["version"], "1.0");
+    assert_eq!(claimed["claim_agent"]["name"], "operator");
+    assert_eq!(claimed["claim_expires_at_unix_micros"], 20);
+
+    let renewed = run_json(&[
+        "job",
+        "renew",
+        production,
+        job_id,
+        claim_id,
+        "--now-unix-micros",
+        "11",
+        "--expires-at-unix-micros",
+        "30",
+    ]);
+    assert_eq!(renewed["claim_expires_at_unix_micros"], 30);
+    let released = run_json(&["job", "release", production, job_id, claim_id]);
+    assert_eq!(released["state"], "requested");
+    assert!(released["claim_id"].is_null());
+
+    let claimed_again = run_json(&[
+        "job",
+        "claim",
+        production,
+        job_id,
+        "--tool-name",
+        "CLI worker",
+        "--now-unix-micros",
+        "31",
+        "--expires-at-unix-micros",
+        "40",
+    ]);
+    let second_claim_id = claimed_again["claim_id"].as_str().expect("second claim ID");
+    assert_ne!(claim_id, second_claim_id);
+    let failed = run_json(&[
+        "job",
+        "fail",
+        production,
+        job_id,
+        second_claim_id,
+        "encoder exited",
+        "--now-unix-micros",
+        "32",
+    ]);
+    assert_eq!(failed["state"], "failed");
+    assert_eq!(failed["failure_diagnostic"], "encoder exited");
+    assert!(failed["claim_id"].is_null());
+
+    let second_request = run_json(&[
+        "job",
+        "request",
+        production,
+        "org.postproject:generate-thumbnail",
+        asset_id,
+        "derived",
+        "--input",
+        representation_id,
+    ]);
+    let cancelled = run_json(&[
+        "job",
+        "cancel",
+        production,
+        second_request["id"].as_str().expect("second job ID"),
+    ]);
+    assert_eq!(cancelled["state"], "cancelled");
+}
+
 fn exercise_dependencies(
     directory: &std::path::Path,
     production: &str,
@@ -846,4 +938,11 @@ fn requests_and_lists_jobs() {
     ]);
     assert_eq!(events[0]["kind"], "job_requested");
     assert_eq!(events[0]["job_id"], jobs[0]["id"]);
+
+    exercise_job_claim_lifecycle(
+        production_path,
+        requested["id"].as_str().expect("job ID"),
+        asset_id,
+        representation_id,
+    );
 }
