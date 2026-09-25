@@ -126,6 +126,10 @@ int main(int argc, char **argv) {
              .last_seen_unix_micros.has_value()) {
       return 17;
     }
+    if (production.dependencySet(representations[0].id).has_value() ||
+        !production.dependents(asset_ref).empty()) {
+      return 30;
+    }
     auto observations = production.beginTransaction();
     observations.recordResourceFingerprint(
         representations[0].resources[0].id,

@@ -107,6 +107,27 @@ struct ExternalIdentifier final {
   std::optional<std::string> qualifier;
 };
 
+enum class DependencySetStatus : std::uint32_t {
+  current = PP_DEPENDENCY_SET_CURRENT,
+  needs_extraction = PP_DEPENDENCY_SET_NEEDS_EXTRACTION,
+};
+
+struct Dependency final {
+  std::optional<Uuid> source_resource_id;
+  std::string kind;
+  ObjectRef target;
+  std::optional<Uuid> resolved_representation_id;
+  bool required;
+  std::string authored_reference;
+};
+
+struct DependencySet final {
+  Uuid source_representation_id;
+  std::uint64_t recorded_at_revision;
+  DependencySetStatus status;
+  std::vector<Dependency> dependencies;
+};
+
 struct FingerprintSnapshot final {
   std::string algorithm;
   std::uint16_t version;
@@ -639,6 +660,15 @@ struct ObjectRefSetDeleter final {
 
 using ObjectRefSetHandle =
     std::unique_ptr<pp_object_ref_set_t, ObjectRefSetDeleter>;
+
+struct DependencySetDeleter final {
+  void operator()(pp_dependency_set_t *dependencies) const noexcept {
+    pp_dependency_set_release(dependencies);
+  }
+};
+
+using DependencySetHandle =
+    std::unique_ptr<pp_dependency_set_t, DependencySetDeleter>;
 
 struct ActivitySetDeleter final {
   void operator()(pp_activity_set_t *activities) const noexcept {
@@ -2027,6 +2057,84 @@ public:
     result.reserve(static_cast<std::size_t>(count));
     for (std::uint64_t index = 0; index < count; ++index) {
       result.push_back(detail::representation(representations.get(), index));
+    }
+    return result;
+  }
+
+  [[nodiscard]] std::optional<DependencySet>
+  dependencySet(const Uuid &representation_id) const {
+    const pp_uuid_t native_id = detail::native_uuid(representation_id);
+    pp_dependency_set_t *raw_dependencies = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_dependency_set(
+        production_, &native_id, &raw_dependencies, &error);
+    detail::throw_if_error(status, error);
+    detail::DependencySetHandle dependencies(raw_dependencies);
+
+    std::uint8_t present = 0;
+    pp_uuid_t source_id{};
+    std::uint64_t recorded_at_revision = 0;
+    pp_dependency_set_status_t set_status = 0;
+    std::uint64_t count = 0;
+    pp_error_t *summary_error = nullptr;
+    const pp_error_code_t summary_status = pp_dependency_set_get(
+        dependencies.get(), &present, &source_id, &recorded_at_revision,
+        &set_status, &count, &summary_error);
+    detail::throw_if_error(summary_status, summary_error);
+    if (present == 0) {
+      return std::nullopt;
+    }
+
+    std::vector<Dependency> result;
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      pp_dependency_t native{};
+      pp_error_t *item_error = nullptr;
+      const pp_error_code_t item_status = pp_dependency_set_get_dependency(
+          dependencies.get(), index, &native, &item_error);
+      detail::throw_if_error(item_status, item_error);
+      if (native.kind == nullptr || native.authored_reference == nullptr) {
+        throw Error(ErrorCode::internal, "dependency has a null string");
+      }
+      result.push_back(
+          {native.has_source_resource != 0
+               ? std::optional<Uuid>(detail::uuid(native.source_resource_id))
+               : std::nullopt,
+           std::string(native.kind), detail::object_ref(native.target),
+           native.has_resolved_representation != 0
+               ? std::optional<Uuid>(
+                     detail::uuid(native.resolved_representation_id))
+               : std::nullopt,
+           native.required != 0, std::string(native.authored_reference)});
+    }
+    return DependencySet{detail::uuid(source_id), recorded_at_revision,
+                         static_cast<DependencySetStatus>(set_status),
+                         std::move(result)};
+  }
+
+  [[nodiscard]] std::vector<Uuid> dependents(const ObjectRef &target) const {
+    const pp_object_ref_t native_target = detail::native_object_ref(target);
+    pp_object_ref_set_t *raw_objects = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_dependents(
+        production_, &native_target, &raw_objects, &error);
+    detail::throw_if_error(status, error);
+    detail::ObjectRefSetHandle objects(raw_objects);
+
+    std::vector<Uuid> result;
+    const std::uint64_t count = pp_object_ref_set_count(objects.get());
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t index = 0; index < count; ++index) {
+      pp_object_ref_t object{};
+      pp_error_t *item_error = nullptr;
+      const pp_error_code_t item_status =
+          pp_object_ref_set_get(objects.get(), index, &object, &item_error);
+      detail::throw_if_error(item_status, item_error);
+      if (object.kind != PP_OBJECT_REPRESENTATION) {
+        throw Error(ErrorCode::internal,
+                    "dependency query returned a non-representation object");
+      }
+      result.push_back(detail::uuid(object.id));
     }
     return result;
   }
