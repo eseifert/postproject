@@ -21,6 +21,8 @@ from postproject import (
     AssetImportedEvent,
     AvailabilityIssueKind,
     ContentStructureKind,
+    Dependency,
+    DependencySetStatus,
     EvidenceKind,
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
@@ -318,6 +320,53 @@ class ProductionTests(unittest.TestCase):
             self.assertEqual(
                 tuple(member.required for member in package.members), (True, False)
             )
+
+    def test_dependency_sets_roundtrip_replace_and_support_reverse_queries(
+        self,
+    ) -> None:
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+            original = production.representations[asset_id][0]
+            with production.transaction() as transaction:
+                proxy_id = transaction.add_single_file_representation(
+                    asset_id, RepresentationKind.PROXY, self.second_media_path
+                )
+            proxy = next(
+                value
+                for value in production.representations[asset_id]
+                if value.id == proxy_id
+            )
+            dependency = Dependency(
+                kind="org.postproject:reference.character",
+                target=asset_id,
+                authored_reference="../Characters/Lead A.blend#Rig",
+                source_resource_id=proxy.resources[0].id,
+                resolved_representation_id=original.id,
+            )
+
+            with production.transaction() as transaction:
+                transaction.record_dependency_set(proxy_id, (dependency,))
+
+            recorded = production.dependency_set(proxy_id)
+            self.assertIsNotNone(recorded)
+            assert recorded is not None
+            self.assertEqual(recorded.source_representation_id, proxy_id)
+            self.assertGreater(recorded.recorded_at_revision, 0)
+            self.assertEqual(recorded.status, DependencySetStatus.CURRENT)
+            self.assertEqual(recorded.dependencies, (dependency,))
+            self.assertEqual(production.dependents(asset_id), (proxy_id,))
+
+            with production.transaction() as transaction:
+                transaction.record_dependency_set(proxy_id, ())
+
+            empty = production.dependency_set(proxy_id)
+            self.assertIsNotNone(empty)
+            assert empty is not None
+            self.assertEqual(empty.dependencies, ())
+            self.assertEqual(production.dependents(asset_id), ())
 
     def test_host_bindings_are_keyed_and_round_trip_through_native_abi(self) -> None:
         with Production.create(

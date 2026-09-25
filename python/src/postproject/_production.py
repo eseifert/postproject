@@ -1236,6 +1236,54 @@ class Transaction:
         )
         self._native.check(status, error)
 
+    def record_dependency_set(
+        self,
+        representation_id: RepresentationId,
+        dependencies: tuple[Dependency, ...],
+    ) -> None:
+        """Stage replacement of one complete ordered dependency observation."""
+
+        self._require_open()
+        kinds = tuple(_utf8(value.kind, "dependency kind") for value in dependencies)
+        authored_references = tuple(
+            _utf8(value.authored_reference, "authored dependency reference")
+            for value in dependencies
+        )
+        array_type = NativeDependency * len(dependencies)
+        native_dependencies = array_type(
+            *(
+                NativeDependency(
+                    int(value.source_resource_id is not None),
+                    (
+                        _native_uuid(value.source_resource_id.value)
+                        if value.source_resource_id is not None
+                        else Uuid()
+                    ),
+                    kinds[index],
+                    _native_object_reference(value.target),
+                    int(value.resolved_representation_id is not None),
+                    (
+                        _native_uuid(value.resolved_representation_id.value)
+                        if value.resolved_representation_id is not None
+                        else Uuid()
+                    ),
+                    int(value.required),
+                    authored_references[index],
+                )
+                for index, value in enumerate(dependencies)
+            )
+        )
+        native_id = _native_uuid(representation_id.value)
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_record_dependency_set(
+            self._handle,
+            ctypes.byref(native_id),
+            native_dependencies if dependencies else None,
+            len(native_dependencies),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
     def add_external_identifier(
         self, target: ObjectReference, identifier: ExternalIdentifier
     ) -> None:
