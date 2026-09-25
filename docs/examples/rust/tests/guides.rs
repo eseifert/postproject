@@ -8,11 +8,13 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use postproject_core::{
-    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AssetId,
-    ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern,
-    MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity,
-    ProductionId, PropertyId, RationalRate, RepresentationId, RepresentationKind,
-    RepresentationResolution, Result, RevisionContext, RevisionEvent, ToolIdentity, VocabularyId,
+    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole,
+    ArtifactEvaluationLimits, AssetId, Dependency, DependencyKind, DependencyQueryLimits,
+    DependencyTarget, ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme,
+    ImageSequencePattern, Job, JobId, JobKind, JobQuery, JobStateKind, MediaRoot, MediaRootId,
+    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, ProductionId, PropertyId,
+    QueryPageRequest, RationalRate, RepresentationId, RepresentationKind, RepresentationResolution,
+    RequestedJobOutput, Result, RevisionContext, RevisionEvent, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     ImageSequenceSource, MediaResolver, MediaRootMapping, prepare_confirmed_locator,
@@ -240,6 +242,101 @@ fn record_render(
 }
 // [/provenance]
 
+// [artifact-knowledge]
+fn inspect_artifact(production: &SqliteProduction, artifact_id: RepresentationId) -> Result<()> {
+    let evaluation =
+        production.evaluate_artifact(artifact_id, ArtifactEvaluationLimits::new(64, 1_000)?)?;
+    println!("artifact state: {:?}", evaluation.state());
+    for reason in evaluation.reasons() {
+        println!("reason: {reason:?}");
+    }
+
+    let reproducibility = production.artifact_reproducibility(artifact_id)?;
+    println!(
+        "reproducible: {}, missing conditions: {}",
+        reproducibility.is_reproducible(),
+        reproducibility.issues().len()
+    );
+    Ok(())
+}
+// [/artifact-knowledge]
+
+// [dependency-queries]
+fn record_and_query_dependencies(
+    production: &mut SqliteProduction,
+    source_id: RepresentationId,
+    target_asset_id: AssetId,
+    resolved_id: RepresentationId,
+) -> Result<()> {
+    let dependency = Dependency::new(
+        None,
+        DependencyKind::new("org.example:character-reference")?,
+        DependencyTarget::Asset(target_asset_id),
+        Some(resolved_id),
+        true,
+        "characters/lead.usd",
+    )?;
+    {
+        let mut transaction = production.begin_transaction()?;
+        transaction.record_dependency_set(source_id, &[dependency])?;
+        transaction.commit()?;
+    }
+
+    let limits = DependencyQueryLimits::new(4, 1_000)?;
+    let request = QueryPageRequest::new(100, None)?;
+    let dependencies = production.dependencies(source_id, limits, &request)?;
+    for item in dependencies.items() {
+        println!("dependency {:?} at depth {}", item.target(), item.depth());
+    }
+    assert!(!dependencies.traversal_truncated());
+
+    let dependents =
+        production.dependents(DependencyTarget::Asset(target_asset_id), limits, &request)?;
+    assert_eq!(
+        dependents.items()[0].target(),
+        DependencyTarget::Representation(source_id)
+    );
+    Ok(())
+}
+// [/dependency-queries]
+
+// [job-query-pages]
+fn request_and_page_jobs(
+    production: &mut SqliteProduction,
+    input_id: RepresentationId,
+    output_asset_id: AssetId,
+) -> Result<()> {
+    let kind = JobKind::new("org.example:generate-proxy")?;
+    let output = RequestedJobOutput::new(output_asset_id, RepresentationKind::Proxy, None)?;
+    {
+        let mut transaction = production.begin_transaction()?;
+        for _ in 0..2 {
+            transaction.request_job(&Job::new(
+                JobId::new(),
+                kind.clone(),
+                vec![input_id],
+                output.clone(),
+            )?)?;
+        }
+        transaction.commit()?;
+    }
+
+    let query = JobQuery::new(Some(JobStateKind::Requested), Some(kind));
+    let mut cursor = None;
+    let mut count = 0;
+    loop {
+        let page = production.jobs(&query, &QueryPageRequest::new(1, cursor)?)?;
+        count += page.items().len();
+        cursor = page.next_cursor().cloned();
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(count, 2);
+    Ok(())
+}
+// [/job-query-pages]
+
 fn handle_event(event: &RevisionEvent) {
     println!("event {}: {:?}", event.position(), event.kind());
 }
@@ -315,6 +412,9 @@ fn guide_examples_run_in_order() -> Result<()> {
 
     let sequence_id = add_render_sequence(&mut production, asset_id, &renders)?;
     record_render(&mut production, original_id, sequence_id)?;
+    inspect_artifact(&production, sequence_id)?;
+    record_and_query_dependencies(&mut production, sequence_id, asset_id, original_id)?;
+    request_and_page_jobs(&mut production, original_id, asset_id)?;
 
     let cursor = process_changes(&production, 0)?;
     assert_eq!(

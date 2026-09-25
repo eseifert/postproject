@@ -17,8 +17,11 @@ from postproject import (
     ActivityEdge,
     ActivitySpec,
     AssetId,
+    Dependency,
     ExternalIdentifier,
     ImageSequenceInput,
+    JobRequest,
+    JobState,
     MetadataLanguageString,
     MetadataProperty,
     OriginIdentity,
@@ -193,6 +196,92 @@ def record_render(
 # [/provenance]
 
 
+# [artifact-knowledge]
+def inspect_artifact(production: Production, artifact_id: RepresentationId) -> None:
+    evaluation = production.evaluate_artifact(
+        artifact_id, max_depth=64, max_representations=1000
+    )
+    print(f"artifact state: {evaluation.state.name}")
+    for reason in evaluation.reasons:
+        print(f"reason: {reason.kind.name}")
+
+    reproducibility = production.artifact_reproducibility(artifact_id)
+    print(
+        f"reproducible: {reproducibility.reproducible}, "
+        f"missing conditions: {len(reproducibility.issues)}"
+    )
+
+
+# [/artifact-knowledge]
+
+
+# [dependency-queries]
+def record_and_query_dependencies(
+    production: Production,
+    source_id: RepresentationId,
+    target_asset_id: AssetId,
+    resolved_id: RepresentationId,
+) -> None:
+    dependency = Dependency(
+        kind="org.example:character-reference",
+        target=target_asset_id,
+        authored_reference="characters/lead.usd",
+        resolved_representation_id=resolved_id,
+    )
+    with production.transaction() as transaction:
+        transaction.record_dependency_set(source_id, (dependency,))
+
+    dependencies = production.dependencies(
+        source_id, max_depth=4, max_representations=1000, limit=100
+    )
+    for match in dependencies.items:
+        print(f"dependency {match.target} at depth {match.depth}")
+    assert not dependencies.traversal_truncated
+
+    dependents = production.dependents(
+        target_asset_id, max_depth=4, max_representations=1000, limit=100
+    )
+    assert dependents.items[0].target == source_id
+
+
+# [/dependency-queries]
+
+
+# [job-query-pages]
+def request_and_page_jobs(
+    production: Production,
+    input_id: RepresentationId,
+    output_asset_id: AssetId,
+) -> None:
+    request = JobRequest(
+        "org.example:generate-proxy",
+        (input_id,),
+        output_asset_id,
+        RepresentationKind.PROXY,
+    )
+    with production.transaction() as transaction:
+        transaction.request_job(request)
+        transaction.request_job(request)
+
+    cursor = None
+    count = 0
+    while True:
+        page = production.jobs(
+            limit=1,
+            cursor=cursor,
+            state=JobState.REQUESTED,
+            kind="org.example:generate-proxy",
+        )
+        count += len(page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+    assert count == 2
+
+
+# [/job-query-pages]
+
+
 def handle_event(event: RevisionEvent) -> None:
     print(f"event {event.position}: {type(event.payload).__name__}")
 
@@ -253,6 +342,9 @@ def main() -> None:
             production, asset_id, work / "renders" / "shot010"
         )
         record_render(production, original_id, sequence_id)
+        inspect_artifact(production, sequence_id)
+        record_and_query_dependencies(production, sequence_id, asset_id, original_id)
+        request_and_page_jobs(production, original_id, asset_id)
 
         cursor = process_changes(production, 0)
         latest = production.latest_revision
