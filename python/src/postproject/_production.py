@@ -6,7 +6,7 @@ import ctypes
 import os
 import weakref
 from _ctypes import _Pointer
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -25,6 +25,7 @@ from ._abi import (
     MediaRootSet,
     MetadataSet,
     ObjectRefSet,
+    RegenerationPlanSet,
     RepresentationSet,
     ResolutionSet,
     RevisionEventSet,
@@ -142,6 +143,7 @@ from ._model import (
     ObjectReference,
     OriginIdentity,
     ProductionId,
+    RegenerationJobPlan,
     Representation,
     RepresentationAddedEvent,
     RepresentationAvailability,
@@ -433,6 +435,38 @@ class Production:
             )
         finally:
             self._native.lib.pp_job_set_release(handle)
+
+    def plan_regeneration(
+        self, artifact_representation_ids: Iterable[RepresentationId]
+    ) -> tuple[RegenerationJobPlan, ...]:
+        """Derive job proposals without enqueuing or executing them."""
+
+        self._require_open()
+        artifact_ids = tuple(artifact_representation_ids)
+        native_ids = (Uuid * len(artifact_ids))(
+            *(_native_uuid(artifact_id.value) for artifact_id in artifact_ids)
+        )
+        handle = ctypes.POINTER(RegenerationPlanSet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_plan_regeneration(
+            self._handle,
+            native_ids if artifact_ids else None,
+            len(artifact_ids),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native regeneration query returned no result set")
+        try:
+            return tuple(
+                _regeneration_plan_at(self._native, handle, index)
+                for index in range(
+                    int(self._native.lib.pp_regeneration_plan_set_count(handle))
+                )
+            )
+        finally:
+            self._native.lib.pp_regeneration_plan_set_release(handle)
 
     @property
     def activities_producing(self) -> _ActivitiesByRepresentation:
@@ -2078,6 +2112,52 @@ def _job_at(native: NativeLibrary, jobs: _Pointer[JobSet], index: int) -> Job:
         completion=completion,
         failure_diagnostic=_decode_optional(value.failure_diagnostic),
     )
+
+
+def _regeneration_plan_at(
+    native: NativeLibrary,
+    plans: _Pointer[RegenerationPlanSet],
+    index: int,
+) -> RegenerationJobPlan:
+    artifact_id = Uuid()
+    jobs = ctypes.POINTER(JobSet)()
+    parameters = ctypes.POINTER(MetadataSet)()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_regeneration_plan_set_get(
+        plans,
+        index,
+        ctypes.byref(artifact_id),
+        ctypes.byref(jobs),
+        ctypes.byref(parameters),
+        ctypes.byref(error),
+    )
+    native.check(status, error)
+    if not jobs or not parameters:
+        if jobs:
+            native.lib.pp_job_set_release(jobs)
+        if parameters:
+            native.lib.pp_metadata_set_release(parameters)
+        raise RuntimeError("native regeneration plan is incomplete")
+    try:
+        if native.lib.pp_job_set_count(jobs) != 1:
+            raise RuntimeError("native regeneration plan must contain one job")
+        job = _job_at(native, jobs, 0)
+        assertions = tuple(
+            _metadata_at(native, parameters, parameter_index)
+            for parameter_index in range(
+                int(native.lib.pp_metadata_set_count(parameters))
+            )
+        )
+        if any(assertion.target != job.id for assertion in assertions):
+            raise RuntimeError(
+                "native regeneration parameter target does not match its job"
+            )
+        return RegenerationJobPlan(
+            RepresentationId(_uuid(artifact_id)), job, assertions
+        )
+    finally:
+        native.lib.pp_metadata_set_release(parameters)
+        native.lib.pp_job_set_release(jobs)
 
 
 def _activity_at(

@@ -701,6 +701,15 @@ class MetadataAssertion:
 
 
 @dataclass(frozen=True, slots=True)
+class RegenerationJobPlan:
+    """Read-only job proposal derived from an artifact's provenance."""
+
+    artifact_representation_id: RepresentationId
+    job: Job
+    parameters: tuple[MetadataAssertion, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class AssetImportedEvent:
     asset_id: AssetId
 
