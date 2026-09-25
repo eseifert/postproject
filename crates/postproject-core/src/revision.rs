@@ -1,7 +1,7 @@
 //! Durable semantic revision values for production-local change feeds.
 
 use crate::{
-    ActivityId, ActivityKind, ActivityRole, AssetId, Error, ErrorKind, ExternalIdentifier,
+    ActivityId, ActivityKind, ActivityRole, AssetId, Error, ErrorKind, ExternalIdentifier, JobId,
     LocatorId, MediaRootId, MetadataProperty, ObjectRef, RepresentationId, ResourceId, Result,
     RevisionId, Timestamp, ToolIdentity, TransactionId,
 };
@@ -228,6 +228,41 @@ pub enum RevisionEventKind {
     DependencySetRecorded {
         /// Representation whose authored dependency set changed.
         representation_id: RepresentationId,
+    },
+    /// A durable work request was created.
+    JobRequested {
+        /// Requested job.
+        job_id: JobId,
+    },
+    /// A worker claimed a requested or expired job.
+    JobClaimed {
+        /// Claimed job.
+        job_id: JobId,
+    },
+    /// The current worker extended a job lease.
+    JobClaimRenewed {
+        /// Renewed job.
+        job_id: JobId,
+    },
+    /// The current worker released a job claim.
+    JobClaimReleased {
+        /// Released job.
+        job_id: JobId,
+    },
+    /// A job completed with its durable activity and output.
+    JobSucceeded {
+        /// Completed job.
+        job_id: JobId,
+    },
+    /// A job ended with a diagnostic and no output.
+    JobFailed {
+        /// Failed job.
+        job_id: JobId,
+    },
+    /// A requested or claimed job was cancelled.
+    JobCancelled {
+        /// Cancelled job.
+        job_id: JobId,
     },
 }
 

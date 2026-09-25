@@ -25,7 +25,7 @@ use postproject_core::{
     ArtifactReproducibilityReport, Asset, AssetId, ContentStructure, Dependency, DependencyKind,
     DependencySet, DependencySetStatus, DependencyTarget, Error, ErrorKind, ExternalIdentifier,
     FileFacts, FingerprintSnapshot, FrameRange, IdentifierScheme, ImageSequenceDescriptor,
-    ImageSequencePattern, Locator, LocatorAvailability, LocatorId, MAX_REVISION_PAGE_SIZE,
+    ImageSequencePattern, JobId, Locator, LocatorAvailability, LocatorId, MAX_REVISION_PAGE_SIZE,
     MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue,
     ObjectRef, OriginIdentity, Production, ProductionId, ProductionRead, ProductionStore,
     PropertyId, RationalRate, Representation, RepresentationFingerprint, RepresentationId,
@@ -1874,6 +1874,27 @@ fn decode_revision_event(
         }
         19 => RevisionEventKind::DependencySetRecorded {
             representation_id: RepresentationId::from_bytes(primary_id("representation")?),
+        },
+        20 => RevisionEventKind::JobRequested {
+            job_id: JobId::from_bytes(primary_id("job")?),
+        },
+        21 => RevisionEventKind::JobClaimed {
+            job_id: JobId::from_bytes(primary_id("job")?),
+        },
+        22 => RevisionEventKind::JobClaimRenewed {
+            job_id: JobId::from_bytes(primary_id("job")?),
+        },
+        23 => RevisionEventKind::JobClaimReleased {
+            job_id: JobId::from_bytes(primary_id("job")?),
+        },
+        24 => RevisionEventKind::JobSucceeded {
+            job_id: JobId::from_bytes(primary_id("job")?),
+        },
+        25 => RevisionEventKind::JobFailed {
+            job_id: JobId::from_bytes(primary_id("job")?),
+        },
+        26 => RevisionEventKind::JobCancelled {
+            job_id: JobId::from_bytes(primary_id("job")?),
         },
         kind => {
             return Err(Error::new(

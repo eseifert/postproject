@@ -1318,6 +1318,25 @@ fn stored_event(event: &RevisionEventKind) -> Result<StoredEvent<'_>> {
             stored.kind = 19;
             stored.primary_id = Some(representation_id.into_bytes().to_vec());
         }
+        RevisionEventKind::JobRequested { job_id }
+        | RevisionEventKind::JobClaimed { job_id }
+        | RevisionEventKind::JobClaimRenewed { job_id }
+        | RevisionEventKind::JobClaimReleased { job_id }
+        | RevisionEventKind::JobSucceeded { job_id }
+        | RevisionEventKind::JobFailed { job_id }
+        | RevisionEventKind::JobCancelled { job_id } => {
+            stored.kind = match event {
+                RevisionEventKind::JobRequested { .. } => 20,
+                RevisionEventKind::JobClaimed { .. } => 21,
+                RevisionEventKind::JobClaimRenewed { .. } => 22,
+                RevisionEventKind::JobClaimReleased { .. } => 23,
+                RevisionEventKind::JobSucceeded { .. } => 24,
+                RevisionEventKind::JobFailed { .. } => 25,
+                RevisionEventKind::JobCancelled { .. } => 26,
+                _ => unreachable!("job event arm only contains job events"),
+            };
+            stored.primary_id = Some(job_id.into_bytes().to_vec());
+        }
         _ => {
             return Err(Error::new(
                 ErrorKind::Unsupported,

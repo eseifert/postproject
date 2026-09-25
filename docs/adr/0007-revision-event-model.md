@@ -27,10 +27,15 @@ The semantic event catalog covers:
 - added and removed external identifier attachments;
 - added/replaced and removed metadata properties; and
 - created activities plus their input and output edges;
-- changed resource and representation fingerprint domains.
+- changed resource and representation fingerprint domains;
+- replaced representation dependency observations; and
+- requested, claimed, renewed, released, succeeded, failed, and cancelled jobs.
 
 ADR 0021 adds fingerprint-observation events. Re-observing the same bytes in
 the same domain is a no-op and does not advance the feed.
+
+ADRs 0023 and 0024 add job-lifecycle and dependency-observation events. Job
+events identify the job for re-query but never expose its claim token.
 
 The pull contract is `latest_revision`, `changes_since(sequence, limit)`, and
 `events_for_revision`. Revision pages and event lists are ordered ascending by
