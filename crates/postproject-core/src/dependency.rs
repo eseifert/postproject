@@ -56,6 +56,34 @@ pub enum DependencyTarget {
     Representation(RepresentationId),
 }
 
+/// One object reached by a bounded dependency or dependent query.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct DependencyQueryMatch {
+    target: DependencyTarget,
+    depth: u32,
+}
+
+impl DependencyQueryMatch {
+    /// Constructs one backend-derived query match.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(target: DependencyTarget, depth: u32) -> Self {
+        Self { target, depth }
+    }
+
+    /// Returns the matching asset or representation.
+    #[must_use]
+    pub const fn target(self) -> DependencyTarget {
+        self.target
+    }
+
+    /// Returns the shortest number of dependency edges from the query root.
+    #[must_use]
+    pub const fn depth(self) -> u32 {
+        self.depth
+    }
+}
+
 /// One typed dependency occurrence in a representation's observed set.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Dependency {

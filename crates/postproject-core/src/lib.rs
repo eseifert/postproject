@@ -37,8 +37,9 @@ pub use content::{
     MAX_SEQUENCE_EXCEPTIONS, MAX_SEQUENCE_PATTERN_BYTES, ResourceMember, ResourceRole,
 };
 pub use dependency::{
-    Dependency, DependencyKind, DependencySet, DependencySetStatus, DependencyTarget,
-    MAX_AUTHORED_REFERENCE_BYTES, MAX_DEPENDENCIES_PER_SET, MAX_DEPENDENCY_KIND_BYTES,
+    Dependency, DependencyKind, DependencyQueryMatch, DependencySet, DependencySetStatus,
+    DependencyTarget, MAX_AUTHORED_REFERENCE_BYTES, MAX_DEPENDENCIES_PER_SET,
+    MAX_DEPENDENCY_KIND_BYTES,
 };
 pub use error::{Error, ErrorKind, Result};
 pub use id::{
@@ -55,7 +56,7 @@ pub use identifier_registry::{
     identifier_scheme_definition, validate_known_identifier,
 };
 pub use job::{
-    Job, JobClaim, JobCompletion, JobFailure, JobKind, JobState, JobStateKind,
+    Job, JobClaim, JobCompletion, JobFailure, JobKind, JobQuery, JobState, JobStateKind,
     MAX_JOB_DIAGNOSTIC_BYTES, MAX_JOB_INPUTS, MAX_JOB_KIND_BYTES, MAX_REGENERATION_PLANS,
     RegenerationJobPlan, RequestedJobOutput,
 };

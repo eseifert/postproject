@@ -234,6 +234,33 @@ pub enum JobStateKind {
     Cancelled,
 }
 
+/// Optional exact predicates for durable job enumeration.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct JobQuery {
+    state: Option<JobStateKind>,
+    kind: Option<JobKind>,
+}
+
+impl JobQuery {
+    /// Creates a query from optional state and open-world kind predicates.
+    #[must_use]
+    pub const fn new(state: Option<JobStateKind>, kind: Option<JobKind>) -> Self {
+        Self { state, kind }
+    }
+
+    /// Returns the exact state predicate, when present.
+    #[must_use]
+    pub const fn state(&self) -> Option<JobStateKind> {
+        self.state
+    }
+
+    /// Returns the exact job-kind predicate, when present.
+    #[must_use]
+    pub const fn kind(&self) -> Option<&JobKind> {
+        self.kind.as_ref()
+    }
+}
+
 /// Validated lifecycle state and its state-specific detail.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
