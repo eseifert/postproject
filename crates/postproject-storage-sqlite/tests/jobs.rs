@@ -576,3 +576,98 @@ fn completion_is_atomic_and_records_output_activity_and_snapshots() {
         RevisionEventKind::JobSucceeded { job_id } if *job_id == job.id()
     ));
 }
+
+#[test]
+fn regeneration_planning_copies_producer_inputs_kind_and_parameters_without_enqueuing() {
+    let directory = tempdir().expect("create temporary directory");
+    let mut production = SqliteProduction::create(directory.path().join("production.pproj"), None)
+        .expect("create production");
+    let source = source_import();
+    let proxy_id = RepresentationId::from_bytes([30; 16]);
+    let proxy = proxy_import(&source, proxy_id, ResourceId::from_bytes([31; 16]));
+    let activity_id = ActivityId::from_bytes([32; 16]);
+    let activity = Activity::new(
+        activity_id,
+        ActivityKind::new("org.postproject:generate-proxy").expect("valid kind"),
+        vec![ActivityInput::new(source.representation().id(), None)],
+        vec![ActivityOutput::new(proxy_id, None)],
+    )
+    .expect("valid activity")
+    .with_tool(ToolIdentity::new("encoder", None, None).expect("valid tool"));
+    let property = MetadataProperty::new(
+        VocabularyId::new("org.postproject.job").expect("valid vocabulary"),
+        PropertyId::new("profile").expect("valid property"),
+    );
+    let value = MetadataValue::string("editing-proxy").expect("valid value");
+    {
+        let mut transaction = production.begin_transaction().expect("begin setup");
+        transaction.import_original(&source).expect("import source");
+        transaction.add_representation(&proxy).expect("add proxy");
+        transaction
+            .create_activity(&activity)
+            .expect("create producer");
+        transaction
+            .add_metadata_value(ObjectRef::Activity(activity_id), &property, &value)
+            .expect("add activity parameter");
+        transaction.commit().expect("commit setup");
+    }
+    let revision = production
+        .latest_revision()
+        .expect("load revision")
+        .unwrap();
+
+    let plans = production
+        .plan_regeneration(&[proxy_id, proxy_id])
+        .expect("plan regeneration");
+    assert_eq!(plans.len(), 1);
+    let plan = &plans[0];
+    assert_eq!(plan.artifact_representation_id(), proxy_id);
+    assert_eq!(plan.job().kind().as_str(), "org.postproject:generate-proxy");
+    assert_eq!(plan.job().inputs(), [source.representation().id()]);
+    assert_eq!(
+        plan.job().requested_output().asset_id(),
+        source.asset().id()
+    );
+    assert_eq!(
+        plan.job().requested_output().representation_kind(),
+        RepresentationKind::Proxy
+    );
+    assert_eq!(plan.job().requested_output().target_root(), None);
+    assert_eq!(plan.parameters().len(), 1);
+    assert_eq!(plan.parameters()[0].property(), &property);
+    assert_eq!(plan.parameters()[0].value(), &value);
+    assert!(production.jobs().expect("list jobs").is_empty());
+    assert_eq!(
+        production
+            .latest_revision()
+            .expect("load revision")
+            .unwrap()
+            .id(),
+        revision.id()
+    );
+
+    {
+        let mut transaction = production.begin_transaction().expect("begin enqueue");
+        transaction.request_job(plan.job()).expect("enqueue plan");
+        for parameter in plan.parameters() {
+            transaction
+                .add_metadata_value(
+                    ObjectRef::Job(plan.job().id()),
+                    parameter.property(),
+                    parameter.value(),
+                )
+                .expect("copy job parameter");
+        }
+        transaction.commit().expect("commit enqueue");
+    }
+    assert_eq!(
+        production
+            .metadata(ObjectRef::Job(plan.job().id()))
+            .expect("load job parameters"),
+        plan.parameters()
+    );
+    let error = production
+        .plan_regeneration(&[source.representation().id()])
+        .expect_err("original has no producing activity");
+    assert_eq!(error.kind(), ErrorKind::Conflict);
+}
