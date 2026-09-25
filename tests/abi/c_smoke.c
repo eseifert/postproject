@@ -1482,6 +1482,70 @@ int main(int argc, char **argv) {
     return 99;
   }
   pp_activity_set_release(activities);
+
+  const pp_uuid_t planned_artifacts[2] = {representation_id, representation_id};
+  pp_regeneration_plan_set_t *plans = NULL;
+  pp_uuid_t planned_artifact_id = {{0}};
+  pp_job_set_t *planned_job_set = NULL;
+  pp_metadata_set_t *planned_parameters = NULL;
+  pp_job_t planned_job = {0};
+  status = pp_production_plan_regeneration(
+      production, planned_artifacts, UINT64_C(2), &plans, &error);
+  if (status != PP_OK || plans == NULL ||
+      pp_regeneration_plan_set_count(plans) != UINT64_C(1) ||
+      pp_regeneration_plan_set_get(
+          plans, UINT64_C(0), &planned_artifact_id, &planned_job_set,
+          &planned_parameters, &error) != PP_OK ||
+      planned_job_set == NULL || planned_parameters == NULL ||
+      memcmp(planned_artifact_id.bytes, representation_id.bytes,
+             sizeof(representation_id.bytes)) != 0 ||
+      pp_job_set_count(planned_job_set) != UINT64_C(1) ||
+      pp_job_set_get(planned_job_set, UINT64_C(0), &planned_job, &error) != PP_OK ||
+      planned_job.kind == NULL ||
+      strcmp(planned_job.kind, "org.postproject:ingest") != 0 ||
+      planned_job.state != PP_JOB_REQUESTED || planned_job.input_count != 0 ||
+      memcmp(planned_job.output_asset_id.bytes, asset_id.bytes,
+             sizeof(asset_id.bytes)) != 0 ||
+      planned_job.output_representation_kind != PP_REPRESENTATION_ORIGINAL ||
+      pp_metadata_set_count(planned_parameters) != UINT64_C(1)) {
+    pp_metadata_set_release(planned_parameters);
+    pp_job_set_release(planned_job_set);
+    pp_regeneration_plan_set_release(plans);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 100;
+  }
+  metadata_value = NULL;
+  if (pp_metadata_set_get(planned_parameters, UINT64_C(0), &metadata_target,
+                          &vocabulary, &property, &metadata_value,
+                          &error) != PP_OK ||
+      metadata_target.kind != PP_OBJECT_JOB ||
+      memcmp(metadata_target.id.bytes, planned_job.id.bytes,
+             sizeof(planned_job.id.bytes)) != 0 ||
+      vocabulary == NULL || strcmp(vocabulary, "com.example.ingest") != 0 ||
+      property == NULL || strcmp(property, "rate") != 0 ||
+      pp_metadata_value_get_rational(metadata_value, &rate_numerator,
+                                     &rate_denominator, &error) != PP_OK ||
+      rate_numerator != INT64_C(24000) || rate_denominator != UINT64_C(1001)) {
+    pp_metadata_set_release(planned_parameters);
+    pp_job_set_release(planned_job_set);
+    pp_regeneration_plan_set_release(plans);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 101;
+  }
+  pp_metadata_set_release(planned_parameters);
+  pp_job_set_release(planned_job_set);
+  pp_regeneration_plan_set_release(plans);
+  jobs = NULL;
+  if (pp_production_jobs(production, &jobs, &error) != PP_OK || jobs == NULL ||
+      pp_job_set_count(jobs) != UINT64_C(3)) {
+    pp_job_set_release(jobs);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 102;
+  }
+  pp_job_set_release(jobs);
   pp_production_release(production);
   production = NULL;
 
