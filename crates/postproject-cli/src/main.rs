@@ -8,11 +8,12 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
-    ArtifactEdgeKind, ArtifactEvaluationLimits, ArtifactKnowledgeReason, ArtifactKnowledgeState,
+    ArtifactDependencyIssue, ArtifactDependencyPathSegment, ArtifactEdgeKind,
+    ArtifactEvaluationLimits, ArtifactKnowledgeReason, ArtifactKnowledgeState,
     ArtifactReproducibilityIssue, ArtifactTraversalLimitKind, Asset, AssetId, AvailabilityIssue,
-    AvailabilityIssueKind, DecimalValue, EvidenceKind, ExternalIdentifier, FrameRange,
-    IdentifierScheme, ImageSequencePattern, Locator, LocatorAvailability, LocatorId, MediaRoot,
-    MediaRootId, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
+    AvailabilityIssueKind, DecimalValue, DependencyTarget, EvidenceKind, ExternalIdentifier,
+    FrameRange, IdentifierScheme, ImageSequencePattern, Locator, LocatorAvailability, LocatorId,
+    MediaRoot, MediaRootId, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
     MetadataValueKind, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId,
     ProductionStoreTransaction, PropertyId, RationalRate, RationalValue, Representation,
     RepresentationAvailability, RepresentationId, RepresentationKind, RepresentationResolution,
@@ -942,6 +943,59 @@ enum ArtifactReasonView {
         representation_id: String,
         traversal_limit: &'static str,
     },
+    DependencySnapshotAbsent {
+        activity_id: String,
+        input_representation_id: String,
+    },
+    DependencyKnowledgeIncomplete {
+        activity_id: String,
+        input_representation_id: String,
+        subject_representation_id: String,
+        path: Vec<ArtifactDependencyPathView>,
+        issue: &'static str,
+    },
+    DependencyPathChanged {
+        activity_id: String,
+        input_representation_id: String,
+        path: Vec<ArtifactDependencyPathView>,
+    },
+    DependencyFingerprintChanged {
+        activity_id: String,
+        input_representation_id: String,
+        representation_id: String,
+        path: Vec<ArtifactDependencyPathView>,
+        fingerprint_algorithm: String,
+        fingerprint_version: u16,
+        snapshot_value_hex: String,
+        current_value_hex: String,
+    },
+    DependencyFingerprintRecomputationPending {
+        activity_id: String,
+        input_representation_id: String,
+        representation_id: String,
+        path: Vec<ArtifactDependencyPathView>,
+    },
+    DependencyFingerprintEvidenceMissing {
+        activity_id: String,
+        input_representation_id: String,
+        representation_id: String,
+        path: Vec<ArtifactDependencyPathView>,
+        fingerprint_algorithm: Option<String>,
+        fingerprint_version: Option<u16>,
+        snapshot_value_hex: Option<String>,
+        current_value_hex: Option<String>,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct ArtifactDependencyPathView {
+    source_representation_id: String,
+    dependency_position: u32,
+    source_resource_id: Option<String>,
+    kind: String,
+    target: ObjectRefView,
+    resolved_representation_id: Option<String>,
+    authored_reference: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -2308,7 +2362,128 @@ fn artifact_reason_view(reason: &ArtifactKnowledgeReason) -> Result<ArtifactReas
             representation_id: representation_id.to_string(),
             traversal_limit: artifact_traversal_limit_name(*limit)?,
         }),
-        _ => bail!("unsupported artifact evaluation reason"),
+        _ => artifact_dependency_reason_view(reason),
+    }
+}
+
+fn artifact_dependency_reason_view(reason: &ArtifactKnowledgeReason) -> Result<ArtifactReasonView> {
+    match reason {
+        ArtifactKnowledgeReason::DependencySnapshotAbsent {
+            activity_id,
+            representation_id,
+        } => Ok(ArtifactReasonView::DependencySnapshotAbsent {
+            activity_id: activity_id.to_string(),
+            input_representation_id: representation_id.to_string(),
+        }),
+        ArtifactKnowledgeReason::DependencyKnowledgeIncomplete {
+            activity_id,
+            input_representation_id,
+            subject_representation_id,
+            path,
+            issue,
+        } => Ok(ArtifactReasonView::DependencyKnowledgeIncomplete {
+            activity_id: activity_id.to_string(),
+            input_representation_id: input_representation_id.to_string(),
+            subject_representation_id: subject_representation_id.to_string(),
+            path: artifact_dependency_path_view(path)?,
+            issue: artifact_dependency_issue_name(*issue)?,
+        }),
+        ArtifactKnowledgeReason::DependencyPathChanged {
+            activity_id,
+            input_representation_id,
+            path,
+        } => Ok(ArtifactReasonView::DependencyPathChanged {
+            activity_id: activity_id.to_string(),
+            input_representation_id: input_representation_id.to_string(),
+            path: artifact_dependency_path_view(path)?,
+        }),
+        ArtifactKnowledgeReason::DependencyFingerprintChanged {
+            activity_id,
+            input_representation_id,
+            representation_id,
+            path,
+            algorithm,
+            version,
+            snapshot_value,
+            current_value,
+        } => Ok(ArtifactReasonView::DependencyFingerprintChanged {
+            activity_id: activity_id.to_string(),
+            input_representation_id: input_representation_id.to_string(),
+            representation_id: representation_id.to_string(),
+            path: artifact_dependency_path_view(path)?,
+            fingerprint_algorithm: algorithm.clone(),
+            fingerprint_version: *version,
+            snapshot_value_hex: hex::encode(snapshot_value),
+            current_value_hex: hex::encode(current_value),
+        }),
+        ArtifactKnowledgeReason::DependencyFingerprintRecomputationPending {
+            activity_id,
+            input_representation_id,
+            representation_id,
+            path,
+        } => Ok(
+            ArtifactReasonView::DependencyFingerprintRecomputationPending {
+                activity_id: activity_id.to_string(),
+                input_representation_id: input_representation_id.to_string(),
+                representation_id: representation_id.to_string(),
+                path: artifact_dependency_path_view(path)?,
+            },
+        ),
+        ArtifactKnowledgeReason::DependencyFingerprintEvidenceMissing {
+            activity_id,
+            input_representation_id,
+            representation_id,
+            path,
+            algorithm,
+            version,
+            snapshot_value,
+            current_value,
+        } => Ok(ArtifactReasonView::DependencyFingerprintEvidenceMissing {
+            activity_id: activity_id.to_string(),
+            input_representation_id: input_representation_id.to_string(),
+            representation_id: representation_id.to_string(),
+            path: artifact_dependency_path_view(path)?,
+            fingerprint_algorithm: algorithm.clone(),
+            fingerprint_version: *version,
+            snapshot_value_hex: snapshot_value.as_ref().map(hex::encode),
+            current_value_hex: current_value.as_ref().map(hex::encode),
+        }),
+        _ => bail!("unsupported artifact dependency reason"),
+    }
+}
+
+fn artifact_dependency_path_view(
+    path: &[ArtifactDependencyPathSegment],
+) -> Result<Vec<ArtifactDependencyPathView>> {
+    path.iter()
+        .map(|segment| {
+            let target = match segment.target() {
+                DependencyTarget::Asset(id) => ObjectRef::Asset(id),
+                DependencyTarget::Representation(id) => ObjectRef::Representation(id),
+                _ => bail!("unsupported dependency target"),
+            };
+            Ok(ArtifactDependencyPathView {
+                source_representation_id: segment.source_representation_id().to_string(),
+                dependency_position: segment.dependency_position(),
+                source_resource_id: segment.source_resource_id().map(|id| id.to_string()),
+                kind: segment.kind().as_str().to_owned(),
+                target: object_ref_view(target)?,
+                resolved_representation_id: segment
+                    .resolved_representation_id()
+                    .map(|id| id.to_string()),
+                authored_reference: segment.authored_reference().to_owned(),
+            })
+        })
+        .collect()
+}
+
+fn artifact_dependency_issue_name(issue: ArtifactDependencyIssue) -> Result<&'static str> {
+    match issue {
+        ArtifactDependencyIssue::NeedsExtraction => Ok("needs_extraction"),
+        ArtifactDependencyIssue::Unresolved => Ok("unresolved"),
+        ArtifactDependencyIssue::DepthTruncated => Ok("depth_truncated"),
+        ArtifactDependencyIssue::RepresentationsTruncated => Ok("representations_truncated"),
+        _ => bail!("unsupported artifact dependency issue"),
     }
 }
 
@@ -2338,6 +2513,30 @@ fn artifact_reason_summary(reason: &ArtifactReasonView) -> (&'static str, &str) 
         ArtifactReasonView::TraversalTruncated {
             representation_id, ..
         } => ("traversal_truncated", representation_id),
+        ArtifactReasonView::DependencySnapshotAbsent {
+            input_representation_id,
+            ..
+        } => ("dependency_snapshot_absent", input_representation_id),
+        ArtifactReasonView::DependencyKnowledgeIncomplete {
+            subject_representation_id,
+            ..
+        } => ("dependency_knowledge_incomplete", subject_representation_id),
+        ArtifactReasonView::DependencyPathChanged {
+            input_representation_id,
+            ..
+        } => ("dependency_path_changed", input_representation_id),
+        ArtifactReasonView::DependencyFingerprintChanged {
+            representation_id, ..
+        } => ("dependency_fingerprint_changed", representation_id),
+        ArtifactReasonView::DependencyFingerprintRecomputationPending {
+            representation_id, ..
+        } => (
+            "dependency_fingerprint_recomputation_pending",
+            representation_id,
+        ),
+        ArtifactReasonView::DependencyFingerprintEvidenceMissing {
+            representation_id, ..
+        } => ("dependency_fingerprint_evidence_missing", representation_id),
     }
 }
 
