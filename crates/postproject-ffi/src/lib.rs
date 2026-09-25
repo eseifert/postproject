@@ -110,6 +110,7 @@ const PP_OBJECT_ASSET: u32 = 2;
 const PP_OBJECT_REPRESENTATION: u32 = 3;
 const PP_OBJECT_RESOURCE: u32 = 4;
 const PP_OBJECT_ACTIVITY: u32 = 5;
+const PP_OBJECT_JOB: u32 = 6;
 
 const PP_REPRESENTATION_ORIGINAL: u32 = 1;
 const PP_REPRESENTATION_PROXY: u32 = 2;
@@ -135,9 +136,16 @@ const PP_REVISION_MEDIA_ROOT_REMOVED: u32 = 16;
 const PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED: u32 = 17;
 const PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED: u32 = 18;
 const PP_REVISION_DEPENDENCY_SET_RECORDED: u32 = 19;
+const PP_REVISION_JOB_REQUESTED: u32 = 20;
+const PP_REVISION_JOB_CLAIMED: u32 = 21;
+const PP_REVISION_JOB_CLAIM_RENEWED: u32 = 22;
+const PP_REVISION_JOB_CLAIM_RELEASED: u32 = 23;
+const PP_REVISION_JOB_SUCCEEDED: u32 = 24;
+const PP_REVISION_JOB_FAILED: u32 = 25;
+const PP_REVISION_JOB_CANCELLED: u32 = 26;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 18;
+pub const ABI_VERSION: u32 = 19;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -209,6 +217,8 @@ pub struct PpRevisionEvent {
     pub media_root_id: PpUuid,
     /// Event activity identity, or zero when not applicable.
     pub activity_id: PpUuid,
+    /// Event job identity, or zero when not applicable.
+    pub job_id: PpUuid,
     /// Metadata/identifier target, with kind zero when not applicable.
     pub target: PpObjectRef,
     /// Structural member position for representation-resource events.
@@ -4550,6 +4560,7 @@ const fn empty_revision_event() -> PpRevisionEvent {
         locator_id: PpUuid { bytes: [0; 16] },
         media_root_id: PpUuid { bytes: [0; 16] },
         activity_id: PpUuid { bytes: [0; 16] },
+        job_id: PpUuid { bytes: [0; 16] },
         target: PpObjectRef {
             kind: 0,
             id: PpUuid { bytes: [0; 16] },
@@ -4947,6 +4958,9 @@ fn object_ref_from_abi(value: PpObjectRef) -> Result<ObjectRef, Error> {
         PP_OBJECT_ACTIVITY => Ok(ObjectRef::Activity(
             postproject_core::ActivityId::from_bytes(value.id.bytes),
         )),
+        PP_OBJECT_JOB => Ok(ObjectRef::Job(postproject_core::JobId::from_bytes(
+            value.id.bytes,
+        ))),
         kind => Err(invalid_argument(format!(
             "object kind {kind} is not recognized"
         ))),
@@ -4970,6 +4984,7 @@ pub(crate) fn object_ref_to_abi(value: ObjectRef) -> Result<PpObjectRef, Error> 
         ObjectRef::Representation(id) => (PP_OBJECT_REPRESENTATION, id.into_bytes()),
         ObjectRef::Resource(id) => (PP_OBJECT_RESOURCE, id.into_bytes()),
         ObjectRef::Activity(id) => (PP_OBJECT_ACTIVITY, id.into_bytes()),
+        ObjectRef::Job(id) => (PP_OBJECT_JOB, id.into_bytes()),
         _ => {
             return Err(Error::new(
                 ErrorKind::Unsupported,

@@ -94,6 +94,14 @@ from ._model import (
     HostObjectBinding,
     ImageSequenceDescriptor,
     ImageSequenceInput,
+    JobCancelledEvent,
+    JobClaimedEvent,
+    JobClaimReleasedEvent,
+    JobClaimRenewedEvent,
+    JobFailedEvent,
+    JobId,
+    JobRequestedEvent,
+    JobSucceededEvent,
     Locator,
     LocatorAddedEvent,
     LocatorAvailability,
@@ -1540,6 +1548,8 @@ def _native_object_reference(value: ObjectReference) -> _abi.ObjectRef:
         native.kind = _abi.PP_OBJECT_RESOURCE
     elif isinstance(value, ActivityId):
         native.kind = _abi.PP_OBJECT_ACTIVITY
+    elif isinstance(value, JobId):
+        native.kind = _abi.PP_OBJECT_JOB
     else:
         raise TypeError("unsupported object reference")
     native.id = _native_uuid(value.value)
@@ -2877,6 +2887,20 @@ def _revision_event_at(
         payload = DependencySetRecordedEvent(
             RepresentationId(_uuid(event.representation_id))
         )
+    elif kind == _abi.PP_REVISION_JOB_REQUESTED:
+        payload = JobRequestedEvent(JobId(_uuid(event.job_id)))
+    elif kind == _abi.PP_REVISION_JOB_CLAIMED:
+        payload = JobClaimedEvent(JobId(_uuid(event.job_id)))
+    elif kind == _abi.PP_REVISION_JOB_CLAIM_RENEWED:
+        payload = JobClaimRenewedEvent(JobId(_uuid(event.job_id)))
+    elif kind == _abi.PP_REVISION_JOB_CLAIM_RELEASED:
+        payload = JobClaimReleasedEvent(JobId(_uuid(event.job_id)))
+    elif kind == _abi.PP_REVISION_JOB_SUCCEEDED:
+        payload = JobSucceededEvent(JobId(_uuid(event.job_id)))
+    elif kind == _abi.PP_REVISION_JOB_FAILED:
+        payload = JobFailedEvent(JobId(_uuid(event.job_id)))
+    elif kind == _abi.PP_REVISION_JOB_CANCELLED:
+        payload = JobCancelledEvent(JobId(_uuid(event.job_id)))
     else:
         raise RuntimeError("revision event has an unknown semantic kind")
 
@@ -2911,6 +2935,8 @@ def _object_reference(value: _abi.ObjectRef) -> ObjectReference:
         return ResourceId(object_id)
     if kind == _abi.PP_OBJECT_ACTIVITY:
         return ActivityId(object_id)
+    if kind == _abi.PP_OBJECT_JOB:
+        return JobId(object_id)
     raise RuntimeError("revision event has an unknown object-reference kind")
 
 

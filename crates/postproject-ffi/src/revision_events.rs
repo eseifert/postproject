@@ -8,8 +8,10 @@ use crate::{
     PP_REVISION_ACTIVITY_CREATED, PP_REVISION_ACTIVITY_INPUT_ADDED,
     PP_REVISION_ACTIVITY_OUTPUT_ADDED, PP_REVISION_ASSET_IMPORTED,
     PP_REVISION_DEPENDENCY_SET_RECORDED, PP_REVISION_EXTERNAL_IDENTIFIER_ADDED,
-    PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED, PP_REVISION_LOCATOR_ADDED,
-    PP_REVISION_LOCATOR_RETIRED, PP_REVISION_MEDIA_ROOT_ADDED,
+    PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED, PP_REVISION_JOB_CANCELLED,
+    PP_REVISION_JOB_CLAIM_RELEASED, PP_REVISION_JOB_CLAIM_RENEWED, PP_REVISION_JOB_CLAIMED,
+    PP_REVISION_JOB_FAILED, PP_REVISION_JOB_REQUESTED, PP_REVISION_JOB_SUCCEEDED,
+    PP_REVISION_LOCATOR_ADDED, PP_REVISION_LOCATOR_RETIRED, PP_REVISION_MEDIA_ROOT_ADDED,
     PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED, PP_REVISION_MEDIA_ROOT_REMOVED,
     PP_REVISION_METADATA_ADDED_OR_REPLACED, PP_REVISION_METADATA_REMOVED,
     PP_REVISION_REPRESENTATION_ADDED, PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED,
@@ -32,6 +34,7 @@ pub(crate) struct AbiRevisionEvent {
     locator_id: Option<PpUuid>,
     media_root_id: Option<PpUuid>,
     activity_id: Option<PpUuid>,
+    job_id: Option<PpUuid>,
     target: Option<PpObjectRef>,
     structural_position: Option<u32>,
     enabled: Option<bool>,
@@ -67,6 +70,7 @@ impl AbiRevisionEvent {
             locator_id: self.locator_id.unwrap_or_else(zero_uuid),
             media_root_id: self.media_root_id.unwrap_or_else(zero_uuid),
             activity_id: self.activity_id.unwrap_or_else(zero_uuid),
+            job_id: self.job_id.unwrap_or_else(zero_uuid),
             target: self.target.unwrap_or_else(zero_object_ref),
             structural_position: self.structural_position.unwrap_or(0),
             enabled: self.enabled.map_or(0, u8::from),
@@ -100,6 +104,7 @@ impl TryFrom<&RevisionEvent> for AbiRevisionEvent {
             locator_id: None,
             media_root_id: None,
             activity_id: None,
+            job_id: None,
             target: None,
             structural_position: None,
             enabled: None,
@@ -271,6 +276,25 @@ impl TryFrom<&RevisionEvent> for AbiRevisionEvent {
                 projected.kind = PP_REVISION_DEPENDENCY_SET_RECORDED;
                 projected.representation_id = Some(uuid(representation_id.into_bytes()));
             }
+            RevisionEventKind::JobRequested { job_id }
+            | RevisionEventKind::JobClaimed { job_id }
+            | RevisionEventKind::JobClaimRenewed { job_id }
+            | RevisionEventKind::JobClaimReleased { job_id }
+            | RevisionEventKind::JobSucceeded { job_id }
+            | RevisionEventKind::JobFailed { job_id }
+            | RevisionEventKind::JobCancelled { job_id } => {
+                projected.kind = match event.kind() {
+                    RevisionEventKind::JobRequested { .. } => PP_REVISION_JOB_REQUESTED,
+                    RevisionEventKind::JobClaimed { .. } => PP_REVISION_JOB_CLAIMED,
+                    RevisionEventKind::JobClaimRenewed { .. } => PP_REVISION_JOB_CLAIM_RENEWED,
+                    RevisionEventKind::JobClaimReleased { .. } => PP_REVISION_JOB_CLAIM_RELEASED,
+                    RevisionEventKind::JobSucceeded { .. } => PP_REVISION_JOB_SUCCEEDED,
+                    RevisionEventKind::JobFailed { .. } => PP_REVISION_JOB_FAILED,
+                    RevisionEventKind::JobCancelled { .. } => PP_REVISION_JOB_CANCELLED,
+                    _ => unreachable!("job event arm only contains job events"),
+                };
+                projected.job_id = Some(uuid(job_id.into_bytes()));
+            }
             _ => {
                 return Err(postproject_core::Error::new(
                     postproject_core::ErrorKind::Unsupported,
@@ -299,4 +323,65 @@ const fn zero_object_ref() -> PpObjectRef {
 
 fn c_string_ptr(value: Option<&CString>) -> *const std::ffi::c_char {
     value.map_or(ptr::null(), |value| value.as_ptr())
+}
+
+#[cfg(test)]
+mod tests {
+    use postproject_core::{JobId, RevisionEvent, RevisionEventKind, RevisionId};
+
+    use super::AbiRevisionEvent;
+    use crate::{
+        PP_REVISION_JOB_CANCELLED, PP_REVISION_JOB_CLAIM_RELEASED, PP_REVISION_JOB_CLAIM_RENEWED,
+        PP_REVISION_JOB_CLAIMED, PP_REVISION_JOB_FAILED, PP_REVISION_JOB_REQUESTED,
+        PP_REVISION_JOB_SUCCEEDED,
+    };
+
+    #[test]
+    fn job_events_project_only_the_job_identity() {
+        let job_id = JobId::from_bytes([7; 16]);
+        let kinds = [
+            (
+                RevisionEventKind::JobRequested { job_id },
+                PP_REVISION_JOB_REQUESTED,
+            ),
+            (
+                RevisionEventKind::JobClaimed { job_id },
+                PP_REVISION_JOB_CLAIMED,
+            ),
+            (
+                RevisionEventKind::JobClaimRenewed { job_id },
+                PP_REVISION_JOB_CLAIM_RENEWED,
+            ),
+            (
+                RevisionEventKind::JobClaimReleased { job_id },
+                PP_REVISION_JOB_CLAIM_RELEASED,
+            ),
+            (
+                RevisionEventKind::JobSucceeded { job_id },
+                PP_REVISION_JOB_SUCCEEDED,
+            ),
+            (
+                RevisionEventKind::JobFailed { job_id },
+                PP_REVISION_JOB_FAILED,
+            ),
+            (
+                RevisionEventKind::JobCancelled { job_id },
+                PP_REVISION_JOB_CANCELLED,
+            ),
+        ];
+        for (position, (kind, expected_kind)) in kinds.into_iter().enumerate() {
+            let event = RevisionEvent::new(
+                RevisionId::from_bytes([1; 16]),
+                u32::try_from(position).expect("small position"),
+                kind,
+            );
+            let projected = AbiRevisionEvent::try_from(&event)
+                .expect("project job event")
+                .as_abi();
+            assert_eq!(projected.kind, expected_kind);
+            assert_eq!(projected.job_id.bytes, job_id.into_bytes());
+            assert_eq!(projected.activity_id.bytes, [0; 16]);
+            assert_eq!(projected.target.kind, 0);
+        }
+    }
 }

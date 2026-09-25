@@ -1198,6 +1198,27 @@ enum RevisionEventKindView {
     DependencySetRecorded {
         representation_id: String,
     },
+    JobRequested {
+        job_id: String,
+    },
+    JobClaimed {
+        job_id: String,
+    },
+    JobClaimRenewed {
+        job_id: String,
+    },
+    JobClaimReleased {
+        job_id: String,
+    },
+    JobSucceeded {
+        job_id: String,
+    },
+    JobFailed {
+        job_id: String,
+    },
+    JobCancelled {
+        job_id: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -3003,6 +3024,27 @@ fn revision_event_view(event: &RevisionEvent) -> Result<RevisionEventView> {
                 representation_id: representation_id.to_string(),
             }
         }
+        RevisionEventKind::JobRequested { job_id } => RevisionEventKindView::JobRequested {
+            job_id: job_id.to_string(),
+        },
+        RevisionEventKind::JobClaimed { job_id } => RevisionEventKindView::JobClaimed {
+            job_id: job_id.to_string(),
+        },
+        RevisionEventKind::JobClaimRenewed { job_id } => RevisionEventKindView::JobClaimRenewed {
+            job_id: job_id.to_string(),
+        },
+        RevisionEventKind::JobClaimReleased { job_id } => RevisionEventKindView::JobClaimReleased {
+            job_id: job_id.to_string(),
+        },
+        RevisionEventKind::JobSucceeded { job_id } => RevisionEventKindView::JobSucceeded {
+            job_id: job_id.to_string(),
+        },
+        RevisionEventKind::JobFailed { job_id } => RevisionEventKindView::JobFailed {
+            job_id: job_id.to_string(),
+        },
+        RevisionEventKind::JobCancelled { job_id } => RevisionEventKindView::JobCancelled {
+            job_id: job_id.to_string(),
+        },
         _ => bail!("revision event kind is not supported by this CLI"),
     };
     Ok(RevisionEventView {

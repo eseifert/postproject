@@ -54,6 +54,7 @@ typedef uint32_t pp_object_kind_t;
 #define PP_OBJECT_REPRESENTATION UINT32_C(3)
 #define PP_OBJECT_RESOURCE UINT32_C(4)
 #define PP_OBJECT_ACTIVITY UINT32_C(5)
+#define PP_OBJECT_JOB UINT32_C(6)
 
 typedef uint32_t pp_representation_kind_t;
 
@@ -96,6 +97,13 @@ typedef uint32_t pp_revision_event_kind_t;
 #define PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED UINT32_C(17)
 #define PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED UINT32_C(18)
 #define PP_REVISION_DEPENDENCY_SET_RECORDED UINT32_C(19)
+#define PP_REVISION_JOB_REQUESTED UINT32_C(20)
+#define PP_REVISION_JOB_CLAIMED UINT32_C(21)
+#define PP_REVISION_JOB_CLAIM_RENEWED UINT32_C(22)
+#define PP_REVISION_JOB_CLAIM_RELEASED UINT32_C(23)
+#define PP_REVISION_JOB_SUCCEEDED UINT32_C(24)
+#define PP_REVISION_JOB_FAILED UINT32_C(25)
+#define PP_REVISION_JOB_CANCELLED UINT32_C(26)
 
 typedef uint32_t pp_artifact_knowledge_state_t;
 
@@ -183,6 +191,7 @@ typedef struct pp_revision_event {
   pp_uuid_t locator_id;
   pp_uuid_t media_root_id;
   pp_uuid_t activity_id;
+  pp_uuid_t job_id;
   pp_object_ref_t target;
   uint32_t structural_position;
   uint8_t enabled;

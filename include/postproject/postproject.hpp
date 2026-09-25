@@ -75,6 +75,7 @@ enum class ObjectKind : std::uint32_t {
   representation = PP_OBJECT_REPRESENTATION,
   resource = PP_OBJECT_RESOURCE,
   activity = PP_OBJECT_ACTIVITY,
+  job = PP_OBJECT_JOB,
 };
 
 struct ObjectRef final {
@@ -406,6 +407,14 @@ struct DependencySetRecordedEvent final {
   Uuid representation_id;
 };
 
+struct JobRequestedEvent final { Uuid job_id; };
+struct JobClaimedEvent final { Uuid job_id; };
+struct JobClaimRenewedEvent final { Uuid job_id; };
+struct JobClaimReleasedEvent final { Uuid job_id; };
+struct JobSucceededEvent final { Uuid job_id; };
+struct JobFailedEvent final { Uuid job_id; };
+struct JobCancelledEvent final { Uuid job_id; };
+
 using RevisionEventPayload =
     std::variant<AssetImportedEvent, RepresentationAddedEvent,
                  ResourceAddedEvent, RepresentationResourceAddedEvent,
@@ -417,7 +426,9 @@ using RevisionEventPayload =
                  ActivityCreatedEvent, ActivityInputAddedEvent,
                  ActivityOutputAddedEvent, ResourceFingerprintObservedEvent,
                  RepresentationFingerprintObservedEvent,
-                 DependencySetRecordedEvent>;
+                 DependencySetRecordedEvent, JobRequestedEvent, JobClaimedEvent,
+                 JobClaimRenewedEvent, JobClaimReleasedEvent, JobSucceededEvent,
+                 JobFailedEvent, JobCancelledEvent>;
 
 struct RevisionEvent final {
   std::uint32_t position;
@@ -1264,6 +1275,20 @@ inline RevisionEvent revision_event(const pp_revision_event_set_t *events,
   case PP_REVISION_DEPENDENCY_SET_RECORDED:
     return {event.position,
             DependencySetRecordedEvent{uuid(event.representation_id)}};
+  case PP_REVISION_JOB_REQUESTED:
+    return {event.position, JobRequestedEvent{uuid(event.job_id)}};
+  case PP_REVISION_JOB_CLAIMED:
+    return {event.position, JobClaimedEvent{uuid(event.job_id)}};
+  case PP_REVISION_JOB_CLAIM_RENEWED:
+    return {event.position, JobClaimRenewedEvent{uuid(event.job_id)}};
+  case PP_REVISION_JOB_CLAIM_RELEASED:
+    return {event.position, JobClaimReleasedEvent{uuid(event.job_id)}};
+  case PP_REVISION_JOB_SUCCEEDED:
+    return {event.position, JobSucceededEvent{uuid(event.job_id)}};
+  case PP_REVISION_JOB_FAILED:
+    return {event.position, JobFailedEvent{uuid(event.job_id)}};
+  case PP_REVISION_JOB_CANCELLED:
+    return {event.position, JobCancelledEvent{uuid(event.job_id)}};
   default:
     throw Error(ErrorCode::internal,
                 "revision event has an unknown semantic kind");

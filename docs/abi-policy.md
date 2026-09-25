@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 18 is pre-release and may change during the 0.x series, with every
+ABI version 19 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
@@ -124,6 +124,10 @@ dependency-specific incomplete-knowledge conditions. Path arrays, their
 strings, and fingerprint spans borrow the owning evaluation handle. It also
 adds owned direct-dependency reads, reverse dependent reads, complete-set
 transaction recording, and the dependency-set-recorded revision event.
+
+ABI version 19 adds the job object-reference kind and projects all seven job
+lifecycle revision events. Job events carry only the job ID; claim-token
+capabilities are never published through the revision feed.
 
 ## External identifiers
 

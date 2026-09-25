@@ -80,6 +80,12 @@ class ActivityId(_TypedId):
     __slots__ = ()
 
 
+class JobId(_TypedId):
+    """Stable identity of one durable production job."""
+
+    __slots__ = ()
+
+
 class RevisionId(_TypedId):
     """Stable identity of one committed revision."""
 
@@ -93,7 +99,7 @@ class TransactionId(_TypedId):
 
 
 ObjectReference: TypeAlias = (
-    ProductionId | AssetId | RepresentationId | ResourceId | ActivityId
+    ProductionId | AssetId | RepresentationId | ResourceId | ActivityId | JobId
 )
 
 
@@ -747,6 +753,41 @@ class DependencySetRecordedEvent:
     representation_id: RepresentationId
 
 
+@dataclass(frozen=True, slots=True)
+class JobRequestedEvent:
+    job_id: JobId
+
+
+@dataclass(frozen=True, slots=True)
+class JobClaimedEvent:
+    job_id: JobId
+
+
+@dataclass(frozen=True, slots=True)
+class JobClaimRenewedEvent:
+    job_id: JobId
+
+
+@dataclass(frozen=True, slots=True)
+class JobClaimReleasedEvent:
+    job_id: JobId
+
+
+@dataclass(frozen=True, slots=True)
+class JobSucceededEvent:
+    job_id: JobId
+
+
+@dataclass(frozen=True, slots=True)
+class JobFailedEvent:
+    job_id: JobId
+
+
+@dataclass(frozen=True, slots=True)
+class JobCancelledEvent:
+    job_id: JobId
+
+
 RevisionEventPayload: TypeAlias = (
     AssetImportedEvent
     | RepresentationAddedEvent
@@ -767,6 +808,13 @@ RevisionEventPayload: TypeAlias = (
     | ResourceFingerprintObservedEvent
     | RepresentationFingerprintObservedEvent
     | DependencySetRecordedEvent
+    | JobRequestedEvent
+    | JobClaimedEvent
+    | JobClaimRenewedEvent
+    | JobClaimReleasedEvent
+    | JobSucceededEvent
+    | JobFailedEvent
+    | JobCancelledEvent
 )
 
 

@@ -142,6 +142,7 @@ PP_OBJECT_ASSET = 2
 PP_OBJECT_REPRESENTATION = 3
 PP_OBJECT_RESOURCE = 4
 PP_OBJECT_ACTIVITY = 5
+PP_OBJECT_JOB = 6
 PP_REPRESENTATION_ORIGINAL = 1
 PP_REPRESENTATION_PROXY = 2
 PP_REPRESENTATION_OPTIMIZED = 3
@@ -172,6 +173,13 @@ PP_REVISION_MEDIA_ROOT_REMOVED = 16
 PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED = 17
 PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED = 18
 PP_REVISION_DEPENDENCY_SET_RECORDED = 19
+PP_REVISION_JOB_REQUESTED = 20
+PP_REVISION_JOB_CLAIMED = 21
+PP_REVISION_JOB_CLAIM_RENEWED = 22
+PP_REVISION_JOB_CLAIM_RELEASED = 23
+PP_REVISION_JOB_SUCCEEDED = 24
+PP_REVISION_JOB_FAILED = 25
+PP_REVISION_JOB_CANCELLED = 26
 PP_ARTIFACT_CURRENT = 1
 PP_ARTIFACT_STALE = 2
 PP_ARTIFACT_INDETERMINATE = 3
@@ -277,6 +285,7 @@ RevisionEvent._fields_ = [
     ("locator_id", Uuid),
     ("media_root_id", Uuid),
     ("activity_id", Uuid),
+    ("job_id", Uuid),
     ("target", ObjectRef),
     ("structural_position", ctypes.c_uint32),
     ("enabled", ctypes.c_uint8),
@@ -363,7 +372,7 @@ MediaRootMapping._fields_ = [
 PUBLIC_STRUCTS = {
     "pp_uuid_t": (Uuid, ("bytes",)),
     "pp_object_ref_t": (ObjectRef, ("kind", "id")),
-    "pp_revision_event_t": (RevisionEvent, ("kind", "position", "asset_id", "representation_id", "resource_id", "locator_id", "media_root_id", "activity_id", "target", "structural_position", "enabled", "identifier_scheme", "identifier_value", "identifier_qualifier", "vocabulary", "property", "activity_kind", "role", "fingerprint_algorithm", "fingerprint_version")),
+    "pp_revision_event_t": (RevisionEvent, ("kind", "position", "asset_id", "representation_id", "resource_id", "locator_id", "media_root_id", "activity_id", "job_id", "target", "structural_position", "enabled", "identifier_scheme", "identifier_value", "identifier_qualifier", "vocabulary", "property", "activity_kind", "role", "fingerprint_algorithm", "fingerprint_version")),
     "pp_activity_edge_t": (ActivityEdge, ("representation_id", "role")),
     "pp_dependency_t": (Dependency, ("has_source_resource", "source_resource_id", "kind", "target", "has_resolved_representation", "resolved_representation_id", "required", "authored_reference")),
     "pp_artifact_dependency_path_segment_t": (ArtifactDependencyPathSegment, ("source_representation_id", "dependency_position", "has_source_resource", "source_resource_id", "kind", "target", "has_resolved_representation", "resolved_representation_id", "authored_reference")),
