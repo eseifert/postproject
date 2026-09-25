@@ -393,6 +393,170 @@ impl<'production> SqliteTransaction<'production> {
         Ok(())
     }
 
+    /// Atomically completes a claimed job with its output and activity fact.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] for an absent job,
+    /// [`ErrorKind::Conflict`] for a stale token or expired lease,
+    /// [`ErrorKind::InvalidArgument`] when output or activity facts do not
+    /// match the request, or a transaction/storage error. Any failure rolls
+    /// back all completion-specific changes.
+    pub fn complete_job(
+        &mut self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now: Timestamp,
+        output: &RepresentationImport,
+        activity: &Activity,
+    ) -> Result<()> {
+        const SAVEPOINT: &str = "postproject_complete_job";
+        let pending_event_count = self.pending_events.len();
+        self.open_transaction()?
+            .execute_batch("SAVEPOINT postproject_complete_job")
+            .map_err(sqlite_error("start job completion savepoint"))?;
+        let result = self.complete_job_inner(job_id, claim_id, now, output, activity);
+        if let Err(error) = result {
+            self.pending_events.truncate(pending_event_count);
+            self.open_transaction()?
+                .execute_batch(&format!("ROLLBACK TO {SAVEPOINT}; RELEASE {SAVEPOINT}"))
+                .map_err(sqlite_error("roll back job completion"))?;
+            return Err(error);
+        }
+        if let Err(error) = self
+            .open_transaction()?
+            .execute_batch(&format!("RELEASE {SAVEPOINT}"))
+        {
+            self.pending_events.truncate(pending_event_count);
+            self.open_transaction()?
+                .execute_batch(&format!("ROLLBACK TO {SAVEPOINT}; RELEASE {SAVEPOINT}"))
+                .map_err(sqlite_error("roll back unreleased job completion"))?;
+            return Err(sqlite_error("release job completion savepoint")(error));
+        }
+        Ok(())
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "claim, output, provenance, and terminal-state validation form one atomic invariant"
+    )]
+    fn complete_job_inner(
+        &mut self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now: Timestamp,
+        output: &RepresentationImport,
+        activity: &Activity,
+    ) -> Result<()> {
+        let transaction = self.open_transaction()?;
+        let stored = transaction
+            .query_row(
+                "SELECT state, claim_id, claim_expires_at_micros,
+                        output_asset_id, output_representation_kind
+                 FROM jobs WHERE id = ?1",
+                [job_id.as_bytes().as_slice()],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Option<Vec<u8>>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Vec<u8>>(3)?,
+                        row.get::<_, i64>(4)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(mutation_error("load job completion request"))?
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "job does not exist"))?;
+        if stored.0 != 2 {
+            return Err(Error::new(ErrorKind::Conflict, "job is not claimed"));
+        }
+        let stored_claim = JobClaimId::from_bytes(crate::id_bytes(
+            stored
+                .1
+                .ok_or_else(|| stored_job_invariant("claimed job has no claim token"))?,
+            "job claim",
+        )?);
+        let stored_expiry = stored
+            .2
+            .ok_or_else(|| stored_job_invariant("claimed job has no lease expiry"))?;
+        if stored_claim != claim_id || stored_expiry <= now.as_unix_micros() {
+            return Err(Error::new(
+                ErrorKind::Conflict,
+                "job cannot be completed by this claim",
+            ));
+        }
+        let requested_asset =
+            postproject_core::AssetId::from_bytes(crate::id_bytes(stored.3, "job output asset")?);
+        let representation = output.representation();
+        if representation.asset_id() != requested_asset
+            || encode_representation_kind(representation.kind())? != stored.4
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "job output does not match the requested asset and representation kind",
+            ));
+        }
+        let expected_inputs = load_job_input_ids(transaction, job_id)?;
+        let mut activity_inputs = activity
+            .inputs()
+            .iter()
+            .map(postproject_core::ActivityInput::representation_id)
+            .collect::<Vec<_>>();
+        activity_inputs.sort_unstable();
+        if activity_inputs != expected_inputs {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "completion activity inputs do not match the job inputs",
+            ));
+        }
+        let [activity_output] = activity.outputs() else {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "completion activity must have exactly one output",
+            ));
+        };
+        if activity_output.representation_id() != representation.id() {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "completion activity output does not match the job output",
+            ));
+        }
+
+        self.add_representation(output)?;
+        self.create_activity(activity)?;
+        let changed = self
+            .open_transaction()?
+            .execute(
+                "UPDATE jobs SET
+                    state = 3, claim_id = NULL, claim_tool_name = NULL,
+                    claim_tool_version = NULL, claim_tool_uri = NULL,
+                    claim_agent_name = NULL, claim_agent_scheme = NULL,
+                    claim_agent_value = NULL, claim_agent_qualifier = NULL,
+                    claim_expires_at_micros = NULL, completion_activity_id = ?1,
+                    completion_representation_id = ?2
+                 WHERE id = ?3 AND state = 2 AND claim_id = ?4
+                   AND claim_expires_at_micros > ?5",
+                params![
+                    activity.id().as_bytes().as_slice(),
+                    representation.id().as_bytes().as_slice(),
+                    job_id.as_bytes().as_slice(),
+                    claim_id.as_bytes().as_slice(),
+                    now.as_unix_micros(),
+                ],
+            )
+            .map_err(mutation_error("complete job"))?;
+        if changed != 1 {
+            return Err(Error::new(
+                ErrorKind::Conflict,
+                "job claim changed during completion",
+            ));
+        }
+        self.pending_events
+            .push(RevisionEventKind::JobSucceeded { job_id });
+        Ok(())
+    }
+
     /// Cancels a requested or claimed job administratively.
     ///
     /// # Errors
@@ -1795,6 +1959,17 @@ impl ProductionStoreTransaction for SqliteTransaction<'_> {
         SqliteTransaction::fail_job(self, job_id, claim_id, now, failure)
     }
 
+    fn complete_job(
+        &mut self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now: Timestamp,
+        output: &RepresentationImport,
+        activity: &Activity,
+    ) -> Result<()> {
+        SqliteTransaction::complete_job(self, job_id, claim_id, now, output, activity)
+    }
+
     fn cancel_job(&mut self, job_id: JobId) -> Result<()> {
         SqliteTransaction::cancel_job(self, job_id)
     }
@@ -1897,6 +2072,35 @@ fn job_transition_error(
     } else {
         Error::new(ErrorKind::NotFound, "job does not exist")
     })
+}
+
+fn load_job_input_ids(
+    transaction: &Transaction<'_>,
+    job_id: JobId,
+) -> Result<Vec<RepresentationId>> {
+    let mut statement = transaction
+        .prepare(
+            "SELECT representation_id FROM job_inputs
+             WHERE job_id = ?1 ORDER BY representation_id",
+        )
+        .map_err(sqlite_error("prepare job input validation"))?;
+    statement
+        .query_map([job_id.as_bytes().as_slice()], |row| {
+            row.get::<_, Vec<u8>>(0)
+        })
+        .map_err(sqlite_error("query job input validation"))?
+        .map(|row| {
+            crate::id_bytes(
+                row.map_err(sqlite_error("read job input validation"))?,
+                "job input",
+            )
+            .map(RepresentationId::from_bytes)
+        })
+        .collect()
+}
+
+fn stored_job_invariant(message: &'static str) -> Error {
+    Error::new(ErrorKind::Storage, message)
 }
 
 fn validate_dependency_references(

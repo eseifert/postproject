@@ -484,6 +484,25 @@ pub trait ProductionStoreTransaction {
         failure: &JobFailure,
     ) -> Result<()>;
 
+    /// Atomically completes a claimed job with its output and activity fact.
+    ///
+    /// Storage validates the active token and lease, requested asset and
+    /// representation kind, and the activity's exact job inputs and output.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the job or referenced objects are absent,
+    /// the claim is stale or expired, completion does not match the request,
+    /// the transaction is closed, or any output/activity persistence fails.
+    fn complete_job(
+        &mut self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now: Timestamp,
+        output: &RepresentationImport,
+        activity: &Activity,
+    ) -> Result<()>;
+
     /// Cancels a requested or claimed job administratively.
     ///
     /// # Errors
