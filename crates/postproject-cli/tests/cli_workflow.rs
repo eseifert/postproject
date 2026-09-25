@@ -137,7 +137,7 @@ fn exercise_job_completion(
     asset_id: &str,
     representation_id: &str,
     output_path: &str,
-) {
+) -> String {
     let completion_request = run_json(&[
         "job",
         "request",
@@ -191,6 +191,7 @@ fn exercise_job_completion(
     assert_eq!(producing[0]["id"], completed["completion_activity_id"]);
     assert!(producing[0]["inputs"][0]["snapshot"].is_object());
     assert!(producing[0]["outputs"][0]["snapshot"].is_object());
+    output_id.to_owned()
 }
 
 fn exercise_dependencies(
@@ -1006,10 +1007,36 @@ fn requests_and_lists_jobs() {
         asset_id,
         representation_id,
     );
-    exercise_job_completion(
+    let completed_representation_id = exercise_job_completion(
         production_path,
         asset_id,
         representation_id,
         original.to_str().expect("UTF-8 output path"),
+    );
+    let jobs_before_plan = run_json(&["job", "list", production_path]);
+    let plans = run_json(&[
+        "job",
+        "plan",
+        production_path,
+        "--artifact",
+        &completed_representation_id,
+        "--artifact",
+        &completed_representation_id,
+    ]);
+    let plans = plans.as_array().expect("regeneration plan array");
+    assert_eq!(plans.len(), 1);
+    assert_eq!(
+        plans[0]["artifact_representation_id"],
+        completed_representation_id
+    );
+    assert_eq!(plans[0]["job"]["kind"], "org.postproject:generate-proxy");
+    assert_eq!(plans[0]["job"]["inputs"][0], representation_id);
+    assert_eq!(plans[0]["job"]["output_asset_id"], asset_id);
+    assert_eq!(plans[0]["job"]["output_kind"], "proxy");
+    assert_eq!(plans[0]["job"]["state"], "requested");
+    assert_eq!(plans[0]["parameters"], serde_json::json!([]));
+    assert_eq!(
+        run_json(&["job", "list", production_path]),
+        jobs_before_plan
     );
 }
