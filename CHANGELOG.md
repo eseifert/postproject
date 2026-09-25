@@ -25,6 +25,14 @@ Development version: `0.4.0-alpha.1`.
   queries across Rust, C, C++17, Python, and CLI, with opaque query-scoped
   cursors, explicit dependency traversal bounds, shortest-depth matches, and
   optional exact job state/kind filters.
+- Added the Rust domain-query foundation for bounded asset, representation,
+  resource, locator, media-root, unresolved-media, metadata, activity-output,
+  provenance, stale-artifact, and changed-object pages. Producing and consuming
+  activity selection now occurs in SQL, and representation pages use
+  set-oriented structure and fingerprint loading.
+- Added SQLite schema 11 query indexes and optional durable logical-root
+  knowledge on confirmed locators. Existing locators migrate without fabricated
+  root knowledge.
 - Added SQLite schema 10's `(kind, id)` job index for kind-only cursor queries.
 - Added first-class, typed dependency observations with exact authored
   references, floating or pinned targets, complete-set replacement, semantic

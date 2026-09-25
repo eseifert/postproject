@@ -49,6 +49,29 @@ unbounded whole-set read. It accepts optional exact state and kind filters and
 orders by job ID. The existing job state/kind index backs the combined filter;
 additional indexes are added only where an accepted query shape needs them.
 
+Asset, per-asset representation, structural resource, and per-resource locator
+enumerations use the same page contract. Representation pages load structures
+and fingerprints with set-oriented reads rather than one query per result.
+Metadata queries accept an optional exact deterministic-encoding predicate for
+scalar values. Activity-output queries use exact activity-kind or complete tool
+identity predicates. Producing and consuming activities are selected in SQL.
+Provenance traversal reports shortest depth with the same explicit depth and
+visited-representation bounds as dependency traversal.
+
+The knowledge-only media-root query requires durable knowledge of which logical
+root produced a confirmed locator. A locator may therefore record an optional
+logical root name in schema 11. Existing locators migrate with absent root
+knowledge; no machine-local root mapping is inferred or persisted. Unresolved
+media means a representation has a required resource with no durable locator.
+It deliberately does not stat paths or reinterpret an offline observation.
+
+Stale-artifact pages bound the number of candidate outputs examined as well as
+the allocation returned by one call. A sparse page can therefore contain fewer
+stale results while still returning a continuation. Changed-object queries
+deduplicate metadata-capable semantic targets touched after the supplied
+revision sequence; media-root lifecycle events identify the production, while
+locator lifecycle events identify their owning resource.
+
 Pages are weakly consistent across commits. A later page sees current durable
 state after its key; callers that need change tracking use the semantic
 revision feed. A concurrent insertion before an already-consumed key is not
@@ -69,7 +92,7 @@ OpenAssetIO relationship queries also return pages and opaque page tokens. The
 shape is compatible with a later adapter, but PostProject tokens and
 relationship values are its own contract and are not OpenAssetIO tokens or
 trait data. No media, metadata, provenance, or identifier standard assigns
-semantics to local query pagination.
+semantics to local query pagination or to the optional locator/root association.
 
 ## Consequences
 

@@ -28,9 +28,9 @@ pub use fingerprint::{
 };
 pub use import::{
     FileResourceSource, ImageSequenceSource, prepare_confirmed_locator,
-    prepare_image_sequence_representation, prepare_media_root,
-    prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
-    prepare_single_file_representation,
+    prepare_confirmed_locator_under_root, prepare_image_sequence_representation,
+    prepare_media_root, prepare_ordered_parts_representation, prepare_original_media,
+    prepare_package_representation, prepare_single_file_representation,
 };
 pub use inspection::{
     FfprobeInspector, InspectionOutcome, MediaInspector, TECHNICAL_INSPECTION_PROPERTY,

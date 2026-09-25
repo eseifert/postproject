@@ -83,8 +83,11 @@ pub use provenance::{
     MAX_PROVENANCE_NAME_BYTES, MAX_PROVENANCE_URI_BYTES, MAX_TOOL_VERSION_BYTES, ToolIdentity,
 };
 pub use query::{
-    DependencyQueryLimits, MAX_DEPENDENCY_QUERY_DEPTH, MAX_DEPENDENCY_QUERY_REPRESENTATIONS,
-    MAX_QUERY_CURSOR_BYTES, MAX_QUERY_PAGE_SIZE, QueryCursor, QueryPage, QueryPageRequest,
+    ActivityOutputQuery, DependencyQueryLimits, MAX_DEPENDENCY_QUERY_DEPTH,
+    MAX_DEPENDENCY_QUERY_REPRESENTATIONS, MAX_PROVENANCE_QUERY_DEPTH,
+    MAX_PROVENANCE_QUERY_REPRESENTATIONS, MAX_QUERY_CURSOR_BYTES, MAX_QUERY_PAGE_SIZE,
+    MetadataQuery, ProvenanceQueryLimits, ProvenanceQueryMatch, QueryCursor, QueryPage,
+    QueryPageRequest, StaleArtifactQuery,
 };
 pub use resolution::{
     AvailabilityIssue, AvailabilityIssueKind, Confidence, EvidenceKind, RepresentationAvailability,

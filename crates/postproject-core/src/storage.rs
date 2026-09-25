@@ -1,15 +1,16 @@
 //! Domain-shaped contracts implemented by persistence backends.
 
 use crate::{
-    Activity, AgentIdentity, ArtifactEvaluation, ArtifactEvaluationLimits,
+    Activity, ActivityOutputQuery, AgentIdentity, ArtifactEvaluation, ArtifactEvaluationLimits,
     ArtifactReproducibilityReport, Asset, AssetId, Dependency, DependencyQueryLimits,
     DependencyQueryMatch, DependencySet, DependencyTarget, ExternalIdentifier, IdentifierScheme,
     Job, JobClaim, JobClaimId, JobFailure, JobId, JobQuery, Locator, MediaRoot, MetadataAssertion,
-    MetadataMatch, MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, Production,
-    QueryPage, QueryPageRequest, RegenerationJobPlan, Representation, RepresentationFingerprint,
-    RepresentationId, RepresentationImport, Resource, ResourceFingerprint, ResourceId, Result,
-    Revision, RevisionContext, RevisionEvent, RevisionId, Timestamp, ToolIdentity, TransactionId,
-    TransactionState,
+    MetadataMatch, MetadataProperty, MetadataQuery, MetadataValue, ObjectRef, OriginalMediaImport,
+    Production, ProvenanceQueryLimits, ProvenanceQueryMatch, QueryPage, QueryPageRequest,
+    RegenerationJobPlan, Representation, RepresentationFingerprint, RepresentationId,
+    RepresentationImport, Resource, ResourceFingerprint, ResourceId, Result, Revision,
+    RevisionContext, RevisionEvent, RevisionId, StaleArtifactQuery, Timestamp, ToolIdentity,
+    TransactionId, TransactionState,
 };
 
 /// Read operations required from a production persistence backend.
@@ -28,6 +29,13 @@ pub trait ProductionRead {
     /// decoded safely.
     fn assets(&self) -> Result<Vec<Asset>>;
 
+    /// Queries one bounded page of assets in creation/identity order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error for an invalid cursor or unreadable storage.
+    fn assets_page(&self, page: &QueryPageRequest) -> Result<QueryPage<Asset>>;
+
     /// Loads every representation belonging to an asset in deterministic order.
     ///
     /// # Errors
@@ -35,6 +43,18 @@ pub trait ProductionRead {
     /// Returns a storage-domain error when persisted data cannot be read or
     /// decoded safely.
     fn representations(&self, asset_id: AssetId) -> Result<Vec<Representation>>;
+
+    /// Queries one bounded page of representations belonging to an asset.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the asset is absent, the cursor is invalid,
+    /// or persisted representation data cannot be decoded safely.
+    fn representations_page(
+        &self,
+        asset_id: AssetId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Representation>>;
 
     /// Loads resources used by a representation in structural order.
     ///
@@ -44,6 +64,18 @@ pub trait ProductionRead {
     /// decoded safely.
     fn resources(&self, representation_id: RepresentationId) -> Result<Vec<Resource>>;
 
+    /// Queries one bounded page of resources in structural order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the representation is absent, the cursor is
+    /// invalid, or persisted resource data cannot be decoded safely.
+    fn resources_page(
+        &self,
+        representation_id: RepresentationId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Resource>>;
+
     /// Loads every known locator belonging to a resource.
     ///
     /// # Errors
@@ -51,6 +83,37 @@ pub trait ProductionRead {
     /// Returns a storage-domain error when persisted data cannot be read or
     /// decoded safely.
     fn locators(&self, resource_id: ResourceId) -> Result<Vec<Locator>>;
+
+    /// Queries one bounded page of locators belonging to a resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the resource is absent, the cursor is
+    /// invalid, or persisted locator data cannot be decoded safely.
+    fn locators_page(
+        &self,
+        resource_id: ResourceId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Locator>>;
+
+    /// Queries representations with a locator recorded under a logical root.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the root is absent, the cursor is invalid,
+    /// or persisted representation data cannot be decoded safely.
+    fn representations_under_media_root(
+        &self,
+        root_name: &str,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Representation>>;
+
+    /// Queries representations whose required resources have no active locator.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error for an invalid cursor or unreadable storage.
+    fn unresolved_media(&self, page: &QueryPageRequest) -> Result<QueryPage<RepresentationId>>;
 
     /// Loads external identifiers attached to `target` in deterministic order.
     ///
@@ -100,6 +163,18 @@ pub trait ProductionRead {
     fn query_by_metadata_property(&self, property: &MetadataProperty)
     -> Result<Vec<MetadataMatch>>;
 
+    /// Queries one bounded page of objects carrying a metadata property.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error for an invalid cursor, invalid predicate, or
+    /// malformed persisted metadata.
+    fn metadata_query(
+        &self,
+        query: &MetadataQuery,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<MetadataMatch>>;
+
     /// Loads all production activities in deterministic identity order.
     ///
     /// # Errors
@@ -124,6 +199,41 @@ pub trait ProductionRead {
     /// activity data cannot be read safely.
     fn activities_consuming(&self, representation_id: RepresentationId) -> Result<Vec<Activity>>;
 
+    /// Queries activity outputs selected by exact activity or tool identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error for an invalid cursor or malformed persisted IDs.
+    fn activity_outputs(
+        &self,
+        query: &ActivityOutputQuery,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<RepresentationId>>;
+
+    /// Queries a bounded page of activities producing one representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the representation is absent, the cursor is
+    /// invalid, or activity data cannot be decoded safely.
+    fn activities_producing_page(
+        &self,
+        representation_id: RepresentationId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Activity>>;
+
+    /// Queries a bounded page of activities consuming one representation.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the representation is absent, the cursor is
+    /// invalid, or activity data cannot be decoded safely.
+    fn activities_consuming_page(
+        &self,
+        representation_id: RepresentationId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Activity>>;
+
     /// Returns every transitive provenance ancestor of `representation_id`.
     ///
     /// # Errors
@@ -139,6 +249,32 @@ pub trait ProductionRead {
     /// Returns a domain error when the representation is absent or persisted
     /// provenance cannot be traversed safely.
     fn descendants(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>>;
+
+    /// Queries bounded, shortest-depth provenance ancestors.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the root is absent, the cursor is invalid,
+    /// or persisted provenance cannot be traversed safely.
+    fn ancestors_page(
+        &self,
+        representation_id: RepresentationId,
+        limits: ProvenanceQueryLimits,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<ProvenanceQueryMatch>>;
+
+    /// Queries bounded, shortest-depth provenance descendants.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the root is absent, the cursor is invalid,
+    /// or persisted provenance cannot be traversed safely.
+    fn descendants_page(
+        &self,
+        representation_id: RepresentationId,
+        limits: ProvenanceQueryLimits,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<ProvenanceQueryMatch>>;
 
     /// Loads the complete dependency observation for a representation.
     ///
@@ -207,6 +343,18 @@ pub trait ProductionRead {
         representation_id: RepresentationId,
     ) -> Result<ArtifactReproducibilityReport>;
 
+    /// Queries representations currently evaluated as stale.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the source is absent, the cursor is invalid,
+    /// or artifact knowledge cannot be evaluated safely.
+    fn stale_artifacts(
+        &self,
+        query: StaleArtifactQuery,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<RepresentationId>>;
+
     /// Queries durable jobs in stable identity order.
     ///
     /// # Errors
@@ -261,6 +409,17 @@ pub trait ProductionRead {
     /// Returns a domain error when the revision is absent or persisted event
     /// data is invalid.
     fn events_for_revision(&self, revision_id: RevisionId) -> Result<Vec<RevisionEvent>>;
+
+    /// Queries distinct metadata-capable objects touched after a revision.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error for an invalid cursor or malformed journal data.
+    fn objects_changed_since(
+        &self,
+        sequence: u64,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<ObjectRef>>;
 }
 
 /// Transactional mutation operations required from a persistence backend.

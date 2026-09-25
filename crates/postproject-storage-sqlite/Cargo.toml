@@ -10,6 +10,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+blake3 = "1"
 postproject-core = { version = "0.4.0-alpha.1", path = "../postproject-core" }
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "limits"] }
 

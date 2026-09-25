@@ -358,6 +358,19 @@ pub fn prepare_confirmed_locator(
     )
 }
 
+/// Prepares a confirmed online locator associated with a logical media root.
+///
+/// # Errors
+///
+/// Returns errors from time capture, URI validation, or root-name validation.
+pub fn prepare_confirmed_locator_under_root(
+    resource_id: ResourceId,
+    uri: impl Into<String>,
+    root_name: impl Into<String>,
+) -> Result<Locator> {
+    prepare_confirmed_locator(resource_id, uri)?.with_media_root(root_name)
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;

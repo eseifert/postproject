@@ -7,6 +7,80 @@ use postproject_core::{
 
 const CURSOR_VERSION: &str = "ppq1";
 
+pub(crate) fn signature(parts: &[&[u8]]) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for part in parts {
+        hasher.update(&(part.len() as u64).to_be_bytes());
+        hasher.update(part);
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
+pub(crate) fn position_fields<'a>(
+    page: &'a QueryPageRequest,
+    query: &str,
+    query_signature: &str,
+    key_fields: usize,
+) -> Result<Option<Vec<&'a str>>> {
+    let Some(cursor) = page.cursor() else {
+        return Ok(None);
+    };
+    let fields = cursor.as_str().split('|').collect::<Vec<_>>();
+    if fields.len() != key_fields + 3
+        || fields[0] != CURSOR_VERSION
+        || fields[1] != query
+        || fields[2] != query_signature
+    {
+        return Err(invalid_cursor());
+    }
+    Ok(Some(fields.into_iter().skip(3).collect()))
+}
+
+pub(crate) fn cursor(
+    query: &str,
+    query_signature: &str,
+    key_fields: &[String],
+) -> Result<QueryCursor> {
+    QueryCursor::new(format!(
+        "{CURSOR_VERSION}|{query}|{query_signature}|{}",
+        key_fields.join("|")
+    ))
+}
+
+pub(crate) fn id_position<T>(
+    page: &QueryPageRequest,
+    query: &str,
+    query_signature: &str,
+) -> Result<Option<[u8; 16]>>
+where
+    T: FromStr<Err = Error> + Display,
+    T: IntoIdBytes,
+{
+    position_fields(page, query, query_signature, 1)?
+        .map(|fields| parse_id::<T>(fields[0]).map(IntoIdBytes::into_id_bytes))
+        .transpose()
+}
+
+pub(crate) trait IntoIdBytes {
+    fn into_id_bytes(self) -> [u8; 16];
+}
+
+macro_rules! id_bytes {
+    ($($id:ty),+ $(,)?) => {
+        $(impl IntoIdBytes for $id {
+            fn into_id_bytes(self) -> [u8; 16] { self.into_bytes() }
+        })+
+    };
+}
+
+id_bytes!(
+    postproject_core::ActivityId,
+    postproject_core::AssetId,
+    postproject_core::LocatorId,
+    postproject_core::RepresentationId,
+    postproject_core::ResourceId,
+);
+
 pub(crate) fn dependency_position(
     page: &QueryPageRequest,
     source: RepresentationId,

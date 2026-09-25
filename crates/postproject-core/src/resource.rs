@@ -1,6 +1,8 @@
 //! Storage-level resource identity and access values.
 
-use crate::{Error, ErrorKind, LocatorId, ResourceId, Result, Timestamp, uri::normalize_uri};
+use crate::{
+    Error, ErrorKind, LocatorId, MediaRoot, ResourceId, Result, Timestamp, uri::normalize_uri,
+};
 
 /// Cheap filesystem facts observed for one resource.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -237,6 +239,7 @@ pub struct Locator {
     uri: String,
     last_seen: Option<Timestamp>,
     availability: LocatorAvailability,
+    media_root: Option<String>,
 }
 
 impl Locator {
@@ -259,7 +262,20 @@ impl Locator {
             uri,
             last_seen,
             availability,
+            media_root: None,
         })
+    }
+
+    /// Associates this locator with the logical root used to discover it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-argument error for an invalid logical root name.
+    pub fn with_media_root(mut self, name: impl Into<String>) -> Result<Self> {
+        let name = name.into();
+        MediaRoot::validate_name(&name)?;
+        self.media_root = Some(name);
+        Ok(self)
     }
 
     /// Returns the locator's stable identity.
@@ -290,6 +306,12 @@ impl Locator {
     #[must_use]
     pub const fn availability(&self) -> LocatorAvailability {
         self.availability
+    }
+
+    /// Returns the logical media root that located this URI, when recorded.
+    #[must_use]
+    pub fn media_root(&self) -> Option<&str> {
+        self.media_root.as_deref()
     }
 }
 

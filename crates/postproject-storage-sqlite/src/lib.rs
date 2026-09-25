@@ -22,19 +22,21 @@ use std::{
 
 use postproject_core::{
     Activity, ActivityEdgeSnapshot, ActivityId, ActivityInput, ActivityKind, ActivityOutput,
-    ActivityRole, AgentIdentity, ArtifactEvaluation, ArtifactEvaluationLimits,
-    ArtifactReproducibilityReport, Asset, AssetId, ContentStructure, Dependency, DependencyKind,
-    DependencyQueryLimits, DependencyQueryMatch, DependencySet, DependencySetStatus,
-    DependencyTarget, Error, ErrorKind, ExternalIdentifier, FileFacts, FingerprintSnapshot,
-    FrameRange, IdentifierScheme, ImageSequenceDescriptor, ImageSequencePattern, Job, JobClaim,
-    JobClaimId, JobCompletion, JobFailure, JobId, JobKind, JobQuery, JobState, Locator,
-    LocatorAvailability, LocatorId, MAX_REGENERATION_PLANS, MAX_REVISION_PAGE_SIZE, MediaRoot,
-    MediaRootId, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
-    OriginIdentity, Production, ProductionId, ProductionRead, ProductionStore, PropertyId,
-    QueryCursor, QueryPage, QueryPageRequest, RationalRate, RegenerationJobPlan, Representation,
-    RepresentationFingerprint, RepresentationId, RepresentationKind, RequestedJobOutput, Resource,
-    ResourceFingerprint, ResourceId, ResourceMember, ResourceRole, Result, Revision, RevisionEvent,
-    RevisionEventKind, RevisionId, Timestamp, ToolIdentity, TransactionId, VocabularyId,
+    ActivityOutputQuery, ActivityRole, AgentIdentity, ArtifactEvaluation, ArtifactEvaluationLimits,
+    ArtifactKnowledgeState, ArtifactReproducibilityReport, Asset, AssetId, ContentStructure,
+    Dependency, DependencyKind, DependencyQueryLimits, DependencyQueryMatch, DependencySet,
+    DependencySetStatus, DependencyTarget, Error, ErrorKind, ExternalIdentifier, FileFacts,
+    FingerprintSnapshot, FrameRange, IdentifierScheme, ImageSequenceDescriptor,
+    ImageSequencePattern, Job, JobClaim, JobClaimId, JobCompletion, JobFailure, JobId, JobKind,
+    JobQuery, JobState, Locator, LocatorAvailability, LocatorId, MAX_REGENERATION_PLANS,
+    MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
+    MetadataProperty, MetadataQuery, MetadataValue, ObjectRef, OriginIdentity, Production,
+    ProductionId, ProductionRead, ProductionStore, PropertyId, ProvenanceQueryLimits,
+    ProvenanceQueryMatch, QueryCursor, QueryPage, QueryPageRequest, RationalRate,
+    RegenerationJobPlan, Representation, RepresentationFingerprint, RepresentationId,
+    RepresentationKind, RequestedJobOutput, Resource, ResourceFingerprint, ResourceId,
+    ResourceMember, ResourceRole, Result, Revision, RevisionEvent, RevisionEventKind, RevisionId,
+    StaleArtifactQuery, Timestamp, ToolIdentity, TransactionId, VocabularyId,
 };
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, limits::Limit, params, params_from_iter, types::Value,
@@ -66,6 +68,8 @@ struct StoredActivity {
     agent_value: Option<String>,
     agent_qualifier: Option<String>,
 }
+
+type StoredSequence = (ResourceId, String, String, i64, i64, i64, i64, i64, i64);
 
 struct StoredRevision {
     id: Vec<u8>,
@@ -247,37 +251,19 @@ impl SqliteProduction {
     pub fn representations(&self, asset_id: AssetId) -> Result<Vec<Representation>> {
         let mut statement = self
             .connection
-            .prepare(
-                "SELECT id, kind, structure_kind FROM representations
-                 WHERE asset_id = ?1 ORDER BY id",
-            )
+            .prepare("SELECT id FROM representations WHERE asset_id = ?1 ORDER BY id")
             .map_err(sqlite_error("prepare representation query"))?;
-        let rows = statement
+        let ids = statement
             .query_map(params![asset_id.as_bytes().as_slice()], |row| {
-                Ok((
-                    row.get::<_, Vec<u8>>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
+                row.get::<_, Vec<u8>>(0)
             })
-            .map_err(sqlite_error("query representations"))?;
-
-        rows.map(|row| {
-            let (id, kind, structure_kind) =
-                row.map_err(sqlite_error("read representation row"))?;
-            let id = RepresentationId::from_bytes(id_bytes(id, "representation")?);
-            let kind = decode_representation_kind(kind)?;
-            let content_structure = self.load_content_structure(id, structure_kind)?;
-            let fingerprints = self.load_representation_fingerprints(id)?;
-            Ok(Representation::new(
-                id,
-                asset_id,
-                kind,
-                content_structure,
-                fingerprints,
-            ))
-        })
-        .collect()
+            .map_err(sqlite_error("query representations"))?
+            .map(|row| {
+                row.map_err(sqlite_error("read representation row"))
+                    .and_then(|id| id_bytes(id, "representation"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.load_representations_by_ids(&ids)
     }
 
     fn load_representation_by_id(
@@ -356,7 +342,7 @@ impl SqliteProduction {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT id, uri, last_seen_micros, availability FROM locators
+                "SELECT id, uri, last_seen_micros, availability, media_root_name FROM locators
                  WHERE resource_id = ?1 ORDER BY id",
             )
             .map_err(sqlite_error("prepare locator query"))?;
@@ -367,23 +353,372 @@ impl SqliteProduction {
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<i64>>(2)?,
                     row.get::<_, i64>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             })
             .map_err(sqlite_error("query locators"))?;
 
         rows.map(|row| {
-            let (id, uri, last_seen, availability) =
+            let (id, uri, last_seen, availability, media_root) =
                 row.map_err(sqlite_error("read locator row"))?;
-            Locator::new(
+            let locator = Locator::new(
                 LocatorId::from_bytes(id_bytes(id, "locator")?),
                 resource_id,
                 uri,
                 last_seen.map(Timestamp::from_unix_micros),
                 decode_availability(availability)?,
             )
-            .map_err(stored_domain_error("locator"))
+            .map_err(stored_domain_error("locator"))?;
+            match media_root {
+                Some(name) => locator
+                    .with_media_root(name)
+                    .map_err(stored_domain_error("locator media root")),
+                None => Ok(locator),
+            }
         })
         .collect()
+    }
+
+    /// Queries one bounded page of assets in creation/identity order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid cursor or unreadable stored data.
+    pub fn assets_page(&self, page: &QueryPageRequest) -> Result<QueryPage<Asset>> {
+        let position = query_cursor::position_fields(page, "assets", "all", 2)?
+            .map(|fields| {
+                let created_at = fields[0]
+                    .parse::<i64>()
+                    .map_err(|_| invalid_query_cursor())?;
+                let id = fields[1]
+                    .parse::<AssetId>()
+                    .map_err(|_| invalid_query_cursor())?;
+                Ok((created_at, id.into_bytes()))
+            })
+            .transpose()?;
+        let mut parameters = Vec::<Value>::new();
+        let predicate = if let Some((created_at, id)) = position {
+            parameters.push(Value::Integer(created_at));
+            parameters.push(Value::Blob(id.to_vec()));
+            "WHERE created_at_micros > ?1 OR (created_at_micros = ?1 AND id > ?2)"
+        } else {
+            ""
+        };
+        parameters.push(Value::Integer(i64::from(page.limit()) + 1));
+        let sql = format!(
+            "SELECT id, created_at_micros, display_name, import_source
+             FROM assets {predicate} ORDER BY created_at_micros, id LIMIT ?"
+        );
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(sqlite_error("prepare paginated asset query"))?;
+        let mut assets = statement
+            .query_map(params_from_iter(parameters), |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })
+            .map_err(sqlite_error("query paginated assets"))?
+            .map(|row| {
+                let (id, created_at, display_name, import_source) =
+                    row.map_err(sqlite_error("read paginated asset row"))?;
+                Ok(Asset::new(
+                    AssetId::from_bytes(id_bytes(id, "asset")?),
+                    Timestamp::from_unix_micros(created_at),
+                    display_name,
+                    import_source,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let has_more = assets.len() > page.limit() as usize;
+        assets.truncate(page.limit() as usize);
+        let next_cursor = if has_more {
+            assets
+                .last()
+                .map(|asset| {
+                    query_cursor::cursor(
+                        "assets",
+                        "all",
+                        &[
+                            asset.created_at().as_unix_micros().to_string(),
+                            asset.id().to_string(),
+                        ],
+                    )
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        Ok(QueryPage::new(assets, next_cursor, false))
+    }
+
+    /// Queries one bounded page of representations belonging to an asset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the asset is absent, the cursor is invalid, or
+    /// stored representation data is malformed.
+    pub fn representations_page(
+        &self,
+        asset_id: AssetId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Representation>> {
+        self.ensure_asset_exists(asset_id)?;
+        let signature = query_cursor::signature(&[asset_id.as_bytes()]);
+        let position =
+            query_cursor::id_position::<RepresentationId>(page, "representations", &signature)?;
+        let ids = self.query_representation_ids(
+            "SELECT id FROM representations
+             WHERE asset_id = ?1 AND id > ?2 ORDER BY id LIMIT ?3",
+            asset_id.as_bytes(),
+            position.as_ref(),
+            page.limit(),
+            "asset representation",
+        )?;
+        self.representation_page_from_ids(ids, page, "representations", &signature)
+    }
+
+    /// Queries one bounded page of resources in structural order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the representation is absent, the cursor is
+    /// invalid, or stored resource data is malformed.
+    pub fn resources_page(
+        &self,
+        representation_id: RepresentationId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Resource>> {
+        self.ensure_representation_exists(representation_id)?;
+        let signature = query_cursor::signature(&[representation_id.as_bytes()]);
+        let position = query_cursor::position_fields(page, "resources", &signature, 1)?
+            .map(|fields| fields[0].parse::<i64>().map_err(|_| invalid_query_cursor()))
+            .transpose()?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT rr.position, r.id, r.file_size_bytes, r.modified_at_micros
+                 FROM representation_resources rr
+                 JOIN resources r ON r.id = rr.resource_id
+                 WHERE rr.representation_id = ?1 AND rr.position > ?2
+                 ORDER BY rr.position LIMIT ?3",
+            )
+            .map_err(sqlite_error("prepare paginated resource query"))?;
+        let mut rows = statement
+            .query_map(
+                params![
+                    representation_id.as_bytes().as_slice(),
+                    position.unwrap_or(-1),
+                    i64::from(page.limit()) + 1,
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                    ))
+                },
+            )
+            .map_err(sqlite_error("query paginated resources"))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sqlite_error("read paginated resource row"))?;
+        let has_more = rows.len() > page.limit() as usize;
+        rows.truncate(page.limit() as usize);
+        let last_position = rows.last().map(|row| row.0);
+        let resources = rows
+            .into_iter()
+            .map(|(_, id, size, modified_at)| {
+                let id = ResourceId::from_bytes(id_bytes(id, "resource")?);
+                Ok(Resource::new(
+                    id,
+                    self.load_resource_fingerprints(id)?,
+                    decode_file_facts(size, modified_at)?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let next_cursor = if has_more {
+            last_position
+                .map(|position| {
+                    query_cursor::cursor("resources", &signature, &[position.to_string()])
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        Ok(QueryPage::new(resources, next_cursor, false))
+    }
+
+    /// Queries one bounded page of locators belonging to a resource.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the resource is absent, the cursor is invalid, or
+    /// stored locator data is malformed.
+    pub fn locators_page(
+        &self,
+        resource_id: ResourceId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Locator>> {
+        self.ensure_resource_exists(resource_id)?;
+        let signature = query_cursor::signature(&[resource_id.as_bytes()]);
+        let position = query_cursor::id_position::<LocatorId>(page, "locators", &signature)?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, uri, last_seen_micros, availability, media_root_name
+                 FROM locators WHERE resource_id = ?1 AND id > ?2
+                 ORDER BY id LIMIT ?3",
+            )
+            .map_err(sqlite_error("prepare paginated locator query"))?;
+        let mut locators = statement
+            .query_map(
+                params![
+                    resource_id.as_bytes().as_slice(),
+                    position.unwrap_or([0; 16]).as_slice(),
+                    i64::from(page.limit()) + 1,
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, Vec<u8>>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )
+            .map_err(sqlite_error("query paginated locators"))?
+            .map(|row| {
+                let (id, uri, last_seen, availability, media_root) =
+                    row.map_err(sqlite_error("read paginated locator row"))?;
+                let locator = Locator::new(
+                    LocatorId::from_bytes(id_bytes(id, "locator")?),
+                    resource_id,
+                    uri,
+                    last_seen.map(Timestamp::from_unix_micros),
+                    decode_availability(availability)?,
+                )
+                .map_err(stored_domain_error("locator"))?;
+                match media_root {
+                    Some(name) => locator
+                        .with_media_root(name)
+                        .map_err(stored_domain_error("locator media root")),
+                    None => Ok(locator),
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let has_more = locators.len() > page.limit() as usize;
+        locators.truncate(page.limit() as usize);
+        let next_cursor = if has_more {
+            locators
+                .last()
+                .map(|locator| {
+                    query_cursor::cursor("locators", &signature, &[locator.id().to_string()])
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        Ok(QueryPage::new(locators, next_cursor, false))
+    }
+
+    /// Queries representations with knowledge recorded under a logical root.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the root is absent, the cursor is invalid, or
+    /// stored representation data is malformed.
+    pub fn representations_under_media_root(
+        &self,
+        root_name: &str,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Representation>> {
+        MediaRoot::validate_name(root_name)?;
+        self.ensure_media_root_exists(root_name)?;
+        let signature = query_cursor::signature(&[root_name.as_bytes()]);
+        let position = query_cursor::id_position::<RepresentationId>(
+            page,
+            "representations-root",
+            &signature,
+        )?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT DISTINCT rr.representation_id
+                 FROM locators l
+                 JOIN representation_resources rr ON rr.resource_id = l.resource_id
+                 WHERE l.media_root_name = ?1 AND rr.representation_id > ?2
+                 ORDER BY rr.representation_id LIMIT ?3",
+            )
+            .map_err(sqlite_error("prepare media-root representation query"))?;
+        let ids = statement
+            .query_map(
+                params![
+                    root_name,
+                    position.unwrap_or([0; 16]).as_slice(),
+                    i64::from(page.limit()) + 1,
+                ],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .map_err(sqlite_error("query media-root representations"))?
+            .map(|row| {
+                row.map_err(sqlite_error("read media-root representation row"))
+                    .and_then(|id| id_bytes(id, "representation"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.representation_page_from_ids(ids, page, "representations-root", &signature)
+    }
+
+    /// Queries representations whose required resources have no locator knowledge.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid cursor or unreadable stored data.
+    pub fn unresolved_media(&self, page: &QueryPageRequest) -> Result<QueryPage<RepresentationId>> {
+        let position =
+            query_cursor::id_position::<RepresentationId>(page, "unresolved-media", "all")?;
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT DISTINCT rr.representation_id
+                 FROM representation_resources rr
+                 WHERE rr.required = 1 AND rr.representation_id > ?1
+                   AND NOT EXISTS (
+                       SELECT 1 FROM locators l WHERE l.resource_id = rr.resource_id
+                   )
+                 ORDER BY rr.representation_id LIMIT ?2",
+            )
+            .map_err(sqlite_error("prepare unresolved-media query"))?;
+        let mut ids = statement
+            .query_map(
+                params![
+                    position.unwrap_or([0; 16]).as_slice(),
+                    i64::from(page.limit()) + 1,
+                ],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .map_err(sqlite_error("query unresolved media"))?
+            .map(|row| {
+                row.map_err(sqlite_error("read unresolved-media row"))
+                    .and_then(|id| id_bytes(id, "representation"))
+                    .map(RepresentationId::from_bytes)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let has_more = ids.len() > page.limit() as usize;
+        ids.truncate(page.limit() as usize);
+        let next_cursor = if has_more {
+            ids.last()
+                .map(|id| query_cursor::cursor("unresolved-media", "all", &[id.to_string()]))
+                .transpose()?
+        } else {
+            None
+        };
+        Ok(QueryPage::new(ids, next_cursor, false))
     }
 
     fn load_content_structure(
@@ -767,6 +1102,119 @@ impl SqliteProduction {
         .collect()
     }
 
+    /// Queries one bounded page of metadata-property matches.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid cursor, invalid predicate, or malformed
+    /// persisted metadata.
+    pub fn metadata_query(
+        &self,
+        query: &MetadataQuery,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<MetadataMatch>> {
+        let encoded_value = query
+            .exact_value()
+            .map(metadata_codec::encode)
+            .transpose()?;
+        let signature = query_cursor::signature(&[
+            query.property().vocabulary().as_str().as_bytes(),
+            query.property().property().as_str().as_bytes(),
+            encoded_value.as_deref().unwrap_or_default(),
+            &[u8::from(encoded_value.is_some())],
+        ]);
+        let position = query_cursor::position_fields(page, "metadata", &signature, 4)?
+            .map(|fields| {
+                let kind = fields[0]
+                    .parse::<i64>()
+                    .map_err(|_| invalid_query_cursor())?;
+                let id = parse_metadata_cursor_id(kind, fields[1])?;
+                let value_position = fields[2]
+                    .parse::<i64>()
+                    .map_err(|_| invalid_query_cursor())?;
+                let row_id = fields[3]
+                    .parse::<i64>()
+                    .map_err(|_| invalid_query_cursor())?;
+                Ok((kind, id, value_position, row_id))
+            })
+            .transpose()?;
+        let mut clauses = vec!["vocabulary = ?", "property = ?"];
+        let mut parameters = vec![
+            Value::Text(query.property().vocabulary().as_str().to_owned()),
+            Value::Text(query.property().property().as_str().to_owned()),
+        ];
+        if let Some(value) = encoded_value {
+            clauses.push("encoded_value = ?");
+            parameters.push(Value::Blob(value));
+        }
+        if let Some((kind, id, value_position, row_id)) = position {
+            clauses.push("(target_kind, target_id, position, id) > (?, ?, ?, ?)");
+            parameters.extend([
+                Value::Integer(kind),
+                Value::Blob(id.to_vec()),
+                Value::Integer(value_position),
+                Value::Integer(row_id),
+            ]);
+        }
+        parameters.push(Value::Integer(i64::from(page.limit()) + 1));
+        let sql = format!(
+            "SELECT target_kind, target_id, position, id, encoded_value
+             FROM metadata_assertions WHERE {}
+             ORDER BY target_kind, target_id, position, id LIMIT ?",
+            clauses.join(" AND ")
+        );
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(sqlite_error("prepare paginated metadata query"))?;
+        let mut rows = statement
+            .query_map(params_from_iter(parameters), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Vec<u8>>(4)?,
+                ))
+            })
+            .map_err(sqlite_error("query paginated metadata"))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sqlite_error("read paginated metadata row"))?;
+        let has_more = rows.len() > page.limit() as usize;
+        rows.truncate(page.limit() as usize);
+        let next_cursor = if has_more {
+            rows.last()
+                .map(|(kind, id, position, row_id, _)| {
+                    let target = decode_metadata_target(*kind, id.clone())?;
+                    query_cursor::cursor(
+                        "metadata",
+                        &signature,
+                        &[
+                            kind.to_string(),
+                            object_ref_id_string(target),
+                            position.to_string(),
+                            row_id.to_string(),
+                        ],
+                    )
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let matches = rows
+            .into_iter()
+            .map(|(kind, id, _, _, encoded)| {
+                let target = decode_metadata_target(kind, id)?;
+                let value = metadata_codec::decode(&encoded)?;
+                Ok(MetadataMatch::new(
+                    target,
+                    MetadataAssertion::new(query.property().clone(), value),
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(QueryPage::new(matches, next_cursor, false))
+    }
+
     /// Loads all production activities in stable identity order.
     ///
     /// Activity edges are loaded in two set-oriented queries rather than one
@@ -839,16 +1287,10 @@ impl SqliteProduction {
         representation_id: RepresentationId,
     ) -> Result<Vec<Activity>> {
         self.ensure_representation_exists(representation_id)?;
-        Ok(self
-            .activities()?
+        self.activity_ids_for_relation("activity_outputs", representation_id, None, u32::MAX)?
             .into_iter()
-            .filter(|activity| {
-                activity
-                    .outputs()
-                    .iter()
-                    .any(|output| output.representation_id() == representation_id)
-            })
-            .collect())
+            .map(|id| self.load_activity_by_id(ActivityId::from_bytes(id)))
+            .collect()
     }
 
     /// Loads activities that consume `representation_id` in stable order.
@@ -862,16 +1304,126 @@ impl SqliteProduction {
         representation_id: RepresentationId,
     ) -> Result<Vec<Activity>> {
         self.ensure_representation_exists(representation_id)?;
-        Ok(self
-            .activities()?
+        self.activity_ids_for_relation("activity_inputs", representation_id, None, u32::MAX)?
             .into_iter()
-            .filter(|activity| {
-                activity
-                    .inputs()
-                    .iter()
-                    .any(|input| input.representation_id() == representation_id)
+            .map(|id| self.load_activity_by_id(ActivityId::from_bytes(id)))
+            .collect()
+    }
+
+    /// Queries activity outputs selected by exact activity or tool identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid cursor or malformed persisted IDs.
+    pub fn activity_outputs(
+        &self,
+        query: &ActivityOutputQuery,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<RepresentationId>> {
+        let (predicate, mut parameters, signature) = match query {
+            ActivityOutputQuery::Kind(kind) => (
+                "a.kind = ?".to_owned(),
+                vec![Value::Text(kind.as_str().to_owned())],
+                query_cursor::signature(&[b"kind", kind.as_str().as_bytes()]),
+            ),
+            ActivityOutputQuery::Tool(tool) => {
+                let version = tool.version().unwrap_or_default();
+                let uri = tool.uri().unwrap_or_default();
+                (
+                    "a.tool_name = ? AND a.tool_version IS ? AND a.tool_uri IS ?".to_owned(),
+                    vec![
+                        Value::Text(tool.name().to_owned()),
+                        tool.version()
+                            .map_or(Value::Null, |value| Value::Text(value.to_owned())),
+                        tool.uri()
+                            .map_or(Value::Null, |value| Value::Text(value.to_owned())),
+                    ],
+                    query_cursor::signature(&[
+                        b"tool",
+                        tool.name().as_bytes(),
+                        version.as_bytes(),
+                        uri.as_bytes(),
+                        &[
+                            u8::from(tool.version().is_some()),
+                            u8::from(tool.uri().is_some()),
+                        ],
+                    ]),
+                )
+            }
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::Unsupported,
+                    "activity-output query is not supported by this schema",
+                ));
+            }
+        };
+        let position =
+            query_cursor::id_position::<RepresentationId>(page, "activity-outputs", &signature)?;
+        if let Some(position) = position {
+            parameters.push(Value::Blob(position.to_vec()));
+        } else {
+            parameters.push(Value::Blob(vec![0; 16]));
+        }
+        parameters.push(Value::Integer(i64::from(page.limit()) + 1));
+        let sql = format!(
+            "SELECT DISTINCT outputs.representation_id
+             FROM activities a
+             JOIN activity_outputs outputs ON outputs.activity_id = a.id
+             WHERE {predicate} AND outputs.representation_id > ?
+             ORDER BY outputs.representation_id LIMIT ?"
+        );
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(sqlite_error("prepare activity-output query"))?;
+        let mut ids = statement
+            .query_map(params_from_iter(parameters), |row| row.get::<_, Vec<u8>>(0))
+            .map_err(sqlite_error("query activity outputs"))?
+            .map(|row| {
+                row.map_err(sqlite_error("read activity-output row"))
+                    .and_then(|id| id_bytes(id, "activity output"))
+                    .map(RepresentationId::from_bytes)
             })
-            .collect())
+            .collect::<Result<Vec<_>>>()?;
+        id_page(&mut ids, page, "activity-outputs", &signature)
+    }
+
+    /// Queries a bounded page of producing activities.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the representation is absent, the cursor is
+    /// invalid, or stored activity data is malformed.
+    pub fn activities_producing_page(
+        &self,
+        representation_id: RepresentationId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Activity>> {
+        self.activities_for_relation_page(
+            "activity_outputs",
+            "activities-producing",
+            representation_id,
+            page,
+        )
+    }
+
+    /// Queries a bounded page of consuming activities.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the representation is absent, the cursor is
+    /// invalid, or stored activity data is malformed.
+    pub fn activities_consuming_page(
+        &self,
+        representation_id: RepresentationId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Activity>> {
+        self.activities_for_relation_page(
+            "activity_inputs",
+            "activities-consuming",
+            representation_id,
+            page,
+        )
     }
 
     /// Returns transitive input ancestry in stable identity order.
@@ -927,6 +1479,143 @@ impl SqliteProduction {
              SELECT representation_id FROM related ORDER BY representation_id",
             "descendant",
         )
+    }
+
+    /// Queries bounded provenance ancestors with shortest depths.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the root is absent, the cursor is invalid, or
+    /// stored provenance cannot be traversed safely.
+    pub fn ancestors_page(
+        &self,
+        representation_id: RepresentationId,
+        limits: ProvenanceQueryLimits,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<ProvenanceQueryMatch>> {
+        self.provenance_page(representation_id, limits, page, true)
+    }
+
+    /// Queries bounded provenance descendants with shortest depths.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the root is absent, the cursor is invalid, or
+    /// stored provenance cannot be traversed safely.
+    pub fn descendants_page(
+        &self,
+        representation_id: RepresentationId,
+        limits: ProvenanceQueryLimits,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<ProvenanceQueryMatch>> {
+        self.provenance_page(representation_id, limits, page, false)
+    }
+
+    fn provenance_page(
+        &self,
+        representation_id: RepresentationId,
+        limits: ProvenanceQueryLimits,
+        page: &QueryPageRequest,
+        ancestors: bool,
+    ) -> Result<QueryPage<ProvenanceQueryMatch>> {
+        self.ensure_representation_exists(representation_id)?;
+        let direction = if ancestors {
+            "ancestors"
+        } else {
+            "descendants"
+        };
+        let signature = query_cursor::signature(&[
+            representation_id.as_bytes(),
+            &limits.max_depth().to_be_bytes(),
+            &limits.max_representations().to_be_bytes(),
+        ]);
+        let position = query_cursor::id_position::<RepresentationId>(page, direction, &signature)?;
+        let mut visited = BTreeSet::from([representation_id]);
+        let mut pending = VecDeque::from([(representation_id, 0_u32)]);
+        let mut matches = BTreeMap::<RepresentationId, u32>::new();
+        let mut truncated = false;
+        while let Some((current, depth)) = pending.pop_front() {
+            let direct = self.direct_provenance_relatives(current, ancestors)?;
+            if depth == limits.max_depth() {
+                truncated |= direct.iter().any(|id| !visited.contains(id));
+                continue;
+            }
+            let next_depth = depth + 1;
+            for id in direct {
+                if id != representation_id {
+                    matches
+                        .entry(id)
+                        .and_modify(|known| *known = (*known).min(next_depth))
+                        .or_insert(next_depth);
+                }
+                if visited.contains(&id) {
+                    continue;
+                }
+                if u32::try_from(visited.len()).unwrap_or(u32::MAX) >= limits.max_representations()
+                {
+                    truncated = true;
+                    continue;
+                }
+                visited.insert(id);
+                pending.push_back((id, next_depth));
+            }
+        }
+        let mut selected = matches
+            .into_iter()
+            .filter(|(id, _)| position.is_none_or(|position| id.as_bytes() > &position))
+            .take(page.limit() as usize + 1)
+            .collect::<Vec<_>>();
+        let has_more = selected.len() > page.limit() as usize;
+        selected.truncate(page.limit() as usize);
+        let next_cursor = if has_more {
+            selected
+                .last()
+                .map(|(id, _)| query_cursor::cursor(direction, &signature, &[id.to_string()]))
+                .transpose()?
+        } else {
+            None
+        };
+        Ok(QueryPage::new(
+            selected
+                .into_iter()
+                .map(|(id, depth)| ProvenanceQueryMatch::new(id, depth))
+                .collect(),
+            next_cursor,
+            truncated,
+        ))
+    }
+
+    fn direct_provenance_relatives(
+        &self,
+        representation_id: RepresentationId,
+        ancestors: bool,
+    ) -> Result<Vec<RepresentationId>> {
+        let sql = if ancestors {
+            "SELECT DISTINCT inputs.representation_id
+             FROM activity_outputs outputs
+             JOIN activity_inputs inputs ON inputs.activity_id = outputs.activity_id
+             WHERE outputs.representation_id = ?1 ORDER BY inputs.representation_id"
+        } else {
+            "SELECT DISTINCT outputs.representation_id
+             FROM activity_inputs inputs
+             JOIN activity_outputs outputs ON outputs.activity_id = inputs.activity_id
+             WHERE inputs.representation_id = ?1 ORDER BY outputs.representation_id"
+        };
+        let mut statement = self
+            .connection
+            .prepare(sql)
+            .map_err(sqlite_error("prepare direct provenance query"))?;
+        statement
+            .query_map([representation_id.as_bytes().as_slice()], |row| {
+                row.get::<_, Vec<u8>>(0)
+            })
+            .map_err(sqlite_error("query direct provenance"))?
+            .map(|row| {
+                row.map_err(sqlite_error("read direct provenance row"))
+                    .and_then(|id| id_bytes(id, "provenance representation"))
+                    .map(RepresentationId::from_bytes)
+            })
+            .collect()
     }
 
     /// Loads the complete dependency observation for `representation_id`.
@@ -1135,6 +1824,114 @@ impl SqliteProduction {
             traversal_truncated,
             |key| query_cursor::dependent_cursor(target, limits, key.1),
         )
+    }
+
+    /// Queries produced representations currently evaluated as stale.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the source is absent, the cursor is invalid, or
+    /// artifact knowledge cannot be evaluated safely.
+    pub fn stale_artifacts(
+        &self,
+        query: StaleArtifactQuery,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<RepresentationId>> {
+        let limits = query.evaluation_limits();
+        let source = query.source();
+        if let Some(source) = source {
+            self.ensure_representation_exists(source)?;
+        }
+        let source_text = source.map_or_else(|| "*".to_owned(), |id| id.to_string());
+        let signature = query_cursor::signature(&[
+            source_text.as_bytes(),
+            &limits.max_depth().to_be_bytes(),
+            &limits.max_representations().to_be_bytes(),
+        ]);
+        let position =
+            query_cursor::id_position::<RepresentationId>(page, "stale-artifacts", &signature)?;
+        let mut parameters = vec![Value::Blob(position.unwrap_or([0; 16]).to_vec())];
+        let (restriction, traversal_truncated) = if let Some(source) = source {
+            let provenance_limits = ProvenanceQueryLimits::new(
+                limits
+                    .max_depth()
+                    .min(postproject_core::MAX_PROVENANCE_QUERY_DEPTH),
+                limits
+                    .max_representations()
+                    .min(postproject_core::MAX_PROVENANCE_QUERY_REPRESENTATIONS),
+            )?;
+            let descendants = self.provenance_page(
+                source,
+                provenance_limits,
+                &QueryPageRequest::new(postproject_core::MAX_QUERY_PAGE_SIZE, None)?,
+                false,
+            )?;
+            let truncated = descendants.traversal_truncated()
+                || descendants.next_cursor().is_some()
+                || limits.max_depth() > postproject_core::MAX_PROVENANCE_QUERY_DEPTH
+                || limits.max_representations()
+                    > postproject_core::MAX_PROVENANCE_QUERY_REPRESENTATIONS;
+            let ids = descendants
+                .items()
+                .iter()
+                .map(|item| item.representation_id().into_bytes())
+                .collect::<Vec<_>>();
+            if ids.is_empty() {
+                return Ok(QueryPage::new(Vec::new(), None, truncated));
+            }
+            parameters.extend(ids.iter().map(|id| Value::Blob(id.to_vec())));
+            let placeholders = std::iter::repeat_n("?", ids.len())
+                .collect::<Vec<_>>()
+                .join(", ");
+            (
+                format!("AND outputs.representation_id IN ({placeholders})"),
+                truncated,
+            )
+        } else {
+            (String::new(), false)
+        };
+        parameters.push(Value::Integer(i64::from(page.limit()) + 1));
+        let sql = format!(
+            "SELECT DISTINCT outputs.representation_id
+             FROM activity_outputs outputs
+             WHERE outputs.representation_id > ? {restriction}
+             ORDER BY outputs.representation_id LIMIT ?"
+        );
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(sqlite_error("prepare stale-artifact query"))?;
+        let mut candidates = statement
+            .query_map(params_from_iter(parameters), |row| row.get::<_, Vec<u8>>(0))
+            .map_err(sqlite_error("query stale artifacts"))?
+            .map(|row| {
+                row.map_err(sqlite_error("read stale-artifact row"))
+                    .and_then(|id| id_bytes(id, "stale artifact"))
+                    .map(RepresentationId::from_bytes)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let has_more = candidates.len() > page.limit() as usize;
+        candidates.truncate(page.limit() as usize);
+        let last_examined = candidates.last().copied();
+        let stale = candidates
+            .into_iter()
+            .map(|id| Ok((id, self.evaluate_artifact(id, limits)?)))
+            .filter_map(|result: Result<_>| match result {
+                Ok((id, evaluation)) if evaluation.state() == ArtifactKnowledgeState::Stale => {
+                    Some(Ok(id))
+                }
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let next_cursor = if has_more {
+            last_examined
+                .map(|id| query_cursor::cursor("stale-artifacts", &signature, &[id.to_string()]))
+                .transpose()?
+        } else {
+            None
+        };
+        Ok(QueryPage::new(stale, next_cursor, traversal_truncated))
     }
 
     /// Queries durable jobs in stable identity order with optional exact predicates.
@@ -1386,6 +2183,93 @@ impl SqliteProduction {
             .collect()
     }
 
+    /// Queries distinct metadata-capable objects touched after a revision.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid cursor or malformed journal data.
+    pub fn objects_changed_since(
+        &self,
+        sequence: u64,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<ObjectRef>> {
+        let signature = query_cursor::signature(&[&sequence.to_be_bytes()]);
+        let position = query_cursor::position_fields(page, "objects-changed", &signature, 2)?
+            .map(|fields| {
+                let kind = fields[0]
+                    .parse::<i64>()
+                    .map_err(|_| invalid_query_cursor())?;
+                Ok((kind, parse_metadata_cursor_id(kind, fields[1])?))
+            })
+            .transpose()?;
+        let sequence = i64::try_from(sequence).unwrap_or(i64::MAX);
+        let (kind, id) = position.unwrap_or((-1, [0; 16]));
+        let mut statement = self
+            .connection
+            .prepare(
+                "WITH changed_events AS (
+                     SELECT e.kind, e.target_kind, e.primary_id, e.secondary_id
+                     FROM revision_events e
+                     JOIN revisions r ON r.id = e.revision_id
+                     WHERE r.sequence > ?1
+                 ), changed_targets(target_kind, target_id) AS (
+                     SELECT 1, primary_id FROM changed_events WHERE kind = 1
+                     UNION ALL SELECT 2, primary_id FROM changed_events WHERE kind = 2
+                     UNION ALL SELECT 1, secondary_id FROM changed_events WHERE kind = 2
+                     UNION ALL SELECT 3, primary_id FROM changed_events WHERE kind = 3
+                     UNION ALL SELECT 2, primary_id FROM changed_events WHERE kind = 4
+                     UNION ALL SELECT 3, secondary_id FROM changed_events WHERE kind = 4
+                     UNION ALL SELECT 3, secondary_id FROM changed_events WHERE kind IN (5, 14)
+                     UNION ALL
+                         SELECT 0, p.id FROM changed_events CROSS JOIN productions p
+                         WHERE changed_events.kind IN (6, 15, 16)
+                     UNION ALL
+                         SELECT target_kind, primary_id FROM changed_events
+                         WHERE kind BETWEEN 7 AND 10
+                     UNION ALL SELECT 4, primary_id FROM changed_events WHERE kind = 11
+                     UNION ALL SELECT 4, primary_id FROM changed_events WHERE kind IN (12, 13)
+                     UNION ALL SELECT 2, secondary_id FROM changed_events WHERE kind IN (12, 13)
+                     UNION ALL SELECT 3, primary_id FROM changed_events WHERE kind = 17
+                     UNION ALL SELECT 2, primary_id FROM changed_events WHERE kind IN (18, 19)
+                     UNION ALL SELECT 5, primary_id FROM changed_events WHERE kind BETWEEN 20 AND 26
+                 )
+                 SELECT DISTINCT target_kind, target_id FROM changed_targets
+                 WHERE target_id IS NOT NULL
+                   AND (target_kind > ?2 OR (target_kind = ?2 AND target_id > ?3))
+                 ORDER BY target_kind, target_id LIMIT ?4",
+            )
+            .map_err(sqlite_error("prepare changed-object query"))?;
+        let mut rows = statement
+            .query_map(
+                params![sequence, kind, id.as_slice(), i64::from(page.limit()) + 1],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .map_err(sqlite_error("query changed objects"))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sqlite_error("read changed-object row"))?;
+        let has_more = rows.len() > page.limit() as usize;
+        rows.truncate(page.limit() as usize);
+        let next_cursor = if has_more {
+            rows.last()
+                .map(|(kind, id)| {
+                    let target = decode_metadata_target(*kind, id.clone())?;
+                    query_cursor::cursor(
+                        "objects-changed",
+                        &signature,
+                        &[kind.to_string(), object_ref_id_string(target)],
+                    )
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let targets = rows
+            .into_iter()
+            .map(|(kind, id)| decode_metadata_target(kind, id))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(QueryPage::new(targets, next_cursor, false))
+    }
+
     fn related_representations(
         &self,
         representation_id: RepresentationId,
@@ -1425,6 +2309,609 @@ impl SqliteProduction {
             ));
         }
         Ok(())
+    }
+
+    fn ensure_asset_exists(&self, asset_id: AssetId) -> Result<()> {
+        let exists = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM assets WHERE id = ?1)",
+                [asset_id.as_bytes().as_slice()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(sqlite_error("check query asset"))?;
+        if exists {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorKind::NotFound, "asset does not exist"))
+        }
+    }
+
+    fn ensure_resource_exists(&self, resource_id: ResourceId) -> Result<()> {
+        let exists = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM resources WHERE id = ?1)",
+                [resource_id.as_bytes().as_slice()],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(sqlite_error("check query resource"))?;
+        if exists {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorKind::NotFound, "resource does not exist"))
+        }
+    }
+
+    fn ensure_media_root_exists(&self, root_name: &str) -> Result<()> {
+        let exists = self
+            .connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM media_roots WHERE name = ?1)",
+                [root_name],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(sqlite_error("check query media root"))?;
+        if exists {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorKind::NotFound, "media root does not exist"))
+        }
+    }
+
+    fn query_representation_ids(
+        &self,
+        sql: &str,
+        scope: &[u8; 16],
+        position: Option<&[u8; 16]>,
+        limit: u32,
+        label: &'static str,
+    ) -> Result<Vec<[u8; 16]>> {
+        let mut statement = self
+            .connection
+            .prepare(sql)
+            .map_err(sqlite_error("prepare paginated representation query"))?;
+        statement
+            .query_map(
+                params![
+                    scope.as_slice(),
+                    position.copied().unwrap_or([0; 16]).as_slice(),
+                    i64::from(limit) + 1,
+                ],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .map_err(sqlite_error("query paginated representations"))?
+            .map(|row| {
+                row.map_err(sqlite_error("read paginated representation row"))
+                    .and_then(|id| id_bytes(id, label))
+            })
+            .collect()
+    }
+
+    fn representation_page_from_ids(
+        &self,
+        mut ids: Vec<[u8; 16]>,
+        page: &QueryPageRequest,
+        query: &str,
+        signature: &str,
+    ) -> Result<QueryPage<Representation>> {
+        let has_more = ids.len() > page.limit() as usize;
+        ids.truncate(page.limit() as usize);
+        let next_cursor = if has_more {
+            ids.last()
+                .map(|id| {
+                    query_cursor::cursor(
+                        query,
+                        signature,
+                        &[RepresentationId::from_bytes(*id).to_string()],
+                    )
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let representations = self.load_representations_by_ids(&ids)?;
+        Ok(QueryPage::new(representations, next_cursor, false))
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "set-oriented representation decoding keeps its coordinated row maps auditable"
+    )]
+    fn load_representations_by_ids(&self, ids: &[[u8; 16]]) -> Result<Vec<Representation>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let parameters = || {
+            ids.iter()
+                .map(|id| Value::Blob(id.to_vec()))
+                .collect::<Vec<_>>()
+        };
+
+        let mut base_statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT id, asset_id, kind, structure_kind FROM representations
+                 WHERE id IN ({placeholders}) ORDER BY id"
+            ))
+            .map_err(sqlite_error("prepare representation-page rows"))?;
+        let base_rows = base_statement
+            .query_map(params_from_iter(parameters()), |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(sqlite_error("query representation-page rows"))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sqlite_error("read representation-page row"))?;
+
+        let mut member_statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT representation_id, resource_id, role, required
+                 FROM representation_resources
+                 WHERE representation_id IN ({placeholders})
+                 ORDER BY representation_id, position"
+            ))
+            .map_err(sqlite_error("prepare representation-page members"))?;
+        let mut members =
+            BTreeMap::<RepresentationId, Vec<(ResourceId, Option<String>, bool)>>::new();
+        for row in member_statement
+            .query_map(params_from_iter(parameters()), |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, bool>(3)?,
+                ))
+            })
+            .map_err(sqlite_error("query representation-page members"))?
+        {
+            let (representation_id, resource_id, role, required) =
+                row.map_err(sqlite_error("read representation-page member"))?;
+            members
+                .entry(RepresentationId::from_bytes(id_bytes(
+                    representation_id,
+                    "representation member",
+                )?))
+                .or_default()
+                .push((
+                    ResourceId::from_bytes(id_bytes(resource_id, "member resource")?),
+                    role,
+                    required,
+                ));
+        }
+
+        let mut sequence_statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT representation_id, resource_id, prefix, suffix, padding,
+                        start_frame, end_frame, frame_step, rate_numerator, rate_denominator
+                 FROM image_sequences WHERE representation_id IN ({placeholders})"
+            ))
+            .map_err(sqlite_error("prepare representation-page sequences"))?;
+        let mut sequences = BTreeMap::<RepresentationId, StoredSequence>::new();
+        for row in sequence_statement
+            .query_map(params_from_iter(parameters()), |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
+                ))
+            })
+            .map_err(sqlite_error("query representation-page sequences"))?
+        {
+            let row = row.map_err(sqlite_error("read representation-page sequence"))?;
+            sequences.insert(
+                RepresentationId::from_bytes(id_bytes(row.0, "sequence representation")?),
+                (
+                    ResourceId::from_bytes(id_bytes(row.1, "sequence resource")?),
+                    row.2,
+                    row.3,
+                    row.4,
+                    row.5,
+                    row.6,
+                    row.7,
+                    row.8,
+                    row.9,
+                ),
+            );
+        }
+
+        let mut missing_statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT representation_id, frame FROM image_sequence_missing_frames
+                 WHERE representation_id IN ({placeholders})
+                 ORDER BY representation_id, frame"
+            ))
+            .map_err(sqlite_error("prepare representation-page missing frames"))?;
+        let mut missing = BTreeMap::<RepresentationId, Vec<i64>>::new();
+        for row in missing_statement
+            .query_map(params_from_iter(parameters()), |row| {
+                Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(sqlite_error("query representation-page missing frames"))?
+        {
+            let (representation_id, frame) =
+                row.map_err(sqlite_error("read representation-page missing frame"))?;
+            missing
+                .entry(RepresentationId::from_bytes(id_bytes(
+                    representation_id,
+                    "missing-frame representation",
+                )?))
+                .or_default()
+                .push(frame);
+        }
+
+        let mut fingerprint_statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT representation_id, algorithm, algorithm_version, value
+                 FROM representation_fingerprints
+                 WHERE representation_id IN ({placeholders})
+                 ORDER BY representation_id, algorithm, algorithm_version"
+            ))
+            .map_err(sqlite_error("prepare representation-page fingerprints"))?;
+        let mut fingerprints = BTreeMap::<RepresentationId, Vec<RepresentationFingerprint>>::new();
+        for row in fingerprint_statement
+            .query_map(params_from_iter(parameters()), |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u16>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                ))
+            })
+            .map_err(sqlite_error("query representation-page fingerprints"))?
+        {
+            let (representation_id, algorithm, version, value) =
+                row.map_err(sqlite_error("read representation-page fingerprint"))?;
+            fingerprints
+                .entry(RepresentationId::from_bytes(id_bytes(
+                    representation_id,
+                    "fingerprint representation",
+                )?))
+                .or_default()
+                .push(
+                    RepresentationFingerprint::new(algorithm, version, value)
+                        .map_err(stored_domain_error("representation fingerprint"))?,
+                );
+        }
+
+        let mut decoded = BTreeMap::new();
+        for (id, asset_id, kind, structure_kind) in base_rows {
+            let id = RepresentationId::from_bytes(id_bytes(id, "representation")?);
+            let asset_id = AssetId::from_bytes(id_bytes(asset_id, "asset")?);
+            let stored_members = members.remove(&id).unwrap_or_default();
+            let structure = match structure_kind {
+                0 => match stored_members.as_slice() {
+                    [(resource_id, None, true)] => ContentStructure::single_resource(*resource_id),
+                    _ => return Err(stored_invariant("invalid single-resource membership")),
+                },
+                1 => {
+                    let resource_id = match stored_members.as_slice() {
+                        [(resource_id, None, true)] => *resource_id,
+                        _ => return Err(stored_invariant("invalid image-sequence membership")),
+                    };
+                    let sequence = sequences
+                        .remove(&id)
+                        .ok_or_else(|| stored_invariant("image-sequence descriptor is absent"))?;
+                    if sequence.0 != resource_id {
+                        return Err(stored_invariant(
+                            "image-sequence resource does not match membership",
+                        ));
+                    }
+                    ContentStructure::image_sequence(
+                        ImageSequenceDescriptor::new(
+                            resource_id,
+                            ImageSequencePattern::new(
+                                sequence.1,
+                                sequence.2,
+                                stored_u8(sequence.3, "padding")?,
+                            )
+                            .map_err(stored_domain_error("image-sequence pattern"))?,
+                            FrameRange::new(
+                                sequence.4,
+                                sequence.5,
+                                stored_u32(sequence.6, "frame step")?,
+                            )
+                            .map_err(stored_domain_error("image-sequence frame range"))?,
+                            RationalRate::new(
+                                stored_u32(sequence.7, "rate numerator")?,
+                                stored_u32(sequence.8, "rate denominator")?,
+                            )
+                            .map_err(stored_domain_error("image-sequence rate"))?,
+                            missing.remove(&id).unwrap_or_default(),
+                        )
+                        .map_err(stored_domain_error("image-sequence descriptor"))?,
+                    )
+                }
+                2 | 3 => {
+                    let members = stored_members
+                        .into_iter()
+                        .map(|(resource_id, role, required)| {
+                            let role = role.ok_or_else(|| {
+                                stored_invariant("compound resource membership has no role")
+                            })?;
+                            Ok(ResourceMember::new(
+                                resource_id,
+                                ResourceRole::new(role)
+                                    .map_err(stored_domain_error("resource role"))?,
+                                required,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    if structure_kind == 2 {
+                        ContentStructure::ordered_parts(members)
+                    } else {
+                        ContentStructure::package(members)
+                    }
+                    .map_err(stored_domain_error("content structure"))?
+                }
+                _ => return Err(stored_invariant("invalid content-structure kind")),
+            };
+            decoded.insert(
+                id,
+                Representation::new(
+                    id,
+                    asset_id,
+                    decode_representation_kind(kind)?,
+                    structure,
+                    fingerprints.remove(&id).unwrap_or_default(),
+                ),
+            );
+        }
+        ids.iter()
+            .map(|id| {
+                decoded
+                    .remove(&RepresentationId::from_bytes(*id))
+                    .ok_or_else(|| stored_invariant("representation page row is absent"))
+            })
+            .collect()
+    }
+
+    fn activity_ids_for_relation(
+        &self,
+        table: &'static str,
+        representation_id: RepresentationId,
+        position: Option<[u8; 16]>,
+        limit: u32,
+    ) -> Result<Vec<[u8; 16]>> {
+        let sql = format!(
+            "SELECT DISTINCT activity_id FROM {table}
+             WHERE representation_id = ?1 AND activity_id > ?2
+             ORDER BY activity_id LIMIT ?3"
+        );
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(sqlite_error("prepare related-activity query"))?;
+        statement
+            .query_map(
+                params![
+                    representation_id.as_bytes().as_slice(),
+                    position.unwrap_or([0; 16]).as_slice(),
+                    i64::from(limit) + 1,
+                ],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .map_err(sqlite_error("query related activities"))?
+            .map(|row| {
+                row.map_err(sqlite_error("read related-activity row"))
+                    .and_then(|id| id_bytes(id, "activity"))
+            })
+            .collect()
+    }
+
+    fn activities_for_relation_page(
+        &self,
+        table: &'static str,
+        query: &'static str,
+        representation_id: RepresentationId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Activity>> {
+        self.ensure_representation_exists(representation_id)?;
+        let signature = query_cursor::signature(&[representation_id.as_bytes()]);
+        let position = query_cursor::id_position::<ActivityId>(page, query, &signature)?;
+        let mut ids =
+            self.activity_ids_for_relation(table, representation_id, position, page.limit())?;
+        let has_more = ids.len() > page.limit() as usize;
+        ids.truncate(page.limit() as usize);
+        let next_cursor = if has_more {
+            ids.last()
+                .map(|id| {
+                    query_cursor::cursor(
+                        query,
+                        &signature,
+                        &[ActivityId::from_bytes(*id).to_string()],
+                    )
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let activities = ids
+            .into_iter()
+            .map(|id| self.load_activity_by_id(ActivityId::from_bytes(id)))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(QueryPage::new(activities, next_cursor, false))
+    }
+
+    fn load_activity_by_id(&self, activity_id: ActivityId) -> Result<Activity> {
+        let stored = self
+            .connection
+            .query_row(
+                "SELECT id, kind, started_at_micros, finished_at_micros,
+                        tool_name, tool_version, tool_uri, agent_name,
+                        agent_identifier_scheme, agent_identifier_value,
+                        agent_identifier_qualifier
+                 FROM activities WHERE id = ?1",
+                [activity_id.as_bytes().as_slice()],
+                |row| {
+                    Ok(StoredActivity {
+                        id: row.get(0)?,
+                        kind: row.get(1)?,
+                        started_at: row.get(2)?,
+                        finished_at: row.get(3)?,
+                        tool_name: row.get(4)?,
+                        tool_version: row.get(5)?,
+                        tool_uri: row.get(6)?,
+                        agent_name: row.get(7)?,
+                        agent_scheme: row.get(8)?,
+                        agent_value: row.get(9)?,
+                        agent_qualifier: row.get(10)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(sqlite_error("load query activity"))?
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "activity does not exist"))?;
+        decode_activity(
+            activity_id,
+            stored,
+            self.load_activity_inputs_for(activity_id)?,
+            self.load_activity_outputs_for(activity_id)?,
+        )
+    }
+
+    fn load_activity_inputs_for(&self, activity_id: ActivityId) -> Result<Vec<ActivityInput>> {
+        self.load_stored_activity_edges_for("activity_inputs", activity_id)?
+            .into_iter()
+            .map(|edge| {
+                let mut input = ActivityInput::new(edge.representation_id, edge.role);
+                if let Some(sequence) = edge.snapshot_revision_sequence {
+                    input = input.with_snapshot(ActivityEdgeSnapshot::new(
+                        stored_u64(sequence, "activity input snapshot revision")?,
+                        self.load_edge_fingerprint_snapshots(
+                            "activity_input_fingerprint_snapshots",
+                            "activity_input_id",
+                            edge.id,
+                        )?,
+                    )?);
+                }
+                Ok(input)
+            })
+            .collect()
+    }
+
+    fn load_activity_outputs_for(&self, activity_id: ActivityId) -> Result<Vec<ActivityOutput>> {
+        self.load_stored_activity_edges_for("activity_outputs", activity_id)?
+            .into_iter()
+            .map(|edge| {
+                let mut output = ActivityOutput::new(edge.representation_id, edge.role);
+                if let Some(sequence) = edge.snapshot_revision_sequence {
+                    output = output.with_snapshot(ActivityEdgeSnapshot::new(
+                        stored_u64(sequence, "activity output snapshot revision")?,
+                        self.load_edge_fingerprint_snapshots(
+                            "activity_output_fingerprint_snapshots",
+                            "activity_output_id",
+                            edge.id,
+                        )?,
+                    )?);
+                }
+                Ok(output)
+            })
+            .collect()
+    }
+
+    fn load_stored_activity_edges_for(
+        &self,
+        table: &'static str,
+        activity_id: ActivityId,
+    ) -> Result<Vec<StoredActivityEdge>> {
+        let sql = format!(
+            "SELECT id, representation_id, role, snapshot_revision_sequence
+             FROM {table} WHERE activity_id = ?1
+             ORDER BY representation_id, role, id"
+        );
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(sqlite_error("prepare activity edge page"))?;
+        statement
+            .query_map([activity_id.as_bytes().as_slice()], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
+            })
+            .map_err(sqlite_error("query activity edge page"))?
+            .map(|row| {
+                let (id, representation_id, role, snapshot_revision_sequence) =
+                    row.map_err(sqlite_error("read activity edge page row"))?;
+                Ok(StoredActivityEdge {
+                    id,
+                    representation_id: RepresentationId::from_bytes(id_bytes(
+                        representation_id,
+                        "activity representation",
+                    )?),
+                    role: role
+                        .map(ActivityRole::new)
+                        .transpose()
+                        .map_err(stored_domain_error("activity role"))?,
+                    snapshot_revision_sequence,
+                })
+            })
+            .collect()
+    }
+
+    fn load_edge_fingerprint_snapshots(
+        &self,
+        table: &'static str,
+        edge_column: &'static str,
+        edge_id: i64,
+    ) -> Result<Vec<FingerprintSnapshot>> {
+        let sql = format!(
+            "SELECT algorithm, algorithm_version, value, observed_revision_sequence
+             FROM {table} WHERE {edge_column} = ?1
+             ORDER BY algorithm, algorithm_version"
+        );
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(sqlite_error("prepare activity snapshot page"))?;
+        statement
+            .query_map([edge_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
+            })
+            .map_err(sqlite_error("query activity snapshot page"))?
+            .map(|row| {
+                let (algorithm, version, value, observed) =
+                    row.map_err(sqlite_error("read activity snapshot page row"))?;
+                FingerprintSnapshot::new(
+                    algorithm,
+                    u16::try_from(version).map_err(|_| {
+                        stored_invariant("activity snapshot version is outside u16")
+                    })?,
+                    value,
+                    observed
+                        .map(|sequence| stored_u64(sequence, "fingerprint observation revision"))
+                        .transpose()?,
+                )
+                .map_err(stored_domain_error("activity fingerprint snapshot"))
+            })
+            .collect()
     }
 
     fn load_activity_inputs(&self) -> Result<ActivityEdgesById<ActivityInput>> {
@@ -1512,16 +2999,56 @@ impl ProductionRead for SqliteProduction {
         SqliteProduction::assets(self)
     }
 
+    fn assets_page(&self, page: &QueryPageRequest) -> Result<QueryPage<Asset>> {
+        SqliteProduction::assets_page(self, page)
+    }
+
     fn representations(&self, asset_id: AssetId) -> Result<Vec<Representation>> {
         SqliteProduction::representations(self, asset_id)
+    }
+
+    fn representations_page(
+        &self,
+        asset_id: AssetId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Representation>> {
+        SqliteProduction::representations_page(self, asset_id, page)
     }
 
     fn resources(&self, representation_id: RepresentationId) -> Result<Vec<Resource>> {
         SqliteProduction::resources(self, representation_id)
     }
 
+    fn resources_page(
+        &self,
+        representation_id: RepresentationId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Resource>> {
+        SqliteProduction::resources_page(self, representation_id, page)
+    }
+
     fn locators(&self, resource_id: ResourceId) -> Result<Vec<Locator>> {
         SqliteProduction::locators(self, resource_id)
+    }
+
+    fn locators_page(
+        &self,
+        resource_id: ResourceId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Locator>> {
+        SqliteProduction::locators_page(self, resource_id, page)
+    }
+
+    fn representations_under_media_root(
+        &self,
+        root_name: &str,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Representation>> {
+        SqliteProduction::representations_under_media_root(self, root_name, page)
+    }
+
+    fn unresolved_media(&self, page: &QueryPageRequest) -> Result<QueryPage<RepresentationId>> {
+        SqliteProduction::unresolved_media(self, page)
     }
 
     fn external_identifiers(&self, target: ObjectRef) -> Result<Vec<ExternalIdentifier>> {
@@ -1555,6 +3082,14 @@ impl ProductionRead for SqliteProduction {
         SqliteProduction::query_by_metadata_property(self, property)
     }
 
+    fn metadata_query(
+        &self,
+        query: &MetadataQuery,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<MetadataMatch>> {
+        SqliteProduction::metadata_query(self, query, page)
+    }
+
     fn activities(&self) -> Result<Vec<Activity>> {
         SqliteProduction::activities(self)
     }
@@ -1567,12 +3102,54 @@ impl ProductionRead for SqliteProduction {
         SqliteProduction::activities_consuming(self, representation_id)
     }
 
+    fn activity_outputs(
+        &self,
+        query: &ActivityOutputQuery,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<RepresentationId>> {
+        SqliteProduction::activity_outputs(self, query, page)
+    }
+
+    fn activities_producing_page(
+        &self,
+        representation_id: RepresentationId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Activity>> {
+        SqliteProduction::activities_producing_page(self, representation_id, page)
+    }
+
+    fn activities_consuming_page(
+        &self,
+        representation_id: RepresentationId,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<Activity>> {
+        SqliteProduction::activities_consuming_page(self, representation_id, page)
+    }
+
     fn ancestors(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>> {
         SqliteProduction::ancestors(self, representation_id)
     }
 
     fn descendants(&self, representation_id: RepresentationId) -> Result<Vec<RepresentationId>> {
         SqliteProduction::descendants(self, representation_id)
+    }
+
+    fn ancestors_page(
+        &self,
+        representation_id: RepresentationId,
+        limits: ProvenanceQueryLimits,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<ProvenanceQueryMatch>> {
+        SqliteProduction::ancestors_page(self, representation_id, limits, page)
+    }
+
+    fn descendants_page(
+        &self,
+        representation_id: RepresentationId,
+        limits: ProvenanceQueryLimits,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<ProvenanceQueryMatch>> {
+        SqliteProduction::descendants_page(self, representation_id, limits, page)
     }
 
     fn dependency_set(&self, representation_id: RepresentationId) -> Result<Option<DependencySet>> {
@@ -1612,6 +3189,14 @@ impl ProductionRead for SqliteProduction {
         SqliteProduction::artifact_reproducibility(self, representation_id)
     }
 
+    fn stale_artifacts(
+        &self,
+        query: StaleArtifactQuery,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<RepresentationId>> {
+        SqliteProduction::stale_artifacts(self, query, page)
+    }
+
     fn jobs(&self, query: &JobQuery, page: &QueryPageRequest) -> Result<QueryPage<Job>> {
         SqliteProduction::jobs(self, query, page)
     }
@@ -1637,6 +3222,14 @@ impl ProductionRead for SqliteProduction {
 
     fn events_for_revision(&self, revision_id: RevisionId) -> Result<Vec<RevisionEvent>> {
         SqliteProduction::events_for_revision(self, revision_id)
+    }
+
+    fn objects_changed_since(
+        &self,
+        sequence: u64,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<ObjectRef>> {
+        SqliteProduction::objects_changed_since(self, sequence, page)
     }
 }
 
@@ -2660,6 +4253,24 @@ where
     Ok(QueryPage::new(items, next_cursor, traversal_truncated))
 }
 
+fn id_page(
+    ids: &mut Vec<RepresentationId>,
+    page: &QueryPageRequest,
+    query: &str,
+    signature: &str,
+) -> Result<QueryPage<RepresentationId>> {
+    let has_more = ids.len() > page.limit() as usize;
+    ids.truncate(page.limit() as usize);
+    let next_cursor = if has_more {
+        ids.last()
+            .map(|id| query_cursor::cursor(query, signature, &[id.to_string()]))
+            .transpose()?
+    } else {
+        None
+    };
+    Ok(QueryPage::new(std::mem::take(ids), next_cursor, false))
+}
+
 pub(crate) fn id_bytes(value: Vec<u8>, label: &str) -> Result<[u8; 16]> {
     value.try_into().map_err(|value: Vec<u8>| {
         Error::new(
@@ -2667,6 +4278,40 @@ pub(crate) fn id_bytes(value: Vec<u8>, label: &str) -> Result<[u8; 16]> {
             format!("stored {label} ID has {} bytes; expected 16", value.len()),
         )
     })
+}
+
+fn invalid_query_cursor() -> Error {
+    Error::new(
+        ErrorKind::InvalidArgument,
+        "query cursor does not match this query and its parameters",
+    )
+}
+
+fn object_ref_id_string(target: ObjectRef) -> String {
+    match target {
+        ObjectRef::Production(id) => id.to_string(),
+        ObjectRef::Asset(id) => id.to_string(),
+        ObjectRef::Representation(id) => id.to_string(),
+        ObjectRef::Resource(id) => id.to_string(),
+        ObjectRef::Activity(id) => id.to_string(),
+        ObjectRef::Job(id) => id.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn parse_metadata_cursor_id(kind: i64, value: &str) -> Result<[u8; 16]> {
+    match kind {
+        0 => value.parse::<ProductionId>().map(ProductionId::into_bytes),
+        1 => value.parse::<AssetId>().map(AssetId::into_bytes),
+        2 => value
+            .parse::<RepresentationId>()
+            .map(RepresentationId::into_bytes),
+        3 => value.parse::<ResourceId>().map(ResourceId::into_bytes),
+        4 => value.parse::<ActivityId>().map(ActivityId::into_bytes),
+        5 => value.parse::<JobId>().map(JobId::into_bytes),
+        _ => Err(invalid_query_cursor()),
+    }
+    .map_err(|_| invalid_query_cursor())
 }
 
 fn stored_u32(value: i64, label: &str) -> Result<u32> {

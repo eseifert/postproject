@@ -2425,8 +2425,8 @@ fn persist_locator(transaction: &Transaction<'_>, locator: &Locator) -> Result<(
     transaction
         .execute(
             "INSERT INTO locators (
-                id, resource_id, uri, last_seen_micros, availability
-             ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                id, resource_id, uri, last_seen_micros, availability, media_root_name
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 locator.id().as_bytes().as_slice(),
                 locator.resource_id().as_bytes().as_slice(),
@@ -2435,6 +2435,7 @@ fn persist_locator(transaction: &Transaction<'_>, locator: &Locator) -> Result<(
                     .last_seen()
                     .map(postproject_core::Timestamp::as_unix_micros),
                 availability,
+                locator.media_root(),
             ],
         )
         .map(|_| ())

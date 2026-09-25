@@ -36,9 +36,10 @@ use postproject_media::{
     ImageSequenceSource, InspectionOutcome, InventoryCategory, InventoryReport, InventoryScanner,
     MediaInspector, MediaRecognizer, MediaResolver, MediaRootMapping, RecognizedMedia,
     TechnicalMetadata, VerificationMode, fingerprint_file, fingerprint_representation,
-    local_file_path, prepare_confirmed_locator, prepare_image_sequence_representation,
-    prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
-    prepare_recognized_original_media, prepare_single_file_representation,
+    local_file_path, prepare_confirmed_locator, prepare_confirmed_locator_under_root,
+    prepare_image_sequence_representation, prepare_ordered_parts_representation,
+    prepare_original_media, prepare_package_representation, prepare_recognized_original_media,
+    prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use serde::{Deserialize, Serialize};
@@ -4273,14 +4274,27 @@ fn media_resolve(args: MediaResolveArgs, json: bool) -> Result<()> {
                     .candidates()
                     .iter()
                     .filter(move |candidate| candidate.uri() == uri)
-                    .map(move |_| resolution.resource_id())
+                    .map(move |candidate| {
+                        let root = candidate
+                            .evidence()
+                            .iter()
+                            .find(|evidence| evidence.kind() == EvidenceKind::MediaRootRelation)
+                            .and_then(postproject_core::ResolutionEvidence::detail)
+                            .map(str::to_owned);
+                        (resolution.resource_id(), root)
+                    })
             })
             .collect();
         if matching.len() != 1 {
             bail!("confirmation URI must identify exactly one candidate from this resolution");
         }
-        let locator = prepare_confirmed_locator(matching[0], uri.to_owned())
-            .context("prepare confirmed locator")?;
+        let (resource_id, root_name) = &matching[0];
+        let locator = if let Some(root_name) = root_name {
+            prepare_confirmed_locator_under_root(*resource_id, uri.to_owned(), root_name.clone())
+        } else {
+            prepare_confirmed_locator(*resource_id, uri.to_owned())
+        }
+        .context("prepare confirmed locator")?;
         let mut transaction = production
             .begin_transaction()
             .context("begin confirmation transaction")?;
