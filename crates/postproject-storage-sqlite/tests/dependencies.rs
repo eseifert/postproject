@@ -52,17 +52,31 @@ fn assert_direct_dependents(
     target_asset: AssetId,
     target_representation: RepresentationId,
 ) {
+    let limits = DependencyQueryLimits::new(1, 10).expect("direct limits");
+    let page = QueryPageRequest::new(10, None).expect("page");
     assert_eq!(
         production
-            .dependents(DependencyTarget::Asset(target_asset))
-            .expect("query asset dependents"),
-        [source]
+            .dependents(DependencyTarget::Asset(target_asset), limits, &page)
+            .expect("query asset dependents")
+            .items()
+            .iter()
+            .map(|item| item.target())
+            .collect::<Vec<_>>(),
+        [DependencyTarget::Representation(source)]
     );
     assert_eq!(
         production
-            .dependents(DependencyTarget::Representation(target_representation))
-            .expect("query representation dependents"),
-        [source]
+            .dependents(
+                DependencyTarget::Representation(target_representation),
+                limits,
+                &page,
+            )
+            .expect("query representation dependents")
+            .items()
+            .iter()
+            .map(|item| item.target())
+            .collect::<Vec<_>>(),
+        [DependencyTarget::Representation(source)]
     );
 }
 
@@ -140,7 +154,7 @@ fn dependency_queries_are_transitive_bounded_and_keyset_paginated() {
 
     let direct_limits = DependencyQueryLimits::new(1, 10).expect("direct limits");
     let direct = production
-        .query_dependencies(
+        .dependencies(
             first.representation().id(),
             direct_limits,
             &QueryPageRequest::new(10, None).expect("page"),
@@ -168,7 +182,7 @@ fn dependency_queries_are_transitive_bounded_and_keyset_paginated() {
     let mut dependencies = Vec::new();
     loop {
         let page = production
-            .query_dependencies(
+            .dependencies(
                 first.representation().id(),
                 transitive_limits,
                 &QueryPageRequest::new(1, cursor).expect("page"),
@@ -200,7 +214,7 @@ fn dependency_queries_are_transitive_bounded_and_keyset_paginated() {
     );
 
     let cycle_boundary = production
-        .query_dependencies(
+        .dependencies(
             first.representation().id(),
             DependencyQueryLimits::new(2, 10).expect("cycle boundary limits"),
             &QueryPageRequest::new(10, None).expect("page"),
@@ -210,7 +224,7 @@ fn dependency_queries_are_transitive_bounded_and_keyset_paginated() {
     assert_eq!(cycle_boundary.items(), dependencies);
 
     let dependents = production
-        .query_dependents(
+        .dependents(
             DependencyTarget::Representation(third.representation().id()),
             transitive_limits,
             &QueryPageRequest::new(10, None).expect("page"),
@@ -236,7 +250,7 @@ fn dependency_queries_are_transitive_bounded_and_keyset_paginated() {
     assert!(!dependents.traversal_truncated());
 
     let first_page = production
-        .query_dependencies(
+        .dependencies(
             first.representation().id(),
             transitive_limits,
             &QueryPageRequest::new(1, None).expect("page"),
@@ -244,13 +258,13 @@ fn dependency_queries_are_transitive_bounded_and_keyset_paginated() {
         .expect("query first page");
     let mismatched = QueryPageRequest::new(1, first_page.next_cursor().cloned()).expect("page");
     let error = production
-        .query_dependencies(second.representation().id(), transitive_limits, &mismatched)
+        .dependencies(second.representation().id(), transitive_limits, &mismatched)
         .expect_err("cursor must be query-scoped");
     assert_eq!(error.kind(), ErrorKind::InvalidArgument);
 
     let representation_bound = DependencyQueryLimits::new(4, 1).expect("bounded limits");
     let bounded = production
-        .query_dependencies(
+        .dependencies(
             first.representation().id(),
             representation_bound,
             &QueryPageRequest::new(10, None).expect("page"),

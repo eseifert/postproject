@@ -30,16 +30,17 @@ use std::{
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     ArtifactEvaluationLimits, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, Dependency,
-    DependencyKind, DependencyTarget, Error, ErrorKind, EvidenceKind, ExternalIdentifier,
-    FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern, Job, JobClaimId,
-    JobFailure, JobId, JobKind, Locator, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS,
-    MAX_DEPENDENCIES_PER_SET, MAX_JOB_INPUTS, MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MediaRootId,
+    DependencyKind, DependencyQueryLimits, DependencyTarget, Error, ErrorKind, EvidenceKind,
+    ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern, Job,
+    JobClaimId, JobFailure, JobId, JobKind, JobQuery, Locator, MAX_ACTIVITY_EDGES,
+    MAX_CONTENT_MEMBERS, MAX_DEPENDENCIES_PER_SET, MAX_DEPENDENCY_QUERY_REPRESENTATIONS,
+    MAX_JOB_INPUTS, MAX_QUERY_PAGE_SIZE, MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MediaRootId,
     MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId,
-    PropertyId, RationalRate, RepresentationAvailability, RepresentationFingerprint,
-    RepresentationId, RepresentationImport, RepresentationKind, RepresentationResolution,
-    RequestedJobOutput, ResolutionEvidence, ResourceFingerprint, ResourceId,
-    ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, Timestamp, ToolIdentity,
-    TransactionLifecycle, VocabularyId,
+    PropertyId, QueryPageRequest, RationalRate, RepresentationAvailability,
+    RepresentationFingerprint, RepresentationId, RepresentationImport, RepresentationKind,
+    RepresentationResolution, RequestedJobOutput, ResolutionEvidence, ResourceFingerprint,
+    ResourceId, ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, Timestamp,
+    ToolIdentity, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, MediaRootMapping,
@@ -1419,13 +1420,21 @@ pub unsafe extern "C" fn pp_production_dependents(
                 }
             };
             let inner = lock_production(&production.state);
-            let objects = inner
-                .dependents(target)?
-                .into_iter()
+            let page = inner.dependents(
+                target,
+                DependencyQueryLimits::new(1, MAX_DEPENDENCY_QUERY_REPRESENTATIONS)?,
+                &QueryPageRequest::new(MAX_QUERY_PAGE_SIZE, None)?,
+            )?;
+            let objects = page
+                .items()
+                .iter()
                 .map(|id| PpObjectRef {
                     kind: PP_OBJECT_REPRESENTATION,
                     id: PpUuid {
-                        bytes: id.into_bytes(),
+                        bytes: match id.target() {
+                            DependencyTarget::Representation(id) => id.into_bytes(),
+                            _ => unreachable!("reverse dependency queries return representations"),
+                        },
                     },
                 })
                 .collect();
@@ -2286,7 +2295,11 @@ pub unsafe extern "C" fn pp_production_jobs(
                 .ok_or_else(|| invalid_argument("production must not be null"))?;
             require_output(out_jobs, "out_jobs")?;
             let inner = lock_production(&production.state);
-            out_jobs.write(Box::into_raw(Box::new(PpJobSet::new(&inner.jobs()?)?)));
+            let page = inner.jobs(
+                &JobQuery::default(),
+                &QueryPageRequest::new(MAX_QUERY_PAGE_SIZE, None)?,
+            )?;
+            out_jobs.write(Box::into_raw(Box::new(PpJobSet::new(page.items())?)));
             Ok(())
         })
     }

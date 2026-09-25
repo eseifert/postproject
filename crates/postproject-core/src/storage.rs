@@ -2,13 +2,14 @@
 
 use crate::{
     Activity, AgentIdentity, ArtifactEvaluation, ArtifactEvaluationLimits,
-    ArtifactReproducibilityReport, Asset, AssetId, Dependency, DependencySet, DependencyTarget,
-    ExternalIdentifier, IdentifierScheme, Job, JobClaim, JobClaimId, JobFailure, JobId, Locator,
-    MediaRoot, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
-    OriginalMediaImport, Production, RegenerationJobPlan, Representation,
-    RepresentationFingerprint, RepresentationId, RepresentationImport, Resource,
-    ResourceFingerprint, ResourceId, Result, Revision, RevisionContext, RevisionEvent, RevisionId,
-    Timestamp, ToolIdentity, TransactionId, TransactionState,
+    ArtifactReproducibilityReport, Asset, AssetId, Dependency, DependencyQueryLimits,
+    DependencyQueryMatch, DependencySet, DependencyTarget, ExternalIdentifier, IdentifierScheme,
+    Job, JobClaim, JobClaimId, JobFailure, JobId, JobQuery, Locator, MediaRoot, MetadataAssertion,
+    MetadataMatch, MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, Production,
+    QueryPage, QueryPageRequest, RegenerationJobPlan, Representation, RepresentationFingerprint,
+    RepresentationId, RepresentationImport, Resource, ResourceFingerprint, ResourceId, Result,
+    Revision, RevisionContext, RevisionEvent, RevisionId, Timestamp, ToolIdentity, TransactionId,
+    TransactionState,
 };
 
 /// Read operations required from a production persistence backend.
@@ -150,7 +151,20 @@ pub trait ProductionRead {
     /// dependency data cannot be decoded safely.
     fn dependency_set(&self, representation_id: RepresentationId) -> Result<Option<DependencySet>>;
 
-    /// Loads direct dependent representations in stable identity order.
+    /// Queries direct or transitive dependency targets in stable key order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the source is absent, the cursor does not
+    /// belong to the query, or persisted dependencies cannot be decoded safely.
+    fn dependencies(
+        &self,
+        source: RepresentationId,
+        limits: DependencyQueryLimits,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<DependencyQueryMatch>>;
+
+    /// Queries direct or transitive dependent representations in stable order.
     ///
     /// A representation target includes pinned references and floating asset
     /// references recorded as resolved to that representation.
@@ -159,7 +173,12 @@ pub trait ProductionRead {
     ///
     /// Returns a domain error when the target is absent or persisted IDs cannot
     /// be decoded safely.
-    fn dependents(&self, target: DependencyTarget) -> Result<Vec<RepresentationId>>;
+    fn dependents(
+        &self,
+        target: DependencyTarget,
+        limits: DependencyQueryLimits,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<DependencyQueryMatch>>;
 
     /// Evaluates whether an activity-produced representation still reflects
     /// its recorded inputs and output snapshot.
@@ -188,13 +207,13 @@ pub trait ProductionRead {
         representation_id: RepresentationId,
     ) -> Result<ArtifactReproducibilityReport>;
 
-    /// Loads all durable jobs in stable identity order.
+    /// Queries durable jobs in stable identity order.
     ///
     /// # Errors
     ///
     /// Returns a storage-domain error when persisted job data cannot be read
     /// or decoded safely.
-    fn jobs(&self) -> Result<Vec<Job>>;
+    fn jobs(&self, query: &JobQuery, page: &QueryPageRequest) -> Result<QueryPage<Job>>;
 
     /// Loads one durable job by identity.
     ///

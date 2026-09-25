@@ -11,17 +11,18 @@ use postproject_core::{
     ArtifactDependencyIssue, ArtifactDependencyPathSegment, ArtifactEdgeKind,
     ArtifactEvaluationLimits, ArtifactKnowledgeReason, ArtifactKnowledgeState,
     ArtifactReproducibilityIssue, ArtifactTraversalLimitKind, Asset, AssetId, AvailabilityIssue,
-    AvailabilityIssueKind, DecimalValue, Dependency, DependencyKind, DependencySet,
-    DependencySetStatus, DependencyTarget, EvidenceKind, ExternalIdentifier, FrameRange,
-    IdentifierScheme, ImageSequencePattern, Job, JobClaimId, JobFailure, JobId, JobKind, JobState,
-    Locator, LocatorAvailability, LocatorId, MediaRoot, MediaRootId, MetadataAssertion,
-    MetadataField, MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity,
-    OriginalMediaImport, ProductionId, ProductionStoreTransaction, PropertyId, RationalRate,
-    RationalValue, Representation, RepresentationAvailability, RepresentationId,
-    RepresentationKind, RepresentationResolution, RequestedJobOutput, ResolutionEvidence, Resource,
-    ResourceId, ResourceResolution, ResourceResolutionState, ResourceRole, Revision,
-    RevisionContext, RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity,
-    VocabularyId,
+    AvailabilityIssueKind, DecimalValue, Dependency, DependencyKind, DependencyQueryLimits,
+    DependencySet, DependencySetStatus, DependencyTarget, EvidenceKind, ExternalIdentifier,
+    FrameRange, IdentifierScheme, ImageSequencePattern, Job, JobClaimId, JobFailure, JobId,
+    JobKind, JobQuery, JobState, Locator, LocatorAvailability, LocatorId,
+    MAX_DEPENDENCY_QUERY_REPRESENTATIONS, MAX_QUERY_PAGE_SIZE, MediaRoot, MediaRootId,
+    MetadataAssertion, MetadataField, MetadataProperty, MetadataValue, MetadataValueKind,
+    ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId, ProductionStoreTransaction,
+    PropertyId, QueryPageRequest, RationalRate, RationalValue, Representation,
+    RepresentationAvailability, RepresentationId, RepresentationKind, RepresentationResolution,
+    RequestedJobOutput, ResolutionEvidence, Resource, ResourceId, ResourceResolution,
+    ResourceResolutionState, ResourceRole, Revision, RevisionContext, RevisionEvent,
+    RevisionEventKind, RevisionId, Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     FfprobeInspector, FileResourceSource, ImageSequenceSource, InspectionOutcome,
@@ -2395,12 +2396,21 @@ impl DependencySpec {
 fn dependency_dependents(args: &DependencyTargetArgs, json: bool) -> Result<()> {
     let target = parse_dependency_target(args.target_kind, &args.target_id)?;
     let production = SqliteProduction::open(&args.production).context("open production")?;
-    let views: Vec<_> = production
-        .dependents(target)
+    let page = production
+        .dependents(
+            target,
+            DependencyQueryLimits::new(1, MAX_DEPENDENCY_QUERY_REPRESENTATIONS)?,
+            &QueryPageRequest::new(MAX_QUERY_PAGE_SIZE, None)?,
+        )
         .context("load dependents")?
+        .into_items();
+    let views: Vec<_> = page
         .into_iter()
-        .map(|representation_id| RepresentationRefView {
-            representation_id: representation_id.to_string(),
+        .map(|item| RepresentationRefView {
+            representation_id: match item.target() {
+                DependencyTarget::Representation(id) => id.to_string(),
+                _ => unreachable!("reverse dependency queries return representations"),
+            },
         })
         .collect();
     if json {
@@ -2790,12 +2800,14 @@ fn print_job_result(
 
 fn job_list(args: &ProductionArgs, json: bool) -> Result<()> {
     let production = SqliteProduction::open(&args.production).context("open production")?;
-    let views = production
-        .jobs()
+    let page = production
+        .jobs(
+            &JobQuery::default(),
+            &QueryPageRequest::new(MAX_QUERY_PAGE_SIZE, None)?,
+        )
         .context("load jobs")?
-        .iter()
-        .map(job_view)
-        .collect::<Vec<_>>();
+        .into_items();
+    let views = page.iter().map(job_view).collect::<Vec<_>>();
     if json {
         print_json(&views)
     } else {

@@ -950,7 +950,7 @@ impl SqliteProduction {
     /// Returns [`ErrorKind::NotFound`] when the source is absent,
     /// [`ErrorKind::InvalidArgument`] for a cursor from another query, or a
     /// storage-domain error when persisted dependencies are malformed.
-    pub fn query_dependencies(
+    pub fn dependencies(
         &self,
         source: RepresentationId,
         limits: DependencyQueryLimits,
@@ -1021,7 +1021,7 @@ impl SqliteProduction {
     ///
     /// Returns [`ErrorKind::NotFound`] when the target is absent, or a
     /// storage-domain error when persisted IDs are malformed.
-    pub fn dependents(&self, target: DependencyTarget) -> Result<Vec<RepresentationId>> {
+    fn direct_dependents(&self, target: DependencyTarget) -> Result<Vec<RepresentationId>> {
         let (query, target_id) = match target {
             DependencyTarget::Asset(id) => {
                 let exists = self
@@ -1083,7 +1083,7 @@ impl SqliteProduction {
     /// Returns [`ErrorKind::NotFound`] when the target is absent,
     /// [`ErrorKind::InvalidArgument`] for a cursor from another query, or a
     /// storage-domain error when persisted dependency IDs are malformed.
-    pub fn query_dependents(
+    pub fn dependents(
         &self,
         target: DependencyTarget,
         limits: DependencyQueryLimits,
@@ -1099,7 +1099,7 @@ impl SqliteProduction {
         let mut traversal_truncated = false;
 
         while let Some((current_target, depth)) = pending.pop_front() {
-            let direct = self.dependents(current_target)?;
+            let direct = self.direct_dependents(current_target)?;
             if depth == limits.max_depth() {
                 traversal_truncated |= direct.iter().any(|id| !visited.contains(id));
                 continue;
@@ -1137,43 +1137,13 @@ impl SqliteProduction {
         )
     }
 
-    /// Loads all durable jobs in stable identity order.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ErrorKind::Storage`] when persisted job data is malformed or
-    /// cannot be read.
-    pub fn jobs(&self) -> Result<Vec<Job>> {
-        let mut statement = self
-            .connection
-            .prepare(
-                "SELECT id, kind, output_asset_id, output_representation_kind,
-                        target_root, state, claim_id, claim_tool_name,
-                        claim_tool_version, claim_tool_uri, claim_agent_name,
-                        claim_agent_scheme, claim_agent_value, claim_agent_qualifier,
-                        claim_expires_at_micros, completion_activity_id,
-                        completion_representation_id, failure_diagnostic
-                 FROM jobs ORDER BY id",
-            )
-            .map_err(sqlite_error("prepare job query"))?;
-        let stored = statement
-            .query_map([], stored_job_row)
-            .map_err(sqlite_error("query jobs"))?
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(sqlite_error("read job row"))?;
-        stored
-            .into_iter()
-            .map(|job| decode_job(&self.connection, job))
-            .collect()
-    }
-
     /// Queries durable jobs in stable identity order with optional exact predicates.
     ///
     /// # Errors
     ///
     /// Returns [`ErrorKind::InvalidArgument`] for a cursor from another query,
     /// or [`ErrorKind::Storage`] when persisted job data is malformed.
-    pub fn query_jobs(&self, query: &JobQuery, page: &QueryPageRequest) -> Result<QueryPage<Job>> {
+    pub fn jobs(&self, query: &JobQuery, page: &QueryPageRequest) -> Result<QueryPage<Job>> {
         let position = query_cursor::job_position(page, query)?;
         let mut clauses = Vec::new();
         let mut parameters = Vec::<Value>::new();
@@ -1609,8 +1579,22 @@ impl ProductionRead for SqliteProduction {
         SqliteProduction::dependency_set(self, representation_id)
     }
 
-    fn dependents(&self, target: DependencyTarget) -> Result<Vec<RepresentationId>> {
-        SqliteProduction::dependents(self, target)
+    fn dependencies(
+        &self,
+        source: RepresentationId,
+        limits: DependencyQueryLimits,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<DependencyQueryMatch>> {
+        SqliteProduction::dependencies(self, source, limits, page)
+    }
+
+    fn dependents(
+        &self,
+        target: DependencyTarget,
+        limits: DependencyQueryLimits,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<DependencyQueryMatch>> {
+        SqliteProduction::dependents(self, target, limits, page)
     }
 
     fn evaluate_artifact(
@@ -1628,8 +1612,8 @@ impl ProductionRead for SqliteProduction {
         SqliteProduction::artifact_reproducibility(self, representation_id)
     }
 
-    fn jobs(&self) -> Result<Vec<Job>> {
-        SqliteProduction::jobs(self)
+    fn jobs(&self, query: &JobQuery, page: &QueryPageRequest) -> Result<QueryPage<Job>> {
+        SqliteProduction::jobs(self, query, page)
     }
 
     fn job(&self, job_id: JobId) -> Result<Job> {

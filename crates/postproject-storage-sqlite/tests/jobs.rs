@@ -69,6 +69,17 @@ fn requested_job(source: &OriginalMediaImport) -> Job {
     .expect("valid job")
 }
 
+fn all_jobs(production: &SqliteProduction) -> Vec<Job> {
+    let page = production
+        .jobs(
+            &JobQuery::default(),
+            &QueryPageRequest::new(1_000, None).expect("page request"),
+        )
+        .expect("list jobs");
+    assert!(page.next_cursor().is_none());
+    page.into_items()
+}
+
 #[test]
 #[allow(
     clippy::too_many_lines,
@@ -122,7 +133,7 @@ fn job_queries_are_filtered_and_keyset_paginated() {
     let mut ids = Vec::new();
     loop {
         let page = production
-            .query_jobs(
+            .jobs(
                 &query,
                 &QueryPageRequest::new(1, cursor).expect("page request"),
             )
@@ -138,7 +149,7 @@ fn job_queries_are_filtered_and_keyset_paginated() {
 
     let requested_proxies = JobQuery::new(Some(JobStateKind::Requested), Some(proxy_kind));
     let page = production
-        .query_jobs(
+        .jobs(
             &requested_proxies,
             &QueryPageRequest::new(10, None).expect("page request"),
         )
@@ -151,7 +162,7 @@ fn job_queries_are_filtered_and_keyset_paginated() {
 
     let cancelled = JobQuery::new(Some(JobStateKind::Cancelled), None);
     let page = production
-        .query_jobs(
+        .jobs(
             &cancelled,
             &QueryPageRequest::new(10, None).expect("page request"),
         )
@@ -162,14 +173,14 @@ fn job_queries_are_filtered_and_keyset_paginated() {
     );
 
     let first_page = production
-        .query_jobs(
+        .jobs(
             &query,
             &QueryPageRequest::new(1, None).expect("page request"),
         )
         .expect("query first page");
     let mismatched = QueryPageRequest::new(1, first_page.next_cursor().cloned()).expect("page");
     let error = production
-        .query_jobs(&requested_proxies, &mismatched)
+        .jobs(&requested_proxies, &mismatched)
         .expect_err("cursor must include filters");
     assert_eq!(error.kind(), ErrorKind::InvalidArgument);
 }
@@ -343,10 +354,7 @@ fn requested_job_and_metadata_round_trip_and_are_journaled() {
     drop(production);
     let production = SqliteProduction::open(path).expect("reopen production");
     assert_eq!(production.job(job.id()).expect("load job"), job);
-    assert_eq!(
-        production.jobs().expect("list jobs").as_slice(),
-        std::slice::from_ref(&job)
-    );
+    assert_eq!(all_jobs(&production).as_slice(), std::slice::from_ref(&job));
     assert_eq!(
         production
             .metadata_values(ObjectRef::Job(job.id()), &property)
@@ -407,7 +415,7 @@ fn invalid_job_references_leave_no_partial_request() {
     assert_eq!(error.kind(), ErrorKind::NotFound);
     transaction.commit().expect("commit empty transaction");
     drop(transaction);
-    assert!(production.jobs().expect("list jobs").is_empty());
+    assert!(all_jobs(&production).is_empty());
     assert!(matches!(missing_root.state(), JobState::Requested));
 }
 
@@ -850,7 +858,7 @@ fn regeneration_planning_copies_producer_inputs_kind_and_parameters_without_enqu
     assert_eq!(plan.parameters().len(), 1);
     assert_eq!(plan.parameters()[0].property(), &property);
     assert_eq!(plan.parameters()[0].value(), &value);
-    assert!(production.jobs().expect("list jobs").is_empty());
+    assert!(all_jobs(&production).is_empty());
     assert_eq!(
         production
             .latest_revision()
