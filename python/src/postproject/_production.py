@@ -1455,6 +1455,33 @@ class Transaction:
         )
         self._native.check(status, error)
 
+    def complete_job(
+        self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        now_unix_micros: int,
+        output_representation_id: RepresentationId,
+        activity_id: ActivityId,
+    ) -> None:
+        """Bind a staged representation and activity into one completion."""
+
+        self._require_open()
+        native_job_id = _native_uuid(job_id.value)
+        native_claim_id = _native_uuid(claim_id.value)
+        native_output_id = _native_uuid(output_representation_id.value)
+        native_activity_id = _native_uuid(activity_id.value)
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_complete_job(
+            self._handle,
+            ctypes.byref(native_job_id),
+            ctypes.byref(native_claim_id),
+            now_unix_micros,
+            ctypes.byref(native_output_id),
+            ctypes.byref(native_activity_id),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+
     def fail_job(
         self,
         job_id: JobId,

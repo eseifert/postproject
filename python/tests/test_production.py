@@ -204,6 +204,66 @@ class ProductionTests(unittest.TestCase):
             self.assertEqual(final_jobs[job_id].failure_diagnostic, "encoder exited")
             self.assertEqual(final_jobs[cancelled_job_id].state, JobState.CANCELLED)
 
+            with production.transaction() as transaction:
+                completed_job_id = transaction.request_job(
+                    JobRequest(
+                        "org.postproject:generate-proxy",
+                        (source_id,),
+                        asset_id,
+                        RepresentationKind.PROXY,
+                    )
+                )
+            with production.transaction() as transaction:
+                completion_claim_id = transaction.claim_job(
+                    completed_job_id, worker, None, 41, 50
+                )
+            with production.transaction() as transaction:
+                completed_representation_id = (
+                    transaction.add_single_file_representation(
+                        asset_id, RepresentationKind.PROXY, self.second_media_path
+                    )
+                )
+                completion_activity_id = transaction.create_activity(
+                    ActivitySpec(
+                        kind="org.postproject:transcode",
+                        outputs=(
+                            ActivityEdge(
+                                completed_representation_id,
+                                "org.postproject:output.proxy",
+                            ),
+                        ),
+                        inputs=(
+                            ActivityEdge(
+                                source_id, "org.postproject:input.primary-video"
+                            ),
+                        ),
+                        tool=worker,
+                    )
+                )
+                transaction.complete_job(
+                    completed_job_id,
+                    completion_claim_id,
+                    42,
+                    completed_representation_id,
+                    completion_activity_id,
+                )
+
+            completed_jobs = {job.id: job for job in production.jobs}
+            completed_job = completed_jobs[completed_job_id]
+            self.assertEqual(completed_job.state, JobState.SUCCEEDED)
+            self.assertIsNotNone(completed_job.completion)
+            assert completed_job.completion is not None
+            self.assertEqual(
+                completed_job.completion.representation_id,
+                completed_representation_id,
+            )
+            self.assertEqual(
+                completed_job.completion.activity_id, completion_activity_id
+            )
+            producing = production.activities_producing[completed_representation_id]
+            self.assertEqual(len(producing), 1)
+            self.assertIsNotNone(producing[0].outputs[0].snapshot)
+
     def test_representations_are_typed_keyed_and_copied(self) -> None:
         with Production.create(
             self.production_path, library_path=LIBRARY_PATH
