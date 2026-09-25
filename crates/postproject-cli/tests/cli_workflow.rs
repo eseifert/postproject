@@ -798,3 +798,52 @@ fn reads_revision_pages_and_semantic_events() {
     assert_eq!(events[3]["structural_position"], 0);
     assert_eq!(events[4]["kind"], "locator_added");
 }
+
+#[test]
+fn requests_and_lists_jobs() {
+    let directory = tempfile::tempdir().expect("create test directory");
+    let production = directory.path().join("jobs.pproj");
+    let original = directory.path().join("original.mov");
+    fs::write(&original, b"job source fixture").expect("write source fixture");
+    let production_path = production.to_str().expect("UTF-8 production path");
+
+    run_json(&["init", production_path]);
+    let imported = run_json(&[
+        "media",
+        "add",
+        production_path,
+        original.to_str().expect("UTF-8 media path"),
+    ]);
+    let asset_id = imported["asset_id"].as_str().expect("asset ID");
+    let representation_id = imported["representation_id"]
+        .as_str()
+        .expect("representation ID");
+    let requested = run_json(&[
+        "job",
+        "request",
+        production_path,
+        "org.postproject:generate-proxy",
+        asset_id,
+        "proxy",
+        "--input",
+        representation_id,
+    ]);
+    assert!(requested["id"].is_string());
+    assert_eq!(requested["state"], "requested");
+    assert_eq!(requested["inputs"][0], representation_id);
+    assert_eq!(requested["output_asset_id"], asset_id);
+    assert_eq!(requested["output_kind"], "proxy");
+    assert!(requested["target_root"].is_null());
+
+    let jobs = run_json(&["job", "list", production_path]);
+    assert_eq!(jobs, serde_json::json!([requested]));
+    let revision = run_json(&["revisions", "latest", production_path]);
+    let events = run_json(&[
+        "revisions",
+        "events",
+        production_path,
+        revision["id"].as_str().expect("revision ID"),
+    ]);
+    assert_eq!(events[0]["kind"], "job_requested");
+    assert_eq!(events[0]["job_id"], jobs[0]["id"]);
+}

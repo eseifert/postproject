@@ -13,14 +13,15 @@ use postproject_core::{
     ArtifactReproducibilityIssue, ArtifactTraversalLimitKind, Asset, AssetId, AvailabilityIssue,
     AvailabilityIssueKind, DecimalValue, Dependency, DependencyKind, DependencySet,
     DependencySetStatus, DependencyTarget, EvidenceKind, ExternalIdentifier, FrameRange,
-    IdentifierScheme, ImageSequencePattern, Locator, LocatorAvailability, LocatorId, MediaRoot,
-    MediaRootId, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
-    MetadataValueKind, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId,
-    ProductionStoreTransaction, PropertyId, RationalRate, RationalValue, Representation,
-    RepresentationAvailability, RepresentationId, RepresentationKind, RepresentationResolution,
-    ResolutionEvidence, Resource, ResourceId, ResourceResolution, ResourceResolutionState,
-    ResourceRole, Revision, RevisionContext, RevisionEvent, RevisionEventKind, RevisionId,
-    Timestamp, ToolIdentity, VocabularyId,
+    IdentifierScheme, ImageSequencePattern, Job, JobId, JobKind, JobState, Locator,
+    LocatorAvailability, LocatorId, MediaRoot, MediaRootId, MetadataAssertion, MetadataField,
+    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity,
+    OriginalMediaImport, ProductionId, ProductionStoreTransaction, PropertyId, RationalRate,
+    RationalValue, Representation, RepresentationAvailability, RepresentationId,
+    RepresentationKind, RepresentationResolution, RequestedJobOutput, ResolutionEvidence, Resource,
+    ResourceId, ResourceResolution, ResourceResolutionState, ResourceRole, Revision,
+    RevisionContext, RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity,
+    VocabularyId,
 };
 use postproject_media::{
     FfprobeInspector, FileResourceSource, ImageSequenceSource, InspectionOutcome,
@@ -67,6 +68,8 @@ enum Command {
     Dependency(DependencyArgs),
     /// Evaluate managed artifacts from recorded production knowledge.
     Artifact(ArtifactArgs),
+    /// Request and inspect durable production work.
+    Job(JobArgs),
     /// Inspect the durable semantic change journal.
     Revisions(RevisionsArgs),
 }
@@ -593,6 +596,36 @@ struct ArtifactEvaluateArgs {
 }
 
 #[derive(Debug, Args)]
+struct JobArgs {
+    #[command(subcommand)]
+    command: JobCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum JobCommand {
+    /// Request durable production work.
+    Request(JobRequestArgs),
+    /// List durable jobs in stable identity order.
+    List(ProductionArgs),
+}
+
+#[derive(Debug, Args)]
+struct JobRequestArgs {
+    production: PathBuf,
+    /// Open-world namespaced job kind.
+    kind: String,
+    output_asset_id: String,
+    #[arg(value_enum)]
+    output_kind: RepresentationKindArg,
+    /// Input representation ID; repeat for multiple inputs.
+    #[arg(long = "input")]
+    inputs: Vec<String>,
+    /// Optional logical media-root name preferred for the output.
+    #[arg(long)]
+    target_root: Option<String>,
+}
+
+#[derive(Debug, Args)]
 struct RevisionsArgs {
     #[command(subcommand)]
     command: RevisionsCommand,
@@ -924,6 +957,24 @@ struct AgentIdentifierView {
     scheme: String,
     value: String,
     qualifier: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct JobView {
+    id: String,
+    kind: String,
+    inputs: Vec<String>,
+    output_asset_id: String,
+    output_kind: &'static str,
+    target_root: Option<String>,
+    state: &'static str,
+    claim_id: Option<String>,
+    claim_expires_at_unix_micros: Option<i64>,
+    claim_tool: Option<ToolView>,
+    claim_agent: Option<AgentView>,
+    completion_activity_id: Option<String>,
+    completion_representation_id: Option<String>,
+    failure_diagnostic: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1316,6 +1367,10 @@ fn execute(cli: Cli) -> Result<()> {
         Command::Artifact(args) => match args.command {
             ArtifactCommand::Evaluate(args) => artifact_evaluate(&args, cli.json),
             ArtifactCommand::Reproducibility(args) => artifact_reproducibility(&args, cli.json),
+        },
+        Command::Job(args) => match args.command {
+            JobCommand::Request(args) => job_request(args, cli.json),
+            JobCommand::List(args) => job_list(&args, cli.json),
         },
         Command::Revisions(args) => match args.command {
             RevisionsCommand::Latest(args) => revisions_latest(&args, cli.json),
@@ -2406,6 +2461,114 @@ fn activity_view(activity: &Activity) -> ActivityView {
                 snapshot: output.snapshot().map(activity_edge_snapshot_view),
             })
             .collect(),
+    }
+}
+
+fn job_request(args: JobRequestArgs, json: bool) -> Result<()> {
+    let input_ids = args
+        .inputs
+        .iter()
+        .map(|value| parse_representation_id(value))
+        .collect::<Result<Vec<_>>>()?;
+    let output_kind = match args.output_kind {
+        RepresentationKindArg::Original => RepresentationKind::Original,
+        RepresentationKindArg::Proxy => RepresentationKind::Proxy,
+        RepresentationKindArg::Optimized => RepresentationKind::Optimized,
+        RepresentationKindArg::Derived => RepresentationKind::Derived,
+    };
+    let job = Job::new(
+        JobId::new(),
+        JobKind::new(args.kind).context("validate job kind")?,
+        input_ids,
+        RequestedJobOutput::new(
+            parse_asset_id(&args.output_asset_id)?,
+            output_kind,
+            args.target_root,
+        )
+        .context("validate requested output")?,
+    )
+    .context("validate job request")?;
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin job request")?;
+    set_cli_revision_context(&mut transaction, "Request job")?;
+    transaction.request_job(&job).context("request job")?;
+    transaction.commit().context("commit job request")?;
+
+    let view = job_view(&job);
+    if json {
+        print_json(&view)
+    } else {
+        println!("requested job {} ({})", view.id, view.kind);
+        Ok(())
+    }
+}
+
+fn job_list(args: &ProductionArgs, json: bool) -> Result<()> {
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let views = production
+        .jobs()
+        .context("load jobs")?
+        .iter()
+        .map(job_view)
+        .collect::<Vec<_>>();
+    if json {
+        print_json(&views)
+    } else {
+        for view in views {
+            println!("{}\t{}\t{}", view.id, view.state, view.kind);
+        }
+        Ok(())
+    }
+}
+
+fn job_view(job: &Job) -> JobView {
+    let (claim_id, claim_expires_at_unix_micros, claim_tool, claim_agent) = match job.state() {
+        JobState::Claimed(claim) => (
+            Some(claim.id().to_string()),
+            Some(claim.expires_at().as_unix_micros()),
+            Some(ToolView {
+                name: claim.tool().name().to_owned(),
+                version: claim.tool().version().map(str::to_owned),
+                uri: claim.tool().uri().map(str::to_owned),
+            }),
+            claim.agent().map(|agent| AgentView {
+                name: agent.name().map(str::to_owned),
+                identifier: agent.identifier().map(|identifier| AgentIdentifierView {
+                    scheme: identifier.scheme().as_str().to_owned(),
+                    value: identifier.value().to_owned(),
+                    qualifier: identifier.qualifier().map(str::to_owned),
+                }),
+            }),
+        ),
+        _ => (None, None, None, None),
+    };
+    let (completion_activity_id, completion_representation_id) = match job.state() {
+        JobState::Succeeded(completion) => (
+            Some(completion.activity_id().to_string()),
+            Some(completion.representation_id().to_string()),
+        ),
+        _ => (None, None),
+    };
+    JobView {
+        id: job.id().to_string(),
+        kind: job.kind().as_str().to_owned(),
+        inputs: job.inputs().iter().map(ToString::to_string).collect(),
+        output_asset_id: job.requested_output().asset_id().to_string(),
+        output_kind: representation_kind(job.requested_output().representation_kind()),
+        target_root: job.requested_output().target_root().map(str::to_owned),
+        state: job_state(job.state()),
+        claim_id,
+        claim_expires_at_unix_micros,
+        claim_tool,
+        claim_agent,
+        completion_activity_id,
+        completion_representation_id,
+        failure_diagnostic: match job.state() {
+            JobState::Failed(failure) => Some(failure.diagnostic().to_owned()),
+            _ => None,
+        },
     }
 }
 
@@ -3737,6 +3900,17 @@ const fn representation_kind(kind: RepresentationKind) -> &'static str {
         RepresentationKind::Proxy => "proxy",
         RepresentationKind::Optimized => "optimized",
         RepresentationKind::Derived => "derived",
+        _ => "unknown",
+    }
+}
+
+const fn job_state(state: &JobState) -> &'static str {
+    match state {
+        JobState::Requested => "requested",
+        JobState::Claimed(_) => "claimed",
+        JobState::Succeeded(_) => "succeeded",
+        JobState::Failed(_) => "failed",
+        JobState::Cancelled => "cancelled",
         _ => "unknown",
     }
 }
