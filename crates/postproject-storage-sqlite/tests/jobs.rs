@@ -1,10 +1,11 @@
 //! Durable job request integration coverage.
 
 use postproject_core::{
-    Asset, AssetId, ContentStructure, ErrorKind, Job, JobId, JobKind, JobState, Locator,
-    LocatorAvailability, LocatorId, MediaRoot, MediaRootId, MetadataProperty, MetadataValue,
-    ObjectRef, OriginalMediaImport, PropertyId, Representation, RepresentationId,
-    RepresentationKind, RequestedJobOutput, Resource, ResourceId, RevisionEventKind, Timestamp,
+    AgentIdentity, Asset, AssetId, ContentStructure, ErrorKind, ExternalIdentifier,
+    IdentifierScheme, Job, JobFailure, JobId, JobKind, JobState, Locator, LocatorAvailability,
+    LocatorId, MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef,
+    OriginalMediaImport, PropertyId, Representation, RepresentationId, RepresentationKind,
+    RequestedJobOutput, Resource, ResourceId, RevisionEventKind, Timestamp, ToolIdentity,
     VocabularyId,
 };
 use postproject_storage_sqlite::SqliteProduction;
@@ -166,4 +167,242 @@ fn invalid_job_references_leave_no_partial_request() {
     drop(transaction);
     assert!(production.jobs().expect("list jobs").is_empty());
     assert!(matches!(missing_root.state(), JobState::Requested));
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one ordered scenario exercises token replacement, renewal, release, and failure"
+)]
+fn claims_use_tokens_and_caller_supplied_lease_time() {
+    let directory = tempdir().expect("create temporary directory");
+    let mut production = SqliteProduction::create(directory.path().join("production.pproj"), None)
+        .expect("create production");
+    let source = source_import();
+    let job = requested_job(&source);
+    {
+        let mut transaction = production.begin_transaction().expect("begin setup");
+        transaction.import_original(&source).expect("import source");
+        transaction
+            .add_media_root(
+                MediaRoot::new(
+                    MediaRootId::from_bytes([6; 16]),
+                    "proxies",
+                    None,
+                    None,
+                    0,
+                    true,
+                )
+                .expect("valid root"),
+            )
+            .expect("add root");
+        transaction.request_job(&job).expect("request job");
+        transaction.commit().expect("commit setup");
+    }
+    let tool = ToolIdentity::new(
+        "worker",
+        Some("1.0".to_owned()),
+        Some("https://example.com/worker".to_owned()),
+    )
+    .expect("valid tool");
+    let agent = AgentIdentity::new(
+        Some("Render node".to_owned()),
+        Some(
+            ExternalIdentifier::new(
+                IdentifierScheme::new("com.example.worker").expect("valid scheme"),
+                "node-7",
+                None,
+            )
+            .expect("valid identifier"),
+        ),
+    )
+    .expect("valid agent");
+
+    let first_claim = {
+        let mut transaction = production.begin_transaction().expect("begin claim");
+        let error = transaction
+            .claim_job(
+                job.id(),
+                &tool,
+                Some(&agent),
+                Timestamp::from_unix_micros(100),
+                Timestamp::from_unix_micros(100),
+            )
+            .expect_err("non-future expiry must fail");
+        assert_eq!(error.kind(), ErrorKind::InvalidArgument);
+        let claim = transaction
+            .claim_job(
+                job.id(),
+                &tool,
+                Some(&agent),
+                Timestamp::from_unix_micros(100),
+                Timestamp::from_unix_micros(200),
+            )
+            .expect("claim job");
+        transaction.commit().expect("commit claim");
+        claim
+    };
+    assert!(matches!(
+        production.job(job.id()).expect("load claimed job").state(),
+        JobState::Claimed(claim) if claim == &first_claim
+    ));
+
+    let second_claim = {
+        let mut transaction = production.begin_transaction().expect("begin replacement");
+        let claim = transaction
+            .claim_job(
+                job.id(),
+                &tool,
+                Some(&agent),
+                Timestamp::from_unix_micros(200),
+                Timestamp::from_unix_micros(300),
+            )
+            .expect("replace expired claim");
+        transaction.commit().expect("commit replacement");
+        claim
+    };
+    assert_ne!(second_claim.id(), first_claim.id());
+    {
+        let mut transaction = production.begin_transaction().expect("begin renewal");
+        let error = transaction
+            .release_job_claim(job.id(), first_claim.id())
+            .expect_err("stale token must fail");
+        assert_eq!(error.kind(), ErrorKind::Conflict);
+        transaction
+            .renew_job_claim(
+                job.id(),
+                second_claim.id(),
+                Timestamp::from_unix_micros(250),
+                Timestamp::from_unix_micros(400),
+            )
+            .expect("renew current claim");
+        transaction
+            .release_job_claim(job.id(), second_claim.id())
+            .expect("release current claim");
+        transaction.commit().expect("commit release");
+    }
+    assert!(matches!(
+        production.job(job.id()).expect("load released job").state(),
+        JobState::Requested
+    ));
+
+    let final_claim = {
+        let mut transaction = production.begin_transaction().expect("begin final claim");
+        let claim = transaction
+            .claim_job(
+                job.id(),
+                &tool,
+                None,
+                Timestamp::from_unix_micros(400),
+                Timestamp::from_unix_micros(500),
+            )
+            .expect("claim released job");
+        transaction.commit().expect("commit final claim");
+        claim
+    };
+    let failure = JobFailure::new("encoder exited with status 1").expect("valid failure");
+    {
+        let mut transaction = production.begin_transaction().expect("begin failure");
+        transaction
+            .fail_job(
+                job.id(),
+                final_claim.id(),
+                Timestamp::from_unix_micros(450),
+                &failure,
+            )
+            .expect("fail active claim");
+        transaction.commit().expect("commit failure");
+    }
+    assert!(matches!(
+        production.job(job.id()).expect("load failed job").state(),
+        JobState::Failed(stored) if stored == &failure
+    ));
+    assert!(production.activities().expect("load activities").is_empty());
+    assert_eq!(
+        production
+            .representations(source.asset().id())
+            .expect("load representations")
+            .len(),
+        1
+    );
+    let revision = production
+        .latest_revision()
+        .expect("load revision")
+        .unwrap();
+    assert!(matches!(
+        production
+            .events_for_revision(revision.id())
+            .expect("load events")[0]
+            .kind(),
+        RevisionEventKind::JobFailed { job_id } if *job_id == job.id()
+    ));
+}
+
+#[test]
+fn cancellation_accepts_requested_and_claimed_jobs_only() {
+    let directory = tempdir().expect("create temporary directory");
+    let mut production = SqliteProduction::create(directory.path().join("production.pproj"), None)
+        .expect("create production");
+    let source = source_import();
+    let requested = Job::new(
+        JobId::from_bytes([9; 16]),
+        JobKind::new("org.postproject:inspect-media").expect("valid kind"),
+        vec![source.representation().id()],
+        RequestedJobOutput::new(source.asset().id(), RepresentationKind::Derived, None)
+            .expect("valid output"),
+    )
+    .expect("valid job");
+    let claimed = Job::new(
+        JobId::from_bytes([10; 16]),
+        JobKind::new("org.postproject:generate-thumbnail").expect("valid kind"),
+        vec![source.representation().id()],
+        RequestedJobOutput::new(source.asset().id(), RepresentationKind::Derived, None)
+            .expect("valid output"),
+    )
+    .expect("valid job");
+    {
+        let mut transaction = production.begin_transaction().expect("begin setup");
+        transaction.import_original(&source).expect("import source");
+        transaction.request_job(&requested).expect("request job");
+        transaction.request_job(&claimed).expect("request job");
+        transaction.commit().expect("commit setup");
+    }
+    let tool = ToolIdentity::new("worker", None, None).expect("valid tool");
+    {
+        let mut transaction = production.begin_transaction().expect("begin cancellation");
+        transaction
+            .claim_job(
+                claimed.id(),
+                &tool,
+                None,
+                Timestamp::from_unix_micros(10),
+                Timestamp::from_unix_micros(20),
+            )
+            .expect("claim job");
+        transaction
+            .cancel_job(requested.id())
+            .expect("cancel requested job");
+        transaction
+            .cancel_job(claimed.id())
+            .expect("cancel claimed job");
+        transaction.commit().expect("commit cancellation");
+    }
+    for job_id in [requested.id(), claimed.id()] {
+        assert!(matches!(
+            production.job(job_id).expect("load cancelled job").state(),
+            JobState::Cancelled
+        ));
+        let error = production
+            .begin_transaction()
+            .expect("begin repeated cancellation")
+            .cancel_job(job_id)
+            .expect_err("terminal job must not be cancelled twice");
+        assert_eq!(error.kind(), ErrorKind::Conflict);
+    }
+    let missing = production
+        .begin_transaction()
+        .expect("begin missing cancellation")
+        .cancel_job(JobId::from_bytes([11; 16]))
+        .expect_err("missing job must fail");
+    assert_eq!(missing.kind(), ErrorKind::NotFound);
 }
