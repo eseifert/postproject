@@ -2,7 +2,13 @@
 
 #![forbid(unsafe_code)]
 
-use std::{fs, path::PathBuf, process::ExitCode, str::FromStr};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::ExitCode,
+    str::FromStr,
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -14,24 +20,25 @@ use postproject_core::{
     AvailabilityIssueKind, DecimalValue, Dependency, DependencyKind, DependencyQueryLimits,
     DependencySet, DependencySetStatus, DependencyTarget, EvidenceKind, ExternalIdentifier,
     FrameRange, IdentifierScheme, ImageSequencePattern, Job, JobClaimId, JobFailure, JobId,
-    JobKind, JobQuery, JobState, JobStateKind, Locator, LocatorAvailability, LocatorId, MediaRoot,
-    MediaRootId, MetadataAssertion, MetadataField, MetadataProperty, MetadataValue,
-    MetadataValueKind, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId,
-    ProductionStoreTransaction, PropertyId, QueryCursor, QueryPageRequest, RationalRate,
-    RationalValue, Representation, RepresentationAvailability, RepresentationId,
-    RepresentationKind, RepresentationResolution, RequestedJobOutput, ResolutionEvidence, Resource,
-    ResourceId, ResourceResolution, ResourceResolutionState, ResourceRole, Revision,
-    RevisionContext, RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity,
-    VocabularyId,
+    JobKind, JobQuery, JobState, JobStateKind, Locator, LocatorAvailability, LocatorId,
+    MAX_JOB_DIAGNOSTIC_BYTES, MediaRoot, MediaRootId, MetadataAssertion, MetadataField,
+    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity,
+    OriginalMediaImport, ProductionId, ProductionStoreTransaction, PropertyId, QueryCursor,
+    QueryPageRequest, RationalRate, RationalValue, Representation, RepresentationAvailability,
+    RepresentationId, RepresentationKind, RepresentationResolution, RequestedJobOutput,
+    ResolutionEvidence, Resource, ResourceId, ResourceResolution, ResourceResolutionState,
+    ResourceRole, Revision, RevisionContext, RevisionEvent, RevisionEventKind, RevisionId,
+    Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
-    FfprobeInspector, FileResourceSource, ImageSequenceSource, InspectionOutcome,
-    InventoryCategory, InventoryReport, InventoryScanner, MediaInspector, MediaRecognizer,
-    MediaResolver, MediaRootMapping, RecognizedMedia, TechnicalMetadata, VerificationMode,
-    fingerprint_file, fingerprint_representation, prepare_confirmed_locator,
-    prepare_image_sequence_representation, prepare_ordered_parts_representation,
-    prepare_original_media, prepare_package_representation, prepare_recognized_original_media,
-    prepare_single_file_representation,
+    EXECUTOR_PARAMETER_VOCABULARY, EXECUTOR_PROFILE_PROPERTY, ExecutionOutcome, ExecutionRequest,
+    Executor, ExecutorCapability, FfmpegExecutor, FfprobeInspector, FileResourceSource,
+    ImageSequenceSource, InspectionOutcome, InventoryCategory, InventoryReport, InventoryScanner,
+    MediaInspector, MediaRecognizer, MediaResolver, MediaRootMapping, RecognizedMedia,
+    TechnicalMetadata, VerificationMode, fingerprint_file, fingerprint_representation,
+    local_file_path, prepare_confirmed_locator, prepare_image_sequence_representation,
+    prepare_ordered_parts_representation, prepare_original_media, prepare_package_representation,
+    prepare_recognized_original_media, prepare_single_file_representation,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use serde::{Deserialize, Serialize};
@@ -658,6 +665,8 @@ enum JobCommand {
     List(JobListArgs),
     /// Derive non-persisted jobs that would regenerate artifacts.
     Plan(JobPlanArgs),
+    /// Claim and execute eligible proxy or thumbnail jobs with ffmpeg.
+    Run(JobRunArgs),
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -694,6 +703,29 @@ struct JobRequestArgs {
     /// Optional logical media-root name preferred for the output.
     #[arg(long)]
     target_root: Option<String>,
+    /// Named reference-executor profile to persist as typed job metadata.
+    #[arg(long)]
+    profile: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct JobRunArgs {
+    production: PathBuf,
+    /// Stop after one eligible job reaches a terminal state.
+    #[arg(long)]
+    once: bool,
+    /// Map a production root name to this machine's directory (NAME=PATH).
+    #[arg(long = "root-map", value_name = "NAME=PATH")]
+    root_mappings: Vec<RootMappingArg>,
+    /// ffmpeg executable used by the reference executor.
+    #[arg(long, default_value = "ffmpeg")]
+    ffmpeg: PathBuf,
+    /// Maximum runtime for one ffmpeg process.
+    #[arg(long, default_value_t = 7_200)]
+    timeout_seconds: u64,
+    /// Claim lease duration; the runner renews it at one-third intervals.
+    #[arg(long, default_value_t = 60)]
+    lease_seconds: u64,
 }
 
 #[derive(Debug, Args)]
@@ -1126,6 +1158,12 @@ struct JobView {
 }
 
 #[derive(Debug, Serialize)]
+struct JobRunView {
+    job: JobView,
+    output: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct RegenerationPlanView {
     artifact_representation_id: String,
     job: JobView,
@@ -1547,6 +1585,7 @@ fn execute(cli: Cli) -> Result<()> {
             JobCommand::Cancel(args) => job_cancel(&args, cli.json),
             JobCommand::List(args) => job_list(&args, cli.json),
             JobCommand::Plan(args) => job_plan(&args, cli.json),
+            JobCommand::Run(args) => job_run(&args, cli.json),
         },
         Command::Revisions(args) => match args.command {
             RevisionsCommand::Latest(args) => revisions_latest(&args, cli.json),
@@ -2711,6 +2750,13 @@ fn job_request(args: JobRequestArgs, json: bool) -> Result<()> {
         .context("begin job request")?;
     set_cli_revision_context(&mut transaction, "Request job")?;
     transaction.request_job(&job).context("request job")?;
+    if let Some(profile) = args.profile {
+        let property = executor_profile_property()?;
+        let value = MetadataValue::string(profile).context("validate executor profile")?;
+        transaction
+            .add_metadata_value(ObjectRef::Job(job.id()), &property, &value)
+            .context("record executor profile")?;
+    }
     transaction.commit().context("commit job request")?;
 
     let view = job_view(&job);
@@ -2990,6 +3036,455 @@ fn job_plan(args: &JobPlanArgs, json: bool) -> Result<()> {
         }
         Ok(())
     }
+}
+
+struct PreparedExecutorJob {
+    job: Job,
+    profile: String,
+    parameters: Vec<MetadataAssertion>,
+    input: PathBuf,
+    target_root: PathBuf,
+}
+
+fn job_run(args: &JobRunArgs, json: bool) -> Result<()> {
+    if args.timeout_seconds == 0 {
+        bail!("executor timeout must be greater than zero");
+    }
+    if args.lease_seconds == 0 {
+        bail!("job lease must be greater than zero");
+    }
+    let root_mappings = prepare_root_mappings(&args.root_mappings)?;
+    let lease = Duration::from_secs(args.lease_seconds);
+    let heartbeat_interval = lease / 3;
+    let executor = FfmpegExecutor::with_executable(&args.ffmpeg)
+        .with_timeout(Duration::from_secs(args.timeout_seconds))
+        .context("configure executor timeout")?
+        .with_heartbeat_interval(heartbeat_interval)
+        .context("configure executor heartbeat")?;
+    match executor.capability().context("probe ffmpeg capability")? {
+        ExecutorCapability::Available { .. } => {}
+        ExecutorCapability::Unavailable { reason } | ExecutorCapability::Failed { reason } => {
+            bail!("reference executor unavailable: {reason}");
+        }
+        _ => bail!("reference executor reported an unknown capability state"),
+    }
+
+    let mut production = SqliteProduction::open(&args.production).context("open production")?;
+    let jobs = requested_jobs(&production)?;
+    let mut prepared = Vec::new();
+    for job in jobs {
+        if let Some(candidate) = prepare_executor_job(&production, job, &root_mappings)? {
+            prepared.push(candidate);
+            if args.once {
+                break;
+            }
+        }
+    }
+
+    let mut views = Vec::with_capacity(prepared.len());
+    for candidate in prepared {
+        views.push(run_executor_job(
+            &mut production,
+            &executor,
+            &candidate,
+            lease,
+        )?);
+    }
+    if json {
+        print_json(&views)
+    } else {
+        if views.is_empty() {
+            println!("no eligible requested jobs");
+        }
+        for view in views {
+            println!(
+                "{}\t{}\t{}",
+                view.job.id,
+                view.job.state,
+                view.output.as_deref().unwrap_or("-")
+            );
+        }
+        Ok(())
+    }
+}
+
+fn requested_jobs(production: &SqliteProduction) -> Result<Vec<Job>> {
+    let query = JobQuery::new(Some(JobStateKind::Requested), None);
+    let mut cursor = None;
+    let mut jobs = Vec::new();
+    loop {
+        let page = production
+            .jobs(
+                &query,
+                &QueryPageRequest::new(1_000, cursor).context("prepare requested-job page")?,
+            )
+            .context("load requested jobs")?;
+        jobs.extend_from_slice(page.items());
+        let Some(next) = page.next_cursor().cloned() else {
+            return Ok(jobs);
+        };
+        cursor = Some(next);
+    }
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "eligibility validates job metadata, domain shape, resolution, and target mapping"
+)]
+fn prepare_executor_job(
+    production: &SqliteProduction,
+    job: Job,
+    root_mappings: &[MediaRootMapping],
+) -> Result<Option<PreparedExecutorJob>> {
+    if !matches!(
+        job.kind().as_str(),
+        postproject_media::GENERATE_PROXY_JOB_KIND | postproject_media::GENERATE_THUMBNAIL_JOB_KIND
+    ) {
+        return Ok(None);
+    }
+    let parameters = production
+        .metadata(ObjectRef::Job(job.id()))
+        .context("load executor job parameters")?;
+    let property = executor_profile_property()?;
+    let profiles = parameters
+        .iter()
+        .filter(|assertion| assertion.property() == &property)
+        .collect::<Vec<_>>();
+    let [profile] = profiles.as_slice() else {
+        bail!(
+            "eligible job {} must carry exactly one executor profile",
+            job.id()
+        );
+    };
+    let profile = profile
+        .value()
+        .as_string()
+        .ok_or_else(|| anyhow::anyhow!("executor profile on job {} must be a string", job.id()))?;
+    if !FfmpegExecutor::supports(job.kind().as_str(), profile) {
+        bail!(
+            "job {} has unsupported executor profile {profile} for {}",
+            job.id(),
+            job.kind().as_str()
+        );
+    }
+    let output_kind_matches = match job.kind().as_str() {
+        postproject_media::GENERATE_PROXY_JOB_KIND => {
+            job.requested_output().representation_kind() == RepresentationKind::Proxy
+        }
+        postproject_media::GENERATE_THUMBNAIL_JOB_KIND => {
+            job.requested_output().representation_kind() == RepresentationKind::Derived
+        }
+        _ => false,
+    };
+    if !output_kind_matches {
+        bail!(
+            "job {} requests an output kind incompatible with {}",
+            job.id(),
+            job.kind().as_str()
+        );
+    }
+    let [input_id] = job.inputs() else {
+        bail!(
+            "reference executor job {} must have exactly one input",
+            job.id()
+        );
+    };
+    let representations = production
+        .representations(job.requested_output().asset_id())
+        .context("load executor input asset representations")?;
+    let representation = representations
+        .iter()
+        .find(|representation| representation.id() == *input_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "reference executor input {} must belong to requested output asset {}",
+                input_id,
+                job.requested_output().asset_id()
+            )
+        })?;
+    if representation
+        .content_structure()
+        .single_resource_id()
+        .is_none()
+    {
+        bail!("reference executor input {input_id} must be a single-file representation");
+    }
+    let resolution = resolve_representation(
+        production,
+        representation,
+        &MediaResolver::default(),
+        root_mappings,
+        false,
+        &FfprobeInspector::default(),
+    )?;
+    if resolution.availability() != RepresentationAvailability::Online {
+        bail!("reference executor input {input_id} is not unambiguously online");
+    }
+    let [resource] = resolution.resources() else {
+        bail!("reference executor input must resolve to one resource");
+    };
+    let [candidate] = resource.candidates() else {
+        bail!("reference executor input must resolve to one candidate");
+    };
+    let input = local_file_path(candidate.uri()).context("convert executor input file URI")?;
+    let root_name = job.requested_output().target_root().ok_or_else(|| {
+        anyhow::anyhow!(
+            "reference executor job {} must name a target root",
+            job.id()
+        )
+    })?;
+    let matching_roots = root_mappings
+        .iter()
+        .filter(|mapping| mapping.name() == root_name)
+        .collect::<Vec<_>>();
+    let [target_root] = matching_roots.as_slice() else {
+        bail!(
+            "target root {root_name} must have exactly one machine mapping for job {}",
+            job.id()
+        );
+    };
+    Ok(Some(PreparedExecutorJob {
+        job,
+        profile: profile.to_owned(),
+        parameters,
+        input,
+        target_root: target_root.directory().to_path_buf(),
+    }))
+}
+
+fn run_executor_job(
+    production: &mut SqliteProduction,
+    executor: &FfmpegExecutor,
+    prepared: &PreparedExecutorJob,
+    lease: Duration,
+) -> Result<JobRunView> {
+    let job_id = prepared.job.id();
+    let started = Timestamp::now().context("read executor start time")?;
+    let claim_tool = ToolIdentity::new(
+        "PostProject reference executor",
+        Some(env!("CARGO_PKG_VERSION").to_owned()),
+        Some("https://postproject.org/".to_owned()),
+    )
+    .context("construct executor identity")?;
+    let claim = {
+        let mut transaction = production
+            .begin_transaction()
+            .context("begin executor job claim")?;
+        set_cli_revision_context(&mut transaction, "Claim reference-executor job")?;
+        let claim = transaction
+            .claim_job(
+                job_id,
+                &claim_tool,
+                None,
+                started,
+                timestamp_after(started, lease)?,
+            )
+            .context("claim executor job")?;
+        transaction.commit().context("commit executor job claim")?;
+        claim
+    };
+    let request = ExecutionRequest::new(
+        job_id,
+        claim.id(),
+        prepared.job.kind().clone(),
+        &prepared.profile,
+        &prepared.input,
+        &prepared.target_root,
+    )
+    .context("prepare local execution")?;
+    let outcome = {
+        let mut heartbeat = || {
+            let now = Timestamp::now()?;
+            let mut transaction = production.begin_transaction()?;
+            let origin = OriginIdentity::new(
+                "postproject-cli",
+                Some(env!("CARGO_PKG_VERSION").to_owned()),
+                None,
+            )?;
+            let context =
+                RevisionContext::new(Some(origin), Some("Renew executor job claim".to_owned()))?;
+            transaction.set_revision_context(context)?;
+            transaction.renew_job_claim(job_id, claim.id(), now, timestamp_after(now, lease)?)?;
+            transaction.commit()
+        };
+        executor.execute(&request, &mut heartbeat)
+    };
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let diagnostic = format!("reference executor error: {error}");
+            let _ = fail_executor_job(production, job_id, claim.id(), &diagnostic);
+            return Err(error).context("execute claimed job");
+        }
+    };
+    match outcome {
+        ExecutionOutcome::Unavailable { reason } => {
+            let mut transaction = production
+                .begin_transaction()
+                .context("begin unavailable executor release")?;
+            set_cli_revision_context(&mut transaction, "Release unavailable executor job")?;
+            transaction
+                .release_job_claim(job_id, claim.id())
+                .context("release unavailable executor job")?;
+            transaction
+                .commit()
+                .context("commit unavailable executor release")?;
+            bail!("reference executor unavailable: {reason}");
+        }
+        ExecutionOutcome::Failed { diagnostic } => {
+            fail_executor_job(production, job_id, claim.id(), &diagnostic)?;
+            let job = production.job(job_id).context("reload failed job")?;
+            Ok(JobRunView {
+                job: job_view(&job),
+                output: None,
+            })
+        }
+        ExecutionOutcome::Completed {
+            output,
+            ffmpeg_version,
+        } => complete_executor_job(
+            production,
+            prepared,
+            claim.id(),
+            started,
+            &output,
+            ffmpeg_version,
+        ),
+        _ => bail!("reference executor returned an unknown outcome"),
+    }
+}
+
+fn complete_executor_job(
+    production: &mut SqliteProduction,
+    prepared: &PreparedExecutorJob,
+    claim_id: JobClaimId,
+    started: Timestamp,
+    output_path: &Path,
+    ffmpeg_version: String,
+) -> Result<JobRunView> {
+    let job_id = prepared.job.id();
+    let output = match prepare_single_file_representation(
+        prepared.job.requested_output().asset_id(),
+        prepared.job.requested_output().representation_kind(),
+        output_path,
+    ) {
+        Ok(output) => output,
+        Err(error) => {
+            let _ = fs::remove_file(output_path);
+            let diagnostic = format!("cannot prepare executor output: {error}");
+            fail_executor_job(production, job_id, claim_id, &diagnostic)?;
+            return Err(error).context("prepare executor output");
+        }
+    };
+    let finished = Timestamp::now().context("read executor completion time")?;
+    let inputs = prepared
+        .job
+        .inputs()
+        .iter()
+        .copied()
+        .map(|id| ActivityInput::new(id, None))
+        .collect();
+    let activity = Activity::new(
+        ActivityId::new(),
+        ActivityKind::new(prepared.job.kind().as_str())
+            .context("validate executor activity kind")?,
+        inputs,
+        vec![ActivityOutput::new(output.representation().id(), None)],
+    )
+    .context("validate executor activity")?
+    .with_timing(Some(started), Some(finished))
+    .context("validate executor activity timing")?
+    .with_tool(
+        ToolIdentity::new(
+            "ffmpeg",
+            Some(ffmpeg_version),
+            Some("https://ffmpeg.org/".to_owned()),
+        )
+        .context("validate ffmpeg tool identity")?,
+    );
+    let activity_id = activity.id();
+    let completion = (|| -> Result<()> {
+        let mut transaction = production
+            .begin_transaction()
+            .context("begin executor job completion")?;
+        set_cli_revision_context(&mut transaction, "Complete reference-executor job")?;
+        transaction
+            .complete_job(job_id, claim_id, finished, &output, &activity)
+            .context("complete executor job")?;
+        for parameter in &prepared.parameters {
+            transaction
+                .add_metadata_value(
+                    ObjectRef::Activity(activity_id),
+                    parameter.property(),
+                    parameter.value(),
+                )
+                .context("copy executor activity parameter")?;
+        }
+        transaction.commit().context("commit executor completion")
+    })();
+    if let Err(error) = completion {
+        let _ = fs::remove_file(output_path);
+        return Err(error);
+    }
+    let job = production.job(job_id).context("reload completed job")?;
+    Ok(JobRunView {
+        job: job_view(&job),
+        output: Some(output_path.display().to_string()),
+    })
+}
+
+fn fail_executor_job(
+    production: &mut SqliteProduction,
+    job_id: JobId,
+    claim_id: JobClaimId,
+    diagnostic: &str,
+) -> Result<()> {
+    let failure =
+        JobFailure::new(bounded_job_diagnostic(diagnostic)).context("validate executor failure")?;
+    let now = Timestamp::now().context("read executor failure time")?;
+    let mut transaction = production
+        .begin_transaction()
+        .context("begin executor job failure")?;
+    set_cli_revision_context(&mut transaction, "Fail reference-executor job")?;
+    transaction
+        .fail_job(job_id, claim_id, now, &failure)
+        .context("fail executor job")?;
+    transaction.commit().context("commit executor job failure")
+}
+
+fn executor_profile_property() -> Result<MetadataProperty> {
+    Ok(MetadataProperty::new(
+        VocabularyId::new(EXECUTOR_PARAMETER_VOCABULARY)
+            .context("validate executor parameter vocabulary")?,
+        PropertyId::new(EXECUTOR_PROFILE_PROPERTY).context("validate executor profile property")?,
+    ))
+}
+
+fn timestamp_after(now: Timestamp, duration: Duration) -> postproject_core::Result<Timestamp> {
+    let micros = i64::try_from(duration.as_micros()).map_err(|error| {
+        postproject_core::Error::new(
+            postproject_core::ErrorKind::InvalidArgument,
+            format!("job lease is too large: {error}"),
+        )
+    })?;
+    let expires = now.as_unix_micros().checked_add(micros).ok_or_else(|| {
+        postproject_core::Error::new(
+            postproject_core::ErrorKind::InvalidArgument,
+            "job lease expiry is outside the supported timestamp range",
+        )
+    })?;
+    Ok(Timestamp::from_unix_micros(expires))
+}
+
+fn bounded_job_diagnostic(diagnostic: &str) -> String {
+    if diagnostic.len() <= MAX_JOB_DIAGNOSTIC_BYTES {
+        return diagnostic.to_owned();
+    }
+    let mut end = MAX_JOB_DIAGNOSTIC_BYTES;
+    while !diagnostic.is_char_boundary(end) {
+        end -= 1;
+    }
+    diagnostic[..end].to_owned()
 }
 
 fn job_view(job: &Job) -> JobView {
@@ -4352,17 +4847,21 @@ fn set_cli_revision_context(
     transaction: &mut impl ProductionStoreTransaction,
     message: &str,
 ) -> Result<()> {
+    let context = cli_revision_context(message)?;
+    transaction
+        .set_revision_context(context)
+        .context("set CLI revision context")
+}
+
+fn cli_revision_context(message: &str) -> Result<RevisionContext> {
     let origin = OriginIdentity::new(
         "postproject-cli",
         Some(env!("CARGO_PKG_VERSION").to_owned()),
         None,
     )
     .context("build CLI revision origin")?;
-    let context = RevisionContext::new(Some(origin), Some(message.to_owned()))
-        .context("build CLI revision context")?;
-    transaction
-        .set_revision_context(context)
-        .context("set CLI revision context")
+    RevisionContext::new(Some(origin), Some(message.to_owned()))
+        .context("build CLI revision context")
 }
 
 fn print_json(value: &impl Serialize) -> Result<()> {
