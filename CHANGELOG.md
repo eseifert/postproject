@@ -9,6 +9,8 @@ Development version: `0.4.0-alpha.1`.
 
 ### Added
 
+- Added SQLite schema 9 foundations for durable jobs, canonical inputs,
+  lifecycle detail, job metadata, and indexed state/kind queries.
 - Added first-class, typed dependency observations with exact authored
   references, floating or pinned targets, complete-set replacement, semantic
   revision events, and SQLite schema 8 foundations for bounded activity-input
