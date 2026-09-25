@@ -1909,6 +1909,22 @@ public:
     detail::throw_if_error(status, error);
   }
 
+  void completeJob(const Uuid &job_id, const Uuid &claim_id,
+                   std::int64_t now_unix_micros,
+                   const Uuid &output_representation_id,
+                   const Uuid &activity_id) {
+    const pp_uuid_t native_job_id = detail::native_uuid(job_id);
+    const pp_uuid_t native_claim_id = detail::native_uuid(claim_id);
+    const pp_uuid_t native_output_id =
+        detail::native_uuid(output_representation_id);
+    const pp_uuid_t native_activity_id = detail::native_uuid(activity_id);
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_complete_job(
+        transaction_, &native_job_id, &native_claim_id, now_unix_micros,
+        &native_output_id, &native_activity_id, &error);
+    detail::throw_if_error(status, error);
+  }
+
   void failJob(const Uuid &job_id, const Uuid &claim_id,
                std::int64_t now_unix_micros, std::string_view diagnostic) {
     const pp_uuid_t native_job_id = detail::native_uuid(job_id);

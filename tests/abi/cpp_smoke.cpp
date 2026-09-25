@@ -477,6 +477,57 @@ int main(int argc, char **argv) {
       return 35;
     }
 
+    auto completion_request = reopened.beginTransaction();
+    const auto completed_job_id = completion_request.requestJob(
+        {"org.postproject:generate-proxy",
+         {resolutions[0].representation_id}, asset_id,
+         postproject::RepresentationKind::proxy, std::nullopt});
+    completion_request.commit();
+    auto completion_claim = reopened.beginTransaction();
+    const auto completion_claim_id = completion_claim.claimJob(
+        completed_job_id, {"C++ worker", std::nullopt, std::nullopt},
+        std::nullopt, 41, 50);
+    completion_claim.commit();
+    auto completion = reopened.beginTransaction();
+    const auto completed_representation_id =
+        completion.addSingleFileRepresentation(
+            asset_id, postproject::RepresentationKind::proxy,
+            moved_media_path);
+    const auto completion_activity_id = completion.createActivity(
+        {"org.postproject:transcode",
+         std::nullopt,
+         std::nullopt,
+         postproject::ToolIdentity{"C++ worker", std::nullopt, std::nullopt},
+         std::nullopt,
+         {{resolutions[0].representation_id,
+           std::string("org.postproject:input.primary-video")}},
+         {{completed_representation_id,
+           std::string("org.postproject:output.proxy")}}});
+    completion.completeJob(completed_job_id, completion_claim_id, 42,
+                           completed_representation_id,
+                           completion_activity_id);
+    completion.commit();
+
+    const auto completed_jobs = reopened.jobs();
+    const auto completed_job = std::find_if(
+        completed_jobs.begin(), completed_jobs.end(),
+        [&](const postproject::Job &candidate) {
+          return candidate.id == completed_job_id;
+        });
+    const auto completion_producing =
+        reopened.activitiesProducing(completed_representation_id);
+    if (completed_jobs.size() != 3 || completed_job == completed_jobs.end() ||
+        completed_job->state != postproject::JobState::succeeded ||
+        !completed_job->completion.has_value() ||
+        completed_job->completion->activity_id != completion_activity_id ||
+        completed_job->completion->representation_id !=
+            completed_representation_id ||
+        completion_producing.size() != 1 ||
+        completion_producing[0].id != completion_activity_id ||
+        !completion_producing[0].outputs[0].snapshot.has_value()) {
+      return 36;
+    }
+
     try {
       static_cast<void>(postproject::Production::open(path + ".missing"));
       return 6;
