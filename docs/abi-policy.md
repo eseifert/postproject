@@ -121,7 +121,9 @@ Evaluation is knowledge-only and uses caller-supplied traversal bounds.
 
 ABI version 18 extends artifact reasons with typed dependency paths and
 dependency-specific incomplete-knowledge conditions. Path arrays, their
-strings, and fingerprint spans borrow the owning evaluation handle.
+strings, and fingerprint spans borrow the owning evaluation handle. It also
+adds owned direct-dependency reads, reverse dependent reads, complete-set
+transaction recording, and the dependency-set-recorded revision event.
 
 ## External identifiers
 

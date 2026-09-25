@@ -1093,6 +1093,36 @@ int main(int argc, char **argv) {
   }
   pp_transaction_release(transaction);
   transaction = NULL;
+  revisions = NULL;
+  if (pp_production_latest_revision(production, &revisions, &error) != PP_OK ||
+      revisions == NULL || pp_revision_set_count(revisions) != UINT64_C(1) ||
+      pp_revision_set_get(revisions, UINT64_C(0), &revision_id,
+                          &revision_sequence, &revision_transaction_id,
+                          &revision_committed_at, &revision_origin_name,
+                          &revision_origin_version, &revision_origin_uri,
+                          &revision_message, &error) != PP_OK) {
+    pp_revision_set_release(revisions);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 80;
+  }
+  pp_revision_set_release(revisions);
+  revision_events = NULL;
+  if (pp_production_revision_events(production, &revision_id, &revision_events,
+                                    &error) != PP_OK ||
+      revision_events == NULL ||
+      pp_revision_event_set_count(revision_events) != UINT64_C(1) ||
+      pp_revision_event_set_get(revision_events, UINT64_C(0), &revision_event,
+                                &error) != PP_OK ||
+      revision_event.kind != PP_REVISION_DEPENDENCY_SET_RECORDED ||
+      memcmp(revision_event.representation_id.bytes, representation_id.bytes,
+             sizeof(representation_id.bytes)) != 0) {
+    pp_revision_event_set_release(revision_events);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 81;
+  }
+  pp_revision_event_set_release(revision_events);
   status = pp_production_dependency_set(production, &representation_id,
                                         &dependencies, &error);
   pp_dependency_t read_dependency = {0};

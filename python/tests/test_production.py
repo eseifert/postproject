@@ -22,6 +22,7 @@ from postproject import (
     AvailabilityIssueKind,
     ContentStructureKind,
     Dependency,
+    DependencySetRecordedEvent,
     DependencySetStatus,
     EvidenceKind,
     ExternalIdentifier,
@@ -350,6 +351,11 @@ class ProductionTests(unittest.TestCase):
             with production.transaction() as transaction:
                 transaction.record_dependency_set(proxy_id, (dependency,))
 
+            revision = production.latest_revision
+            assert revision is not None
+            events = production.revision_events[revision.id]
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0].payload, DependencySetRecordedEvent(proxy_id))
             recorded = production.dependency_set(proxy_id)
             self.assertIsNotNone(recorded)
             assert recorded is not None

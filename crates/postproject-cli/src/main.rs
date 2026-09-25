@@ -1195,6 +1195,9 @@ enum RevisionEventKindView {
         algorithm: String,
         version: u16,
     },
+    DependencySetRecorded {
+        representation_id: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -2995,6 +2998,11 @@ fn revision_event_view(event: &RevisionEvent) -> Result<RevisionEventView> {
             algorithm: algorithm.clone(),
             version: *version,
         },
+        RevisionEventKind::DependencySetRecorded { representation_id } => {
+            RevisionEventKindView::DependencySetRecorded {
+                representation_id: representation_id.to_string(),
+            }
+        }
         _ => bail!("revision event kind is not supported by this CLI"),
     };
     Ok(RevisionEventView {

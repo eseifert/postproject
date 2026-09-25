@@ -402,6 +402,10 @@ struct RepresentationFingerprintObservedEvent final {
   std::uint16_t version;
 };
 
+struct DependencySetRecordedEvent final {
+  Uuid representation_id;
+};
+
 using RevisionEventPayload =
     std::variant<AssetImportedEvent, RepresentationAddedEvent,
                  ResourceAddedEvent, RepresentationResourceAddedEvent,
@@ -412,7 +416,8 @@ using RevisionEventPayload =
                  MetadataAddedOrReplacedEvent, MetadataRemovedEvent,
                  ActivityCreatedEvent, ActivityInputAddedEvent,
                  ActivityOutputAddedEvent, ResourceFingerprintObservedEvent,
-                 RepresentationFingerprintObservedEvent>;
+                 RepresentationFingerprintObservedEvent,
+                 DependencySetRecordedEvent>;
 
 struct RevisionEvent final {
   std::uint32_t position;
@@ -1256,6 +1261,9 @@ inline RevisionEvent revision_event(const pp_revision_event_set_t *events,
                 required_event_string(event.fingerprint_algorithm,
                                       "fingerprint algorithm"),
                 event.fingerprint_version}};
+  case PP_REVISION_DEPENDENCY_SET_RECORDED:
+    return {event.position,
+            DependencySetRecordedEvent{uuid(event.representation_id)}};
   default:
     throw Error(ErrorCode::internal,
                 "revision event has an unknown semantic kind");

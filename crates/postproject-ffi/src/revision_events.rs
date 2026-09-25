@@ -7,8 +7,9 @@ use postproject_core::{Error, RevisionEvent, RevisionEventKind};
 use crate::{
     PP_REVISION_ACTIVITY_CREATED, PP_REVISION_ACTIVITY_INPUT_ADDED,
     PP_REVISION_ACTIVITY_OUTPUT_ADDED, PP_REVISION_ASSET_IMPORTED,
-    PP_REVISION_EXTERNAL_IDENTIFIER_ADDED, PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED,
-    PP_REVISION_LOCATOR_ADDED, PP_REVISION_LOCATOR_RETIRED, PP_REVISION_MEDIA_ROOT_ADDED,
+    PP_REVISION_DEPENDENCY_SET_RECORDED, PP_REVISION_EXTERNAL_IDENTIFIER_ADDED,
+    PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED, PP_REVISION_LOCATOR_ADDED,
+    PP_REVISION_LOCATOR_RETIRED, PP_REVISION_MEDIA_ROOT_ADDED,
     PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED, PP_REVISION_MEDIA_ROOT_REMOVED,
     PP_REVISION_METADATA_ADDED_OR_REPLACED, PP_REVISION_METADATA_REMOVED,
     PP_REVISION_REPRESENTATION_ADDED, PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED,
@@ -265,6 +266,10 @@ impl TryFrom<&RevisionEvent> for AbiRevisionEvent {
                 projected.fingerprint_algorithm =
                     Some(exact_cstring(algorithm, "revision fingerprint algorithm")?);
                 projected.fingerprint_version = Some(*version);
+            }
+            RevisionEventKind::DependencySetRecorded { representation_id } => {
+                projected.kind = PP_REVISION_DEPENDENCY_SET_RECORDED;
+                projected.representation_id = Some(uuid(representation_id.into_bytes()));
             }
             _ => {
                 return Err(postproject_core::Error::new(

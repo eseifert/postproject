@@ -365,6 +365,12 @@ int main(int argc, char **argv) {
     auto dependency_update = reopened.beginTransaction();
     dependency_update.recordDependencySet(proxy_id, {dependency});
     dependency_update.commit();
+    const auto dependency_revision = reopened.latestRevision();
+    if (!dependency_revision.has_value()) {
+      return 32;
+    }
+    const auto dependency_events =
+        reopened.revisionEvents(dependency_revision->id);
     const auto dependencies = reopened.dependencySet(proxy_id);
     const auto dependents = reopened.dependents(asset_ref);
     if (!dependencies.has_value() ||
@@ -380,7 +386,13 @@ int main(int argc, char **argv) {
         !dependencies->dependencies[0].required ||
         dependencies->dependencies[0].authored_reference !=
             dependency.authored_reference ||
-        dependents.size() != 1 || dependents[0] != proxy_id) {
+        dependents.size() != 1 || dependents[0] != proxy_id ||
+        dependency_events.size() != 1 ||
+        !std::holds_alternative<postproject::DependencySetRecordedEvent>(
+            dependency_events[0].payload) ||
+        std::get<postproject::DependencySetRecordedEvent>(
+            dependency_events[0].payload)
+                .representation_id != proxy_id) {
       return 31;
     }
 

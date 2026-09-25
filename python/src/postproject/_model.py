@@ -742,6 +742,11 @@ class RepresentationFingerprintObservedEvent:
     version: int
 
 
+@dataclass(frozen=True, slots=True)
+class DependencySetRecordedEvent:
+    representation_id: RepresentationId
+
+
 RevisionEventPayload: TypeAlias = (
     AssetImportedEvent
     | RepresentationAddedEvent
@@ -761,6 +766,7 @@ RevisionEventPayload: TypeAlias = (
     | ActivityOutputAddedEvent
     | ResourceFingerprintObservedEvent
     | RepresentationFingerprintObservedEvent
+    | DependencySetRecordedEvent
 )
 
 

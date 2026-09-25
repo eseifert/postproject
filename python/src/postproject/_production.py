@@ -82,6 +82,7 @@ from ._model import (
     ContentStructureKind,
     Dependency,
     DependencySet,
+    DependencySetRecordedEvent,
     DependencySetStatus,
     EvidenceKind,
     ExternalIdentifier,
@@ -2871,6 +2872,10 @@ def _revision_event_at(
             RepresentationId(_uuid(event.representation_id)),
             _decode_required(event.fingerprint_algorithm, "fingerprint algorithm"),
             int(event.fingerprint_version),
+        )
+    elif kind == _abi.PP_REVISION_DEPENDENCY_SET_RECORDED:
+        payload = DependencySetRecordedEvent(
+            RepresentationId(_uuid(event.representation_id))
         )
     else:
         raise RuntimeError("revision event has an unknown semantic kind")

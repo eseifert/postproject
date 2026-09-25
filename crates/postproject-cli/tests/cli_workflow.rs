@@ -85,6 +85,11 @@ fn exercise_dependencies(
         recorded["dependencies"][0]["authored_reference"],
         "../Characters/Lead A.blend#Rig"
     );
+    let revision = run_json(&["revisions", "latest", production]);
+    let revision_id = revision["id"].as_str().expect("revision ID");
+    let events = run_json(&["revisions", "events", production, revision_id]);
+    assert_eq!(events[0]["kind"], "dependency_set_recorded");
+    assert_eq!(events[0]["representation_id"], proxy_id);
     assert_eq!(
         run_json(&["dependency", "show", production, proxy_id]),
         recorded
