@@ -7,6 +7,7 @@ from _ctypes import _Pointer
 from uuid import UUID
 
 from . import _abi
+from ._abi import ArtifactDependencyPathSegment as NativeArtifactDependencyPathSegment
 from ._abi import ArtifactEvaluation as NativeArtifactEvaluation
 from ._abi import ArtifactReason as NativeArtifactReason
 from ._abi import ArtifactReproducibility as NativeArtifactReproducibility
@@ -14,8 +15,11 @@ from ._abi import (
     ArtifactReproducibilityIssue as NativeArtifactReproducibilityIssue,
 )
 from ._abi import Error, Uuid
+from ._abi import ObjectRef as NativeObjectRef
 from ._model import (
     ActivityId,
+    ArtifactDependencyIssue,
+    ArtifactDependencyPathSegment,
     ArtifactEdgeKind,
     ArtifactEvaluation,
     ArtifactKnowledgeState,
@@ -25,7 +29,10 @@ from ._model import (
     ArtifactReproducibilityIssue,
     ArtifactReproducibilityIssueKind,
     ArtifactTraversalLimit,
+    AssetId,
+    ObjectReference,
     RepresentationId,
+    ResourceId,
 )
 from ._native import NativeLibrary
 
@@ -74,17 +81,30 @@ def _reason_at(
     )
     native.check(status, error)
     kind = _reason_kind(value.kind)
-    has_activity = kind in {
-        ArtifactReasonKind.SNAPSHOT_ABSENT,
-        ArtifactReasonKind.FINGERPRINT_EVIDENCE_MISSING,
-        ArtifactReasonKind.FINGERPRINT_CHANGED,
-        ArtifactReasonKind.FINGERPRINT_RECOMPUTATION_PENDING,
+    dependency_kinds = {
+        ArtifactReasonKind.DEPENDENCY_SNAPSHOT_ABSENT,
+        ArtifactReasonKind.DEPENDENCY_KNOWLEDGE_INCOMPLETE,
+        ArtifactReasonKind.DEPENDENCY_PATH_CHANGED,
+        ArtifactReasonKind.DEPENDENCY_FINGERPRINT_CHANGED,
+        ArtifactReasonKind.DEPENDENCY_FINGERPRINT_RECOMPUTATION_PENDING,
+        ArtifactReasonKind.DEPENDENCY_FINGERPRINT_EVIDENCE_MISSING,
     }
+    has_activity = (
+        kind
+        in {
+            ArtifactReasonKind.SNAPSHOT_ABSENT,
+            ArtifactReasonKind.FINGERPRINT_EVIDENCE_MISSING,
+            ArtifactReasonKind.FINGERPRINT_CHANGED,
+            ArtifactReasonKind.FINGERPRINT_RECOMPUTATION_PENDING,
+        }
+        | dependency_kinds
+    )
+    has_edge = has_activity and kind not in dependency_kinds
     return ArtifactReason(
         kind=kind,
         representation_id=RepresentationId(_uuid(value.representation_id)),
         activity_id=ActivityId(_uuid(value.activity_id)) if has_activity else None,
-        edge_kind=_edge_kind(value.edge_kind) if has_activity else None,
+        edge_kind=_edge_kind(value.edge_kind) if has_edge else None,
         upstream_state=(
             _knowledge_state(value.upstream_state)
             if kind is ArtifactReasonKind.UPSTREAM_NOT_CURRENT
@@ -116,7 +136,71 @@ def _reason_at(
             value.current_value,
             value.current_value_length,
         ),
+        input_representation_id=(
+            RepresentationId(_uuid(value.input_representation_id))
+            if kind in dependency_kinds
+            else None
+        ),
+        dependency_issue=(
+            _dependency_issue(value.dependency_issue)
+            if kind is ArtifactReasonKind.DEPENDENCY_KNOWLEDGE_INCOMPLETE
+            else None
+        ),
+        dependency_path=tuple(
+            _dependency_path_segment(value.dependency_path[index])
+            for index in range(int(value.dependency_path_length))
+        ),
     )
+
+
+def _dependency_path_segment(
+    segment: NativeArtifactDependencyPathSegment,
+) -> ArtifactDependencyPathSegment:
+    return ArtifactDependencyPathSegment(
+        source_representation_id=RepresentationId(
+            _uuid(segment.source_representation_id)
+        ),
+        dependency_position=int(segment.dependency_position),
+        source_resource_id=(
+            ResourceId(_uuid(segment.source_resource_id))
+            if segment.has_source_resource
+            else None
+        ),
+        kind=_decode_required(segment.kind),
+        target=_dependency_target(segment.target),
+        resolved_representation_id=(
+            RepresentationId(_uuid(segment.resolved_representation_id))
+            if segment.has_resolved_representation
+            else None
+        ),
+        authored_reference=_decode_required(segment.authored_reference),
+    )
+
+
+def _dependency_target(value: NativeObjectRef) -> ObjectReference:
+    if value.kind == _abi.PP_OBJECT_ASSET:
+        return AssetId(_uuid(value.id))
+    if value.kind == _abi.PP_OBJECT_REPRESENTATION:
+        return RepresentationId(_uuid(value.id))
+    raise RuntimeError("artifact dependency path has an unknown target kind")
+
+
+def _dependency_issue(value: int) -> ArtifactDependencyIssue:
+    result = {
+        _abi.PP_ARTIFACT_DEPENDENCY_NEEDS_EXTRACTION: (
+            ArtifactDependencyIssue.NEEDS_EXTRACTION
+        ),
+        _abi.PP_ARTIFACT_DEPENDENCY_UNRESOLVED: ArtifactDependencyIssue.UNRESOLVED,
+        _abi.PP_ARTIFACT_DEPENDENCY_DEPTH_TRUNCATED: (
+            ArtifactDependencyIssue.DEPTH_TRUNCATED
+        ),
+        _abi.PP_ARTIFACT_DEPENDENCY_REPRESENTATIONS_TRUNCATED: (
+            ArtifactDependencyIssue.REPRESENTATIONS_TRUNCATED
+        ),
+    }.get(value)
+    if result is None:
+        raise RuntimeError("artifact evaluation has an unknown dependency issue")
+    return result
 
 
 def read_reproducibility(
@@ -236,6 +320,24 @@ def _reason_kind(value: int) -> ArtifactReasonKind:
         _abi.PP_ARTIFACT_REASON_TRAVERSAL_TRUNCATED: (
             ArtifactReasonKind.TRAVERSAL_TRUNCATED
         ),
+        _abi.PP_ARTIFACT_REASON_DEPENDENCY_SNAPSHOT_ABSENT: (
+            ArtifactReasonKind.DEPENDENCY_SNAPSHOT_ABSENT
+        ),
+        _abi.PP_ARTIFACT_REASON_DEPENDENCY_KNOWLEDGE_INCOMPLETE: (
+            ArtifactReasonKind.DEPENDENCY_KNOWLEDGE_INCOMPLETE
+        ),
+        _abi.PP_ARTIFACT_REASON_DEPENDENCY_PATH_CHANGED: (
+            ArtifactReasonKind.DEPENDENCY_PATH_CHANGED
+        ),
+        _abi.PP_ARTIFACT_REASON_DEPENDENCY_FINGERPRINT_CHANGED: (
+            ArtifactReasonKind.DEPENDENCY_FINGERPRINT_CHANGED
+        ),
+        _abi.PP_ARTIFACT_REASON_DEPENDENCY_FINGERPRINT_RECOMPUTATION_PENDING: (
+            ArtifactReasonKind.DEPENDENCY_FINGERPRINT_RECOMPUTATION_PENDING
+        ),
+        _abi.PP_ARTIFACT_REASON_DEPENDENCY_FINGERPRINT_EVIDENCE_MISSING: (
+            ArtifactReasonKind.DEPENDENCY_FINGERPRINT_EVIDENCE_MISSING
+        ),
     }.get(value)
     if result is None:
         raise RuntimeError("artifact evaluation has an unknown reason kind")
@@ -293,3 +395,9 @@ def _uuid(value: Uuid) -> UUID:
 
 def _decode_optional(value: bytes | None) -> str | None:
     return None if value is None else value.decode("utf-8")
+
+
+def _decode_required(value: bytes | None) -> str:
+    if value is None:
+        raise RuntimeError("artifact evaluation returned a null string")
+    return value.decode("utf-8")

@@ -202,6 +202,36 @@ class ArtifactReasonKind(Enum):
     FINGERPRINT_RECOMPUTATION_PENDING = "fingerprint_recomputation_pending"
     UPSTREAM_NOT_CURRENT = "upstream_not_current"
     TRAVERSAL_TRUNCATED = "traversal_truncated"
+    DEPENDENCY_SNAPSHOT_ABSENT = "dependency_snapshot_absent"
+    DEPENDENCY_KNOWLEDGE_INCOMPLETE = "dependency_knowledge_incomplete"
+    DEPENDENCY_PATH_CHANGED = "dependency_path_changed"
+    DEPENDENCY_FINGERPRINT_CHANGED = "dependency_fingerprint_changed"
+    DEPENDENCY_FINGERPRINT_RECOMPUTATION_PENDING = (
+        "dependency_fingerprint_recomputation_pending"
+    )
+    DEPENDENCY_FINGERPRINT_EVIDENCE_MISSING = "dependency_fingerprint_evidence_missing"
+
+
+class ArtifactDependencyIssue(Enum):
+    """Why captured dependency knowledge cannot prove currentness."""
+
+    NEEDS_EXTRACTION = "needs_extraction"
+    UNRESOLVED = "unresolved"
+    DEPTH_TRUNCATED = "depth_truncated"
+    REPRESENTATIONS_TRUNCATED = "representations_truncated"
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactDependencyPathSegment:
+    """One exact authored edge in a captured dependency path."""
+
+    source_representation_id: RepresentationId
+    dependency_position: int
+    source_resource_id: ResourceId | None
+    kind: str
+    target: ObjectReference
+    resolved_representation_id: RepresentationId | None
+    authored_reference: str
 
 
 class ArtifactTraversalLimit(Enum):
@@ -226,6 +256,9 @@ class ArtifactReason:
     fingerprint_version: int | None = None
     snapshot_value: bytes | None = None
     current_value: bytes | None = None
+    input_representation_id: RepresentationId | None = None
+    dependency_issue: ArtifactDependencyIssue | None = None
+    dependency_path: tuple[ArtifactDependencyPathSegment, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
