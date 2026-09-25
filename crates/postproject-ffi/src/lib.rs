@@ -46,8 +46,8 @@ use postproject_media::{
 use postproject_storage_sqlite::SqliteProduction;
 
 pub use artifact::{
-    PpArtifactEvaluation, PpArtifactReason, PpArtifactReproducibility,
-    PpArtifactReproducibilityIssue,
+    PpArtifactDependencyPathSegment, PpArtifactEvaluation, PpArtifactReason,
+    PpArtifactReproducibility, PpArtifactReproducibilityIssue,
 };
 use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
@@ -133,7 +133,7 @@ const PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED: u32 = 17;
 const PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED: u32 = 18;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 17;
+pub const ABI_VERSION: u32 = 18;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -4349,10 +4349,14 @@ const fn zero_artifact_reason() -> PpArtifactReason {
         kind: 0,
         activity_id: PpUuid { bytes: [0; 16] },
         representation_id: PpUuid { bytes: [0; 16] },
+        input_representation_id: PpUuid { bytes: [0; 16] },
         edge_kind: 0,
         upstream_state: 0,
         traversal_limit: 0,
         activity_count: 0,
+        dependency_issue: 0,
+        dependency_path: ptr::null(),
+        dependency_path_length: 0,
         fingerprint_algorithm: ptr::null(),
         fingerprint_version: 0,
         has_snapshot_value: 0,

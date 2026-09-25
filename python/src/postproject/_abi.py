@@ -89,6 +89,10 @@ class ActivityEdge(ctypes.Structure):
     pass
 
 
+class ArtifactDependencyPathSegment(ctypes.Structure):
+    pass
+
+
 class ArtifactReason(ctypes.Structure):
     pass
 
@@ -113,6 +117,7 @@ RevisionEventKind = ctypes.c_uint32
 ArtifactKnowledgeState = ctypes.c_uint32
 ArtifactEdgeKind = ctypes.c_uint32
 ArtifactReasonKind = ctypes.c_uint32
+ArtifactDependencyIssue = ctypes.c_uint32
 ArtifactTraversalLimit = ctypes.c_uint32
 ArtifactReproducibilityIssueKind = ctypes.c_uint32
 MetadataValueKind = ctypes.c_uint32
@@ -171,6 +176,16 @@ PP_ARTIFACT_REASON_FINGERPRINT_CHANGED = 5
 PP_ARTIFACT_REASON_FINGERPRINT_RECOMPUTATION_PENDING = 6
 PP_ARTIFACT_REASON_UPSTREAM_NOT_CURRENT = 7
 PP_ARTIFACT_REASON_TRAVERSAL_TRUNCATED = 8
+PP_ARTIFACT_REASON_DEPENDENCY_SNAPSHOT_ABSENT = 9
+PP_ARTIFACT_REASON_DEPENDENCY_KNOWLEDGE_INCOMPLETE = 10
+PP_ARTIFACT_REASON_DEPENDENCY_PATH_CHANGED = 11
+PP_ARTIFACT_REASON_DEPENDENCY_FINGERPRINT_CHANGED = 12
+PP_ARTIFACT_REASON_DEPENDENCY_FINGERPRINT_RECOMPUTATION_PENDING = 13
+PP_ARTIFACT_REASON_DEPENDENCY_FINGERPRINT_EVIDENCE_MISSING = 14
+PP_ARTIFACT_DEPENDENCY_NEEDS_EXTRACTION = 1
+PP_ARTIFACT_DEPENDENCY_UNRESOLVED = 2
+PP_ARTIFACT_DEPENDENCY_DEPTH_TRUNCATED = 3
+PP_ARTIFACT_DEPENDENCY_REPRESENTATIONS_TRUNCATED = 4
 PP_ARTIFACT_TRAVERSAL_DEPTH = 1
 PP_ARTIFACT_TRAVERSAL_REPRESENTATIONS = 2
 PP_ARTIFACT_REPRODUCIBILITY_PRODUCING_ACTIVITY_MISSING = 1
@@ -269,14 +284,30 @@ ActivityEdge._fields_ = [
     ("role", ctypes.c_char_p),
 ]
 
+ArtifactDependencyPathSegment._fields_ = [
+    ("source_representation_id", Uuid),
+    ("dependency_position", ctypes.c_uint32),
+    ("has_source_resource", ctypes.c_uint8),
+    ("source_resource_id", Uuid),
+    ("kind", ctypes.c_char_p),
+    ("target", ObjectRef),
+    ("has_resolved_representation", ctypes.c_uint8),
+    ("resolved_representation_id", Uuid),
+    ("authored_reference", ctypes.c_char_p),
+]
+
 ArtifactReason._fields_ = [
     ("kind", ArtifactReasonKind),
     ("activity_id", Uuid),
     ("representation_id", Uuid),
+    ("input_representation_id", Uuid),
     ("edge_kind", ArtifactEdgeKind),
     ("upstream_state", ArtifactKnowledgeState),
     ("traversal_limit", ArtifactTraversalLimit),
     ("activity_count", ctypes.c_uint32),
+    ("dependency_issue", ArtifactDependencyIssue),
+    ("dependency_path", ctypes.POINTER(ArtifactDependencyPathSegment)),
+    ("dependency_path_length", ctypes.c_uint64),
     ("fingerprint_algorithm", ctypes.c_char_p),
     ("fingerprint_version", ctypes.c_uint16),
     ("has_snapshot_value", ctypes.c_uint8),
@@ -311,7 +342,8 @@ PUBLIC_STRUCTS = {
     "pp_object_ref_t": (ObjectRef, ("kind", "id")),
     "pp_revision_event_t": (RevisionEvent, ("kind", "position", "asset_id", "representation_id", "resource_id", "locator_id", "media_root_id", "activity_id", "target", "structural_position", "enabled", "identifier_scheme", "identifier_value", "identifier_qualifier", "vocabulary", "property", "activity_kind", "role", "fingerprint_algorithm", "fingerprint_version")),
     "pp_activity_edge_t": (ActivityEdge, ("representation_id", "role")),
-    "pp_artifact_reason_t": (ArtifactReason, ("kind", "activity_id", "representation_id", "edge_kind", "upstream_state", "traversal_limit", "activity_count", "fingerprint_algorithm", "fingerprint_version", "has_snapshot_value", "snapshot_value", "snapshot_value_length", "has_current_value", "current_value", "current_value_length")),
+    "pp_artifact_dependency_path_segment_t": (ArtifactDependencyPathSegment, ("source_representation_id", "dependency_position", "has_source_resource", "source_resource_id", "kind", "target", "has_resolved_representation", "resolved_representation_id", "authored_reference")),
+    "pp_artifact_reason_t": (ArtifactReason, ("kind", "activity_id", "representation_id", "input_representation_id", "edge_kind", "upstream_state", "traversal_limit", "activity_count", "dependency_issue", "dependency_path", "dependency_path_length", "fingerprint_algorithm", "fingerprint_version", "has_snapshot_value", "snapshot_value", "snapshot_value_length", "has_current_value", "current_value", "current_value_length")),
     "pp_artifact_reproducibility_issue_t": (ArtifactReproducibilityIssue, ("kind", "activity_id", "representation_id", "activity_count")),
     "pp_file_resource_input_t": (FileResourceInput, ("path", "role", "required")),
     "pp_media_root_mapping_t": (MediaRootMapping, ("name", "directory")),

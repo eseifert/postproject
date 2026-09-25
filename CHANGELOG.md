@@ -24,6 +24,8 @@ Development version: `0.4.0-alpha.1`.
   divergence explanations, and structured reproducibility reports. C ABI
   version 17 exposes both read models through owned immutable result handles,
   with matching C++17, Python, and CLI surfaces.
+- Added C ABI version 18 dependency-aware artifact explanations with typed,
+  exact authored paths and explicit unresolved, dirty, and truncated states.
 
 ### Changed
 

@@ -117,6 +117,19 @@ typedef uint32_t pp_artifact_reason_kind_t;
 #define PP_ARTIFACT_REASON_FINGERPRINT_RECOMPUTATION_PENDING UINT32_C(6)
 #define PP_ARTIFACT_REASON_UPSTREAM_NOT_CURRENT UINT32_C(7)
 #define PP_ARTIFACT_REASON_TRAVERSAL_TRUNCATED UINT32_C(8)
+#define PP_ARTIFACT_REASON_DEPENDENCY_SNAPSHOT_ABSENT UINT32_C(9)
+#define PP_ARTIFACT_REASON_DEPENDENCY_KNOWLEDGE_INCOMPLETE UINT32_C(10)
+#define PP_ARTIFACT_REASON_DEPENDENCY_PATH_CHANGED UINT32_C(11)
+#define PP_ARTIFACT_REASON_DEPENDENCY_FINGERPRINT_CHANGED UINT32_C(12)
+#define PP_ARTIFACT_REASON_DEPENDENCY_FINGERPRINT_RECOMPUTATION_PENDING UINT32_C(13)
+#define PP_ARTIFACT_REASON_DEPENDENCY_FINGERPRINT_EVIDENCE_MISSING UINT32_C(14)
+
+typedef uint32_t pp_artifact_dependency_issue_t;
+
+#define PP_ARTIFACT_DEPENDENCY_NEEDS_EXTRACTION UINT32_C(1)
+#define PP_ARTIFACT_DEPENDENCY_UNRESOLVED UINT32_C(2)
+#define PP_ARTIFACT_DEPENDENCY_DEPTH_TRUNCATED UINT32_C(3)
+#define PP_ARTIFACT_DEPENDENCY_REPRESENTATIONS_TRUNCATED UINT32_C(4)
 
 typedef uint32_t pp_artifact_traversal_limit_t;
 
@@ -182,16 +195,33 @@ typedef struct pp_activity_edge {
   const char *role;
 } pp_activity_edge_t;
 
+/* Strings borrow the owning artifact evaluation. */
+typedef struct pp_artifact_dependency_path_segment {
+  pp_uuid_t source_representation_id;
+  uint32_t dependency_position;
+  uint8_t has_source_resource;
+  pp_uuid_t source_resource_id;
+  const char *kind;
+  pp_object_ref_t target;
+  uint8_t has_resolved_representation;
+  pp_uuid_t resolved_representation_id;
+  const char *authored_reference;
+} pp_artifact_dependency_path_segment_t;
+
 /* String and byte pointers borrow the owning evaluation. Fields not used by a
  * reason kind are zero or NULL. */
 typedef struct pp_artifact_reason {
   pp_artifact_reason_kind_t kind;
   pp_uuid_t activity_id;
   pp_uuid_t representation_id;
+  pp_uuid_t input_representation_id;
   pp_artifact_edge_kind_t edge_kind;
   pp_artifact_knowledge_state_t upstream_state;
   pp_artifact_traversal_limit_t traversal_limit;
   uint32_t activity_count;
+  pp_artifact_dependency_issue_t dependency_issue;
+  const pp_artifact_dependency_path_segment_t *dependency_path;
+  uint64_t dependency_path_length;
   const char *fingerprint_algorithm;
   uint16_t fingerprint_version;
   uint8_t has_snapshot_value;

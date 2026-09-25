@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 17 is pre-release and may change during the 0.x series, with every
+ABI version 18 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
@@ -118,6 +118,10 @@ ABI version 17 adds owned artifact-evaluation and reproducibility handles.
 Their reason and issue records are fixed-layout borrowed views; strings and
 fingerprint byte spans remain valid until the owning handle is released.
 Evaluation is knowledge-only and uses caller-supplied traversal bounds.
+
+ABI version 18 extends artifact reasons with typed dependency paths and
+dependency-specific incomplete-knowledge conditions. Path arrays, their
+strings, and fingerprint spans borrow the owning evaluation handle.
 
 ## External identifiers
 

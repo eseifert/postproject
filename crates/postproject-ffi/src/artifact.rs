@@ -3,12 +3,13 @@
 use std::{ffi::CString, ptr};
 
 use postproject_core::{
-    ActivityId, ArtifactEdgeKind, ArtifactEvaluation, ArtifactKnowledgeReason,
-    ArtifactKnowledgeState, ArtifactReproducibilityIssue, ArtifactReproducibilityReport,
-    ArtifactTraversalLimitKind, Error, ErrorKind, RepresentationId,
+    ActivityId, ArtifactDependencyIssue, ArtifactDependencyPathSegment, ArtifactEdgeKind,
+    ArtifactEvaluation, ArtifactKnowledgeReason, ArtifactKnowledgeState,
+    ArtifactReproducibilityIssue, ArtifactReproducibilityReport, ArtifactTraversalLimitKind, Error,
+    ErrorKind, RepresentationId,
 };
 
-use crate::{PpUuid, exact_cstring};
+use crate::{PP_OBJECT_ASSET, PP_OBJECT_REPRESENTATION, PpObjectRef, PpUuid, exact_cstring};
 
 /// Opaque immutable artifact-evaluation result owned by the C caller.
 pub struct PpArtifactEvaluation {
@@ -29,6 +30,8 @@ pub struct PpArtifactReason {
     pub activity_id: PpUuid,
     /// Related representation, or zero when not applicable.
     pub representation_id: PpUuid,
+    /// Direct activity input, or zero when not applicable.
+    pub input_representation_id: PpUuid,
     /// Input/output edge kind, or zero when not applicable.
     pub edge_kind: u32,
     /// Upstream knowledge state, or zero when not applicable.
@@ -37,6 +40,12 @@ pub struct PpArtifactReason {
     pub traversal_limit: u32,
     /// Ambiguous producer count, or zero when not applicable.
     pub activity_count: u32,
+    /// One of the `PP_ARTIFACT_DEPENDENCY_*` constants, or zero.
+    pub dependency_issue: u32,
+    /// Borrowed typed dependency path, or null when empty.
+    pub dependency_path: *const PpArtifactDependencyPathSegment,
+    /// Number of path segments.
+    pub dependency_path_length: u64,
     /// Borrowed fingerprint algorithm, or null when not applicable.
     pub fingerprint_algorithm: *const std::ffi::c_char,
     /// Fingerprint algorithm version, or zero when not applicable.
@@ -55,18 +64,56 @@ pub struct PpArtifactReason {
     pub current_value_length: u64,
 }
 
+/// Fixed-layout borrowed segment in an artifact dependency path.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct PpArtifactDependencyPathSegment {
+    /// Representation whose content authored this dependency.
+    pub source_representation_id: PpUuid,
+    /// Position in the source's complete dependency observation.
+    pub dependency_position: u32,
+    /// Whether `source_resource_id` is present.
+    pub has_source_resource: u8,
+    /// Optional resource containing the authored reference.
+    pub source_resource_id: PpUuid,
+    /// Borrowed namespaced dependency kind.
+    pub kind: *const std::ffi::c_char,
+    /// Floating asset or pinned representation target.
+    pub target: PpObjectRef,
+    /// Whether `resolved_representation_id` is present.
+    pub has_resolved_representation: u8,
+    /// Representation selected for a floating target.
+    pub resolved_representation_id: PpUuid,
+    /// Borrowed exact authored reference.
+    pub authored_reference: *const std::ffi::c_char,
+}
+
 pub(crate) struct AbiArtifactReason {
     kind: u32,
     activity_id: Option<ActivityId>,
     representation_id: RepresentationId,
+    input_representation_id: RepresentationId,
     edge_kind: u32,
     upstream_state: u32,
     traversal_limit: u32,
     activity_count: u32,
+    dependency_issue: u32,
+    dependency_path_storage: Vec<AbiArtifactDependencyPathSegment>,
+    dependency_path: Vec<PpArtifactDependencyPathSegment>,
     fingerprint_algorithm: Option<CString>,
     fingerprint_version: u16,
     snapshot_value: Option<Vec<u8>>,
     current_value: Option<Vec<u8>>,
+}
+
+struct AbiArtifactDependencyPathSegment {
+    source_representation_id: PpUuid,
+    dependency_position: u32,
+    source_resource_id: Option<PpUuid>,
+    kind: CString,
+    target: PpObjectRef,
+    resolved_representation_id: Option<PpUuid>,
+    authored_reference: CString,
 }
 
 /// Opaque immutable artifact-reproducibility result owned by the C caller.
@@ -115,10 +162,19 @@ impl AbiArtifactReason {
             representation_id: PpUuid {
                 bytes: self.representation_id.into_bytes(),
             },
+            input_representation_id: PpUuid {
+                bytes: self.input_representation_id.into_bytes(),
+            },
             edge_kind: self.edge_kind,
             upstream_state: self.upstream_state,
             traversal_limit: self.traversal_limit,
             activity_count: self.activity_count,
+            dependency_issue: self.dependency_issue,
+            dependency_path: self
+                .dependency_path
+                .first()
+                .map_or(ptr::null(), std::ptr::from_ref),
+            dependency_path_length: u64::try_from(self.dependency_path.len()).unwrap_or(u64::MAX),
             fingerprint_algorithm: self
                 .fingerprint_algorithm
                 .as_ref()
@@ -146,10 +202,14 @@ impl TryFrom<&ArtifactKnowledgeReason> for AbiArtifactReason {
             kind: 0,
             activity_id: None,
             representation_id: RepresentationId::from_bytes([0; 16]),
+            input_representation_id: RepresentationId::from_bytes([0; 16]),
             edge_kind: 0,
             upstream_state: 0,
             traversal_limit: 0,
             activity_count: 0,
+            dependency_issue: 0,
+            dependency_path_storage: Vec::new(),
+            dependency_path: Vec::new(),
             fingerprint_algorithm: None,
             fingerprint_version: 0,
             snapshot_value: None,
@@ -248,6 +308,95 @@ impl TryFrom<&ArtifactKnowledgeReason> for AbiArtifactReason {
                     _ => 0,
                 };
             }
+            ArtifactKnowledgeReason::DependencySnapshotAbsent {
+                activity_id,
+                representation_id,
+            } => {
+                projected.kind = 9;
+                projected.activity_id = Some(*activity_id);
+                projected.representation_id = *representation_id;
+                projected.input_representation_id = *representation_id;
+            }
+            ArtifactKnowledgeReason::DependencyKnowledgeIncomplete {
+                activity_id,
+                input_representation_id,
+                subject_representation_id,
+                path,
+                issue,
+            } => {
+                projected.kind = 10;
+                projected.activity_id = Some(*activity_id);
+                projected.representation_id = *subject_representation_id;
+                projected.input_representation_id = *input_representation_id;
+                projected.dependency_issue = dependency_issue(*issue);
+                projected.set_dependency_path(path)?;
+            }
+            ArtifactKnowledgeReason::DependencyPathChanged {
+                activity_id,
+                input_representation_id,
+                path,
+            } => {
+                projected.kind = 11;
+                projected.activity_id = Some(*activity_id);
+                projected.input_representation_id = *input_representation_id;
+                projected.set_dependency_path(path)?;
+            }
+            ArtifactKnowledgeReason::DependencyFingerprintChanged {
+                activity_id,
+                input_representation_id,
+                representation_id,
+                path,
+                algorithm,
+                version,
+                snapshot_value,
+                current_value,
+            } => {
+                projected.kind = 12;
+                projected.activity_id = Some(*activity_id);
+                projected.representation_id = *representation_id;
+                projected.input_representation_id = *input_representation_id;
+                projected.set_dependency_path(path)?;
+                projected.fingerprint_algorithm =
+                    Some(exact_cstring(algorithm, "artifact fingerprint algorithm")?);
+                projected.fingerprint_version = *version;
+                projected.snapshot_value = Some(snapshot_value.clone());
+                projected.current_value = Some(current_value.clone());
+            }
+            ArtifactKnowledgeReason::DependencyFingerprintRecomputationPending {
+                activity_id,
+                input_representation_id,
+                representation_id,
+                path,
+            } => {
+                projected.kind = 13;
+                projected.activity_id = Some(*activity_id);
+                projected.representation_id = *representation_id;
+                projected.input_representation_id = *input_representation_id;
+                projected.set_dependency_path(path)?;
+            }
+            ArtifactKnowledgeReason::DependencyFingerprintEvidenceMissing {
+                activity_id,
+                input_representation_id,
+                representation_id,
+                path,
+                algorithm,
+                version,
+                snapshot_value,
+                current_value,
+            } => {
+                projected.kind = 14;
+                projected.activity_id = Some(*activity_id);
+                projected.representation_id = *representation_id;
+                projected.input_representation_id = *input_representation_id;
+                projected.set_dependency_path(path)?;
+                projected.fingerprint_algorithm = algorithm
+                    .as_deref()
+                    .map(|value| exact_cstring(value, "artifact fingerprint algorithm"))
+                    .transpose()?;
+                projected.fingerprint_version = version.unwrap_or(0);
+                projected.snapshot_value.clone_from(snapshot_value);
+                projected.current_value.clone_from(current_value);
+            }
             _ => {
                 return Err(Error::new(
                     ErrorKind::Unsupported,
@@ -256,6 +405,89 @@ impl TryFrom<&ArtifactKnowledgeReason> for AbiArtifactReason {
             }
         }
         Ok(projected)
+    }
+}
+
+impl AbiArtifactReason {
+    fn set_dependency_path(&mut self, path: &[ArtifactDependencyPathSegment]) -> Result<(), Error> {
+        self.dependency_path_storage = path
+            .iter()
+            .map(AbiArtifactDependencyPathSegment::try_from)
+            .collect::<Result<_, _>>()?;
+        self.dependency_path = self
+            .dependency_path_storage
+            .iter()
+            .map(AbiArtifactDependencyPathSegment::as_abi)
+            .collect();
+        Ok(())
+    }
+}
+
+impl AbiArtifactDependencyPathSegment {
+    fn as_abi(&self) -> PpArtifactDependencyPathSegment {
+        PpArtifactDependencyPathSegment {
+            source_representation_id: self.source_representation_id,
+            dependency_position: self.dependency_position,
+            has_source_resource: u8::from(self.source_resource_id.is_some()),
+            source_resource_id: self.source_resource_id.unwrap_or(PpUuid { bytes: [0; 16] }),
+            kind: self.kind.as_ptr(),
+            target: self.target,
+            has_resolved_representation: u8::from(self.resolved_representation_id.is_some()),
+            resolved_representation_id: self
+                .resolved_representation_id
+                .unwrap_or(PpUuid { bytes: [0; 16] }),
+            authored_reference: self.authored_reference.as_ptr(),
+        }
+    }
+}
+
+impl TryFrom<&ArtifactDependencyPathSegment> for AbiArtifactDependencyPathSegment {
+    type Error = Error;
+
+    fn try_from(segment: &ArtifactDependencyPathSegment) -> Result<Self, Self::Error> {
+        let (target_kind, target_id) = match segment.target() {
+            postproject_core::DependencyTarget::Asset(id) => (PP_OBJECT_ASSET, id.into_bytes()),
+            postproject_core::DependencyTarget::Representation(id) => {
+                (PP_OBJECT_REPRESENTATION, id.into_bytes())
+            }
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::Unsupported,
+                    "dependency target is not supported by this ABI",
+                ));
+            }
+        };
+        Ok(Self {
+            source_representation_id: PpUuid {
+                bytes: segment.source_representation_id().into_bytes(),
+            },
+            dependency_position: segment.dependency_position(),
+            source_resource_id: segment.source_resource_id().map(|id| PpUuid {
+                bytes: id.into_bytes(),
+            }),
+            kind: exact_cstring(segment.kind().as_str(), "dependency kind")?,
+            target: PpObjectRef {
+                kind: target_kind,
+                id: PpUuid { bytes: target_id },
+            },
+            resolved_representation_id: segment.resolved_representation_id().map(|id| PpUuid {
+                bytes: id.into_bytes(),
+            }),
+            authored_reference: exact_cstring(
+                segment.authored_reference(),
+                "authored dependency reference",
+            )?,
+        })
+    }
+}
+
+const fn dependency_issue(issue: ArtifactDependencyIssue) -> u32 {
+    match issue {
+        ArtifactDependencyIssue::NeedsExtraction => 1,
+        ArtifactDependencyIssue::Unresolved => 2,
+        ArtifactDependencyIssue::DepthTruncated => 3,
+        ArtifactDependencyIssue::RepresentationsTruncated => 4,
+        _ => 0,
     }
 }
 
