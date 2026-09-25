@@ -7,13 +7,15 @@ SQLite's per-connection value-length limit is reduced to 16 MiB before migration
 or queries run. This bounds allocations for strings, blobs, and result rows read
 from an untrusted production file while leaving ample room for production metadata.
 
-## Schema version 1
+## Schema version 9
 
 The current development schema stores a singleton production record plus assets,
 representations, content structures, resources, memberships, locators, typed
 fingerprints, logically named media roots, metadata assertions, and external
-identifiers. Machine-local root mappings are intentionally not production rows;
-schema 6 retains migrated absolute URIs only as transitional legacy fallbacks.
+identifiers, provenance activities and edge snapshots, dependency observations,
+the revision journal, and durable jobs. Machine-local root mappings are
+intentionally not production rows; schema 6 retains migrated absolute URIs only
+as transitional legacy fallbacks.
 Image-sequence descriptors and their known missing frames are stored compactly;
 a regular sequence does not require one resource row per frame. Public
 identities are 16-byte UUID values; SQLite row numbers are never exposed.
@@ -22,11 +24,12 @@ Constraints enforce ID lengths, enumeration ranges, bounded text and blobs,
 non-empty fingerprint values, and referential integrity. Indexes support
 representations by asset, resources by representation, locators by resource,
 external identifiers by target and exact scheme/value, metadata by target or
-property, and enabled media roots by priority.
+property, enabled media roots by priority, and jobs by state and kind.
 
 External identifiers and metadata assertions use polymorphic typed targets.
-SQLite triggers clean up attachments because one target column cannot carry
-foreign keys to several domain tables.
+Jobs are valid targets alongside production, asset, representation, resource,
+and activity objects. SQLite triggers clean up attachments because one target
+column cannot carry foreign keys to several domain tables.
 
 ## Migrations and durability
 
@@ -34,9 +37,9 @@ foreign keys to several domain tables.
 records every applied numbered migration and its timestamp. Each migration runs
 inside an immediate SQLite transaction. A failed statement therefore leaves both
 the prior schema and version intact. Opening a newer unsupported schema fails
-without modifying it. Earlier development layouts are unsupported. The current
-initial migration is the canonical schema because no external production files
-were published for the discarded layouts.
+without modifying it. Every numbered schema from the published production-file
+history migrates forward in order; migrations preserve absent historical
+observations rather than inventing evidence.
 
 Production creation reserves a new file without overwriting any existing path, runs
 migrations, then inserts production identity and metadata in one transaction. Normal
@@ -54,7 +57,9 @@ Media imports insert the asset, representation, content structure, resources,
 typed fingerprints, memberships, and initial locators inside one explicit
 deferred SQLite transaction. Media-root creation, enablement and removal;
 locator retirement; metadata assertions; and external-identifier
-attachments/removals participate in the same transaction boundary. Commit and
-rollback close the transaction; repeated close attempts return a conflict.
-Dropping an open transaction uses SQLite rollback semantics, so partially staged
-changes never become visible.
+attachments/removals; dependency observations; fingerprint observations; and
+job transitions participate in the same transaction boundary. Job completion
+also binds staged output media and its provenance activity before commit. Commit
+and rollback close the transaction; repeated close attempts return a conflict.
+Dropping an open transaction uses SQLite rollback semantics, so partially
+staged changes never become visible.

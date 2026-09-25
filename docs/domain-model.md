@@ -17,6 +17,12 @@
   versioned evidence domains. Neither replaces object identity.
 - A **Resolution** aggregates required content into online, partial, offline, or
   ambiguous representation availability and retains resource-level evidence.
+- An **Activity** is a complete provenance fact connecting input and output
+  representations with storage-captured fingerprint snapshots.
+- A **Dependency** is a live authored reference from a representation to an
+  asset or representation, distinct from membership and provenance.
+- A **Job** is a durable work request with inputs, typed parameters, a requested
+  output, and a claim-token-checked lifecycle. It is not a scheduler process.
 
 All mutation occurs inside an explicit transaction. Commit is atomic. Dropping
 or rolling back an open transaction makes none of its changes durable, and a

@@ -24,6 +24,16 @@ OpenAssetIO and OTIO integration demonstrations, and a published unified API
 site. The delivered scope and remaining constraints are recorded in the
 [acceptance report](iteration-three-report.md).
 
+## Iteration 4 — in progress
+
+Add managed-artifact knowledge, dependency-aware staleness, durable production
+jobs, scalable domain queries, cross-process change delivery, publishing, and a
+maintained application pilot. Fingerprint observations and activity snapshots,
+artifact evaluation and reproducibility, dependency relationships, and the
+complete host-worker job protocol are delivered on Rust, C, C++, Python, and
+the CLI. The next implementation phase is the opt-in local reference executor;
+PostProject still never starts work implicitly.
+
 ## Explicitly later
 
 - full IPTC VMH and EBUCorePlus mapping packages;

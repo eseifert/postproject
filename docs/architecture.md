@@ -8,8 +8,8 @@ or any editor. Every other component may depend on core; core never depends on a
 adapter.
 
 `postproject-storage-sqlite` owns production-file migrations and transactional
-persistence. It implements the core `ProductionRead`, `ProductionStore`, and
-`ProductionStoreTransaction` contracts, which describe domain operations rather
+persistence. It implements the core `ProjectRead`, `ProjectStore`, and
+`ProjectStoreTransaction` contracts, which describe domain operations rather
 than generic row CRUD. A later backend can implement the same boundary without
 exposing its connection or query model.
 
@@ -32,10 +32,11 @@ conventions must not cross it.
 
 ## Current direction and deferred concerns
 
-The current iteration adds external identifiers, structured metadata,
-activity-based provenance, rational time, and a semantic revision journal in
-that domain-first order. Each capability reaches persistence before the public C
-ABI and language wrappers are expanded around it.
+The current iteration adds fingerprint observations and activity snapshots,
+managed-artifact evaluation, dependency relationships, and durable jobs in that
+domain-first order. Each capability reaches persistence before the public C ABI
+and language wrappers are expanded around it.
 
-Timelines, collaboration, networking, media decoding, job execution, full
-standards adapters, and editor-specific models remain outside the architecture.
+Timelines, collaboration, networking, media decoding, implicit job execution,
+full standards adapters, and editor-specific models remain outside the
+architecture.
