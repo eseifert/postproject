@@ -77,15 +77,30 @@ but are excluded from activity snapshot closure.
 
 ## Public operations
 
-Rust exposes complete-set recording through `ProjectStoreTransaction` and
-forward/reverse reads through `ProjectRead`. The C ABI uses owned dependency-set
-handles; strings returned from an edge borrow that handle until release. The
-C++ and Python wrappers copy those values into native immutable objects.
+Rust exposes complete-set recording through `ProductionStoreTransaction` and
+bounded forward/reverse queries through `ProductionRead`. A query supplies a
+depth from 1 through 64, a visited-representation bound from 1 through 1,000,
+and a page size from 1 through 1,000. Depth one is a direct query. Results are
+ordered by stable target identity, include the shortest observed depth, and
+exclude a cycle back to the query root. `traversal_truncated` is independent of
+`next_cursor`: the former means graph bounds hid part of the closure, while the
+latter means more results remain in the bounded closure.
+
+Continuation cursors are opaque and bound to the query root and all traversal
+parameters. Reusing one with different parameters is an invalid argument.
+Pages are weakly consistent across commits; use the revision feed when a caller
+needs change tracking rather than a snapshot scan.
+
+The C ABI uses owned dependency observation and query-page handles; strings and
+cursors borrow their owning handle until release. The C++ and Python wrappers
+copy those values into native immutable objects.
 
 The CLI accepts an ordered JSON array with `dependency record`, distinguishes
-absent and empty observations with `dependency show`, and lists direct reverse
-relationships with `dependency dependents`. All recording remains explicit and
-transactional.
+absent and empty observations with `dependency show`, and exposes
+`dependency dependencies` and `dependency dependents` with `--max-depth`,
+`--max-representations`, `--limit`, and `--cursor`. JSON queries return
+`items`, `next_cursor`, and `traversal_truncated`. All recording remains
+explicit and transactional.
 
 See [artifact knowledge and reproducibility](artifact-knowledge.md) for the
 derived state model and [production provenance](provenance.md) for completed

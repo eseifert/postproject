@@ -10,8 +10,11 @@ Create the job and any parameter metadata in one transaction. The request names
 its input representations and the desired output asset and representation kind.
 Parameters use the normal typed metadata model with the job as their target.
 
-Listing jobs is a snapshot read in stable identity order. Use the semantic
-revision feed to discover that a job changed, then reload it for complete state.
+Listing jobs returns a bounded page in stable identity order. State and
+open-world kind are optional exact filters. Pass the opaque `next_cursor` back
+with the same filters and page size to continue; pages are weakly consistent
+across commits. Use the semantic revision feed to discover that a job changed,
+then reload it for complete state.
 
 ## Implement a worker
 
@@ -49,9 +52,12 @@ guarantee.
 | cancel | `cancel_job` | `pp_transaction_cancel_job` | `cancelJob` | `cancel_job` | `job cancel` |
 | plan regeneration | `plan_regeneration` | `pp_production_plan_regeneration` | `planRegeneration` | `plan_regeneration` | `job plan` |
 
-The C ABI returns owned job and regeneration-plan sets. Release every returned
-set with its matching release function. The C++ and Python bindings copy result
-values into their native immutable types.
+The C ABI returns owned job and regeneration-plan sets. A job page's optional
+cursor borrows the job set and must be copied before release. Release every
+returned set with its matching release function. The C++ and Python bindings
+copy result values and cursors into their native immutable types. The CLI
+accepts `job list --state`, `--kind`, `--limit`, and `--cursor`; JSON output is
+a page object with `items` and `next_cursor`.
 
 The CLI completion adapter creates a single-file output. Library callers can
 stage any supported representation structure—single resource, image sequence,

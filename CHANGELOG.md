@@ -16,6 +16,11 @@ Development version: `0.4.0-alpha.1`.
   plans derived from producing activities.
 - Added SQLite schema 9 foundations for durable jobs, canonical inputs,
   lifecycle detail, job metadata, and indexed state/kind queries.
+- Added bounded, keyset-paginated dependency/dependent traversal and job
+  queries across Rust, C, C++17, Python, and CLI, with opaque query-scoped
+  cursors, explicit dependency traversal bounds, shortest-depth matches, and
+  optional exact job state/kind filters.
+- Added SQLite schema 10's `(kind, id)` job index for kind-only cursor queries.
 - Added first-class, typed dependency observations with exact authored
   references, floating or pinned targets, complete-set replacement, semantic
   revision events, and SQLite schema 8 foundations for bounded activity-input
@@ -36,6 +41,8 @@ Development version: `0.4.0-alpha.1`.
 
 ### Changed
 
+- Bumped the pre-release C ABI to version 24. Complete dependent and job lists
+  are replaced by bounded pages, and forward dependency traversal is public.
 - Bumped the pre-release C ABI to version 23 with read-only regeneration plans
   containing the artifact, proposed job, and copied job parameters.
 - Bumped the pre-release C ABI to version 22 with atomic job completion over a

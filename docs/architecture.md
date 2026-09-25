@@ -8,8 +8,8 @@ or any editor. Every other component may depend on core; core never depends on a
 adapter.
 
 `postproject-storage-sqlite` owns production-file migrations and transactional
-persistence. It implements the core `ProjectRead`, `ProjectStore`, and
-`ProjectStoreTransaction` contracts, which describe domain operations rather
+persistence. It implements the core `ProductionRead`, `ProductionStore`, and
+`ProductionStoreTransaction` contracts, which describe domain operations rather
 than generic row CRUD. A later backend can implement the same boundary without
 exposing its connection or query model.
 
