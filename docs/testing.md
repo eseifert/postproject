@@ -19,6 +19,12 @@ coverage is omitted.
 A separate locked all-targets compile uses Rust 1.85.0, enforcing the stated
 minimum supported Rust version independently of the stable-toolchain test matrix.
 
+A separate Linux job invokes the real system `ffmpeg` against the shipped PPM
+fixture and verifies that the reference executor publishes a non-empty
+thumbnail. The ordinary cross-platform tests use deterministic fake executables
+to cover capability absence, heartbeat delivery, crashes, bounded cleanup, and
+atomic CLI completion without depending on FFmpeg being installed.
+
 Tests use real temporary SQLite databases and filesystems, a checked-in schema-0
 migration fixture, and the complete multi-asset relocation scenario. Dedicated
 fuzz targets cover production opening, fingerprint input, C strings/errors, and ID

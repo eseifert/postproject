@@ -80,4 +80,5 @@ continuation rules.
 
 See [artifact knowledge and reproducibility](artifact-knowledge.md) for the
 derived knowledge state and [jobs and workers](../integrators/jobs-and-workers.md)
-for the worker protocol.
+for the worker protocol. The [reference local executor](../integrators/reference-executor.md)
+is one optional worker; jobs do not depend on it and are never run implicitly.

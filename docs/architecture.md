@@ -13,10 +13,12 @@ persistence. It implements the core `ProductionRead`, `ProductionStore`, and
 than generic row CRUD. A later backend can implement the same boundary without
 exposing its connection or query model.
 
-`postproject-media` owns filesystem candidate discovery, fingerprinting, and
-resolution policy. Candidate discovery, cheap filtering, and expensive
-verification remain separate so indexing can be introduced without changing the
-domain result types.
+`postproject-media` owns filesystem candidate discovery, fingerprinting,
+resolution policy, optional inspection, and the bounded local-executor adapter.
+Candidate discovery, cheap filtering, and expensive verification remain
+separate so indexing can be introduced without changing the domain result
+types. `ffprobe` and `ffmpeg` are configurable subprocess capabilities; no
+FFmpeg library enters the dependency graph.
 
 `postproject-ffi` exposes a manually designed C ABI with opaque handles and panic
 containment. The header-only C++ wrapper calls only that ABI. `postproject-cli`

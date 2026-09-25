@@ -31,8 +31,10 @@ jobs, scalable domain queries, cross-process change delivery, publishing, and a
 maintained application pilot. Fingerprint observations and activity snapshots,
 artifact evaluation and reproducibility, dependency relationships, and the
 complete host-worker job protocol are delivered on Rust, C, C++, Python, and
-the CLI. The next implementation phase is the opt-in local reference executor;
-PostProject still never starts work implicitly.
+the CLI. An opt-in `ffmpeg` reference executor is delivered through Rust and
+the CLI with named proxy and thumbnail profiles, lease heartbeats, atomic job
+completion, and bounded failure cleanup. PostProject still never starts work
+implicitly.
 
 ## Explicitly later
 

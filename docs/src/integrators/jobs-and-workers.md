@@ -63,6 +63,11 @@ The CLI completion adapter creates a single-file output. Library callers can
 stage any supported representation structure—single resource, image sequence,
 ordered parts, or package—before calling the same completion operation.
 
+The opt-in [reference local executor](reference-executor.md) builds on this
+protocol for proxy and thumbnail jobs. Its subprocess adapter is available in
+Rust and its complete runner is available as `job run`; C, C++, and Python
+workers use the protocol above rather than an executor wrapper.
+
 ## Plan and explicitly enqueue regeneration
 
 `plan_regeneration` accepts artifact representation IDs and returns proposals

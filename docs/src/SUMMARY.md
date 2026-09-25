@@ -39,6 +39,7 @@
 - [Provenance integration](integrators/provenance.md)
 - [Bounded queries and cursors](integrators/bounded-queries.md)
 - [Jobs and workers](integrators/jobs-and-workers.md)
+- [Reference local executor](integrators/reference-executor.md)
 - [Revision feed](integrators/revision-feed.md)
 
 # For contributors

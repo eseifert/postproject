@@ -138,6 +138,26 @@ while :; do
 done
 # [/job-query-pages]
 
+# [reference-executor]
+mkdir -p proxies
+postproject root add production.pproj proxies --label "Generated proxies"
+cat > ffmpeg-fake <<'EOF'
+#!/bin/sh
+if [ "$1" = "-version" ]; then
+  echo "ffmpeg version guide-fake"
+  exit 0
+fi
+for output do :; done
+printf 'proxy media' > "$output"
+EOF
+chmod +x ffmpeg-fake
+postproject job request production.pproj org.postproject:generate-proxy \
+  "$ASSET_ID" proxy --input "$ORIGINAL_ID" --target-root proxies \
+  --profile proxy-720p
+postproject job run production.pproj --once \
+  --root-map proxies="$PWD/proxies" --ffmpeg "$PWD/ffmpeg-fake"
+# [/reference-executor]
+
 # [revision-feed]
 CURSOR=0
 while :; do

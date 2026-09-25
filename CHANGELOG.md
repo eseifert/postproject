@@ -9,6 +9,11 @@ Development version: `0.4.0-alpha.1`.
 
 ### Added
 
+- Added an opt-in Rust `ffmpeg` subprocess executor and CLI `job run` worker for
+  named proxy and thumbnail profiles, with configurable executable and timeout,
+  bounded diagnostics, claim heartbeats, temporary-output cleanup, atomic
+  publication, fingerprinted output, provenance snapshots, copied activity
+  parameters, and capability-safe behavior when `ffmpeg` is absent.
 - Added Rust storage operations to request, list, read, claim, renew, release,
   complete, fail, and cancel durable jobs, with caller-supplied lease time,
   token-checked worker transitions, atomic output/provenance persistence, job

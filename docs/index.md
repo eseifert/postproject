@@ -26,6 +26,7 @@ src/integrators/metadata-vocabularies
 src/integrators/provenance
 src/integrators/bounded-queries
 src/integrators/jobs-and-workers
+src/integrators/reference-executor
 src/integrators/revision-feed
 src/integrators/host-object-bindings
 src/contributors/README
@@ -109,5 +110,6 @@ adr/0021-fingerprint-observations-and-activity-snapshots
 adr/0022-managed-artifact-state-and-staleness
 adr/0023-job-model-and-execution-boundary
 adr/0024-dependency-relationships
+adr/0025-reference-local-executor
 adr/0026-domain-query-cursors
 ```

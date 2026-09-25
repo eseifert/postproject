@@ -10,15 +10,17 @@ use std::str::FromStr;
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole,
     ArtifactEvaluationLimits, AssetId, Dependency, DependencyKind, DependencyQueryLimits,
-    DependencyTarget, ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme,
-    ImageSequencePattern, Job, JobId, JobKind, JobQuery, JobStateKind, MediaRoot, MediaRootId,
-    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, ProductionId, PropertyId,
-    QueryPageRequest, RationalRate, RepresentationId, RepresentationKind, RepresentationResolution,
-    RequestedJobOutput, Result, RevisionContext, RevisionEvent, ToolIdentity, VocabularyId,
+    DependencyTarget, Error, ErrorKind, ExternalIdentifier, FrameRange, HostObjectBinding,
+    IdentifierScheme, ImageSequencePattern, Job, JobClaimId, JobId, JobKind, JobQuery,
+    JobStateKind, MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef,
+    OriginIdentity, ProductionId, PropertyId, QueryPageRequest, RationalRate, RepresentationId,
+    RepresentationKind, RepresentationResolution, RequestedJobOutput, Result, RevisionContext,
+    RevisionEvent, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
-    ImageSequenceSource, MediaResolver, MediaRootMapping, prepare_confirmed_locator,
-    prepare_image_sequence_representation, prepare_original_media,
+    ExecutionOutcome, ExecutionRequest, Executor, FfmpegExecutor, GENERATE_PROXY_JOB_KIND,
+    ImageSequenceSource, MediaResolver, MediaRootMapping, PROXY_720P_PROFILE,
+    prepare_confirmed_locator, prepare_image_sequence_representation, prepare_original_media,
 };
 use postproject_storage_sqlite::SqliteProduction;
 
@@ -337,6 +339,27 @@ fn request_and_page_jobs(
 }
 // [/job-query-pages]
 
+// [reference-executor]
+fn execute_proxy(ffmpeg: &Path, input: &Path, target_root: &Path) -> Result<PathBuf> {
+    let request = ExecutionRequest::new(
+        JobId::new(),
+        JobClaimId::new(),
+        JobKind::new(GENERATE_PROXY_JOB_KIND)?,
+        PROXY_720P_PROFILE,
+        input,
+        target_root,
+    )?;
+    let mut renew_claim = || Ok(());
+    match FfmpegExecutor::with_executable(ffmpeg).execute(&request, &mut renew_claim)? {
+        ExecutionOutcome::Completed { output, .. } => Ok(output),
+        outcome => Err(Error::new(
+            ErrorKind::Io,
+            format!("reference executor did not complete: {outcome:?}"),
+        )),
+    }
+}
+// [/reference-executor]
+
 fn handle_event(event: &RevisionEvent) {
     println!("event {}: {:?}", event.position(), event.kind());
 }
@@ -378,6 +401,33 @@ fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../examples/fixtures/sample-media.dat")
 }
 
+#[cfg(unix)]
+fn fake_ffmpeg(directory: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = directory.join("ffmpeg-fake");
+    fs::write(
+        &path,
+        "#!/bin/sh\nif [ \"$1\" = \"-version\" ]; then echo 'ffmpeg version guide-fake'; exit 0; fi\nfor last do :; done\nprintf proxy > \"$last\"\n",
+    )
+    .expect("fake ffmpeg");
+    let mut permissions = fs::metadata(&path).expect("fake metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("fake executable");
+    path
+}
+
+#[cfg(windows)]
+fn fake_ffmpeg(directory: &Path) -> PathBuf {
+    let path = directory.join("ffmpeg-fake.cmd");
+    fs::write(
+        &path,
+        "@echo off\r\nif \"%~1\"==\"-version\" (echo ffmpeg version guide-fake& exit /b 0)\r\nset \"last=\"\r\n:args\r\nif \"%~1\"==\"\" goto run\r\nset \"last=%~1\"\r\nshift\r\ngoto args\r\n:run\r\n>\"%last%\" echo proxy\r\n",
+    )
+    .expect("fake ffmpeg");
+    path
+}
+
 #[test]
 fn guide_examples_run_in_order() -> Result<()> {
     let work = tempfile::tempdir().expect("temporary directory");
@@ -415,6 +465,15 @@ fn guide_examples_run_in_order() -> Result<()> {
     inspect_artifact(&production, sequence_id)?;
     record_and_query_dependencies(&mut production, sequence_id, asset_id, original_id)?;
     request_and_page_jobs(&mut production, original_id, asset_id)?;
+
+    let proxy_root = work.path().join("proxies");
+    fs::create_dir(&proxy_root).expect("proxy root");
+    let proxy = execute_proxy(
+        &fake_ffmpeg(work.path()),
+        &moved.join("A001.mov"),
+        &proxy_root,
+    )?;
+    assert!(proxy.is_file());
 
     let cursor = process_changes(&production, 0)?;
     assert_eq!(
