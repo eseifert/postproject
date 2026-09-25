@@ -1213,6 +1213,152 @@ int main(int argc, char **argv) {
     return 83;
   }
   pp_job_set_release(jobs);
+
+  pp_uuid_t claim_id = {{0}};
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_claim_job(
+          transaction, &job_id, "C worker", "1.0", NULL, "operator", NULL,
+          NULL, NULL, INT64_C(10), INT64_C(20), &claim_id, &error) != PP_OK ||
+      uuid_is_zero(&claim_id) ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 84;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+  jobs = NULL;
+  memset(&job, 0, sizeof(job));
+  if (pp_production_jobs(production, &jobs, &error) != PP_OK || jobs == NULL ||
+      pp_job_set_get(jobs, UINT64_C(0), &job, &error) != PP_OK ||
+      job.state != PP_JOB_CLAIMED ||
+      memcmp(job.claim_id.bytes, claim_id.bytes, sizeof(claim_id.bytes)) != 0 ||
+      job.claim_expires_at_unix_micros != INT64_C(20) ||
+      job.claim_tool_name == NULL || strcmp(job.claim_tool_name, "C worker") != 0 ||
+      job.claim_tool_version == NULL || strcmp(job.claim_tool_version, "1.0") != 0 ||
+      job.claim_agent_name == NULL || strcmp(job.claim_agent_name, "operator") != 0) {
+    pp_job_set_release(jobs);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 85;
+  }
+  pp_job_set_release(jobs);
+  jobs = NULL;
+
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_renew_job_claim(transaction, &job_id, &claim_id,
+                                     INT64_C(11), INT64_C(30), &error) != PP_OK ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 86;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_release_job_claim(transaction, &job_id, &claim_id,
+                                       &error) != PP_OK ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 87;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+
+  pp_uuid_t second_claim_id = {{0}};
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_claim_job(
+          transaction, &job_id, "C worker", NULL, NULL, NULL, NULL, NULL,
+          NULL, INT64_C(31), INT64_C(40), &second_claim_id, &error) != PP_OK ||
+      uuid_is_zero(&second_claim_id) ||
+      memcmp(second_claim_id.bytes, claim_id.bytes, sizeof(claim_id.bytes)) == 0 ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 88;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_fail_job(transaction, &job_id, &second_claim_id,
+                              INT64_C(32), "encoder exited", &error) != PP_OK ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 89;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+
+  pp_uuid_t cancelled_job_id = {{0}};
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_request_job(
+          transaction, "org.postproject:generate-thumbnail", &representation_id,
+          UINT64_C(1), &asset_id, PP_REPRESENTATION_DERIVED, NULL,
+          &cancelled_job_id, &error) != PP_OK ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 90;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_cancel_job(transaction, &cancelled_job_id, &error) != PP_OK ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 91;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+
+  pp_job_t other_job = {0};
+  jobs = NULL;
+  memset(&job, 0, sizeof(job));
+  if (pp_production_jobs(production, &jobs, &error) != PP_OK || jobs == NULL ||
+      pp_job_set_count(jobs) != UINT64_C(2) ||
+      pp_job_set_get(jobs, UINT64_C(0), &job, &error) != PP_OK ||
+      pp_job_set_get(jobs, UINT64_C(1), &other_job, &error) != PP_OK) {
+    pp_job_set_release(jobs);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 92;
+  }
+  const pp_job_t *failed_job =
+      memcmp(job.id.bytes, job_id.bytes, sizeof(job_id.bytes)) == 0 ? &job
+                                                                   : &other_job;
+  const pp_job_t *cancelled_job = failed_job == &job ? &other_job : &job;
+  if (failed_job->state != PP_JOB_FAILED ||
+      failed_job->failure_diagnostic == NULL ||
+      strcmp(failed_job->failure_diagnostic, "encoder exited") != 0 ||
+      !uuid_is_zero(&failed_job->claim_id) ||
+      memcmp(cancelled_job->id.bytes, cancelled_job_id.bytes,
+             sizeof(cancelled_job_id.bytes)) != 0 ||
+      cancelled_job->state != PP_JOB_CANCELLED) {
+    pp_job_set_release(jobs);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 93;
+  }
+  pp_job_set_release(jobs);
   pp_production_release(production);
   production = NULL;
 
