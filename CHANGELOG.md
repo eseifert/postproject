@@ -36,6 +36,8 @@ Development version: `0.4.0-alpha.1`.
 
 ### Changed
 
+- Bumped the pre-release C ABI to version 20 with durable job listing and
+  transaction-staged job requests.
 - Bumped the pre-release C ABI to version 19 for the job object-reference kind
   and job lifecycle revision events across C, C++, Python, and CLI projections.
 - Moved the repository and its integration repositories to the

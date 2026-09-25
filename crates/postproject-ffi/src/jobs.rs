@@ -1,0 +1,280 @@
+//! C-ABI-owned projections of durable jobs.
+
+use std::ffi::{CString, c_char};
+
+use postproject_core::{Error, Job, JobState, RepresentationKind};
+
+use crate::{PpUuid, exact_cstring};
+
+const PP_JOB_REQUESTED: u32 = 1;
+const PP_JOB_CLAIMED: u32 = 2;
+const PP_JOB_SUCCEEDED: u32 = 3;
+const PP_JOB_FAILED: u32 = 4;
+const PP_JOB_CANCELLED: u32 = 5;
+
+/// Opaque immutable job result set owned by the C caller.
+pub struct PpJobSet {
+    jobs: Vec<AbiJob>,
+}
+
+/// Borrowed fixed-layout view of one durable job.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct PpJob {
+    /// Stable job identity.
+    pub id: PpUuid,
+    /// Borrowed open-world job kind.
+    pub kind: *const c_char,
+    /// Asset that will own the requested output.
+    pub output_asset_id: PpUuid,
+    /// Requested `PP_REPRESENTATION_*` kind.
+    pub output_representation_kind: u32,
+    /// Borrowed optional logical output-root name.
+    pub target_root: *const c_char,
+    /// One of the `PP_JOB_*` state constants.
+    pub state: u32,
+    /// Number of canonical input representations.
+    pub input_count: u64,
+    /// Active claim capability, or zero outside the claimed state.
+    pub claim_id: PpUuid,
+    /// Active lease expiry, or zero outside the claimed state.
+    pub claim_expires_at_unix_micros: i64,
+    /// Borrowed claiming tool fields, or null outside the claimed state.
+    pub claim_tool_name: *const c_char,
+    /// Borrowed optional claiming tool version.
+    pub claim_tool_version: *const c_char,
+    /// Borrowed optional claiming tool URI.
+    pub claim_tool_uri: *const c_char,
+    /// Borrowed optional claiming-agent fields.
+    pub claim_agent_name: *const c_char,
+    /// Borrowed optional claiming-agent identifier scheme.
+    pub claim_agent_identifier_scheme: *const c_char,
+    /// Borrowed optional claiming-agent identifier value.
+    pub claim_agent_identifier_value: *const c_char,
+    /// Borrowed optional claiming-agent identifier qualifier.
+    pub claim_agent_identifier_qualifier: *const c_char,
+    /// Completion facts, or zero outside the succeeded state.
+    pub completion_activity_id: PpUuid,
+    /// Output representation, or zero outside the succeeded state.
+    pub completion_representation_id: PpUuid,
+    /// Borrowed diagnostic, or null outside the failed state.
+    pub failure_diagnostic: *const c_char,
+}
+
+impl PpJob {
+    pub(crate) const fn empty() -> Self {
+        let zero = PpUuid { bytes: [0; 16] };
+        Self {
+            id: zero,
+            kind: std::ptr::null(),
+            output_asset_id: zero,
+            output_representation_kind: 0,
+            target_root: std::ptr::null(),
+            state: 0,
+            input_count: 0,
+            claim_id: zero,
+            claim_expires_at_unix_micros: 0,
+            claim_tool_name: std::ptr::null(),
+            claim_tool_version: std::ptr::null(),
+            claim_tool_uri: std::ptr::null(),
+            claim_agent_name: std::ptr::null(),
+            claim_agent_identifier_scheme: std::ptr::null(),
+            claim_agent_identifier_value: std::ptr::null(),
+            claim_agent_identifier_qualifier: std::ptr::null(),
+            completion_activity_id: zero,
+            completion_representation_id: zero,
+            failure_diagnostic: std::ptr::null(),
+        }
+    }
+}
+
+struct AbiJob {
+    value: PpJob,
+    kind: CString,
+    target_root: Option<CString>,
+    claim_tool_name: Option<CString>,
+    claim_tool_version: Option<CString>,
+    claim_tool_uri: Option<CString>,
+    claim_agent_name: Option<CString>,
+    claim_agent_identifier_scheme: Option<CString>,
+    claim_agent_identifier_value: Option<CString>,
+    claim_agent_identifier_qualifier: Option<CString>,
+    failure_diagnostic: Option<CString>,
+    inputs: Vec<PpUuid>,
+}
+
+impl PpJobSet {
+    pub(crate) fn new(jobs: &[Job]) -> Result<Self, Error> {
+        let jobs = jobs
+            .iter()
+            .map(AbiJob::try_from)
+            .collect::<Result<_, _>>()?;
+        Ok(Self { jobs })
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.jobs.len()
+    }
+
+    pub(crate) fn get(&self, index: usize) -> Option<PpJob> {
+        self.jobs.get(index).map(AbiJob::as_abi)
+    }
+
+    pub(crate) fn input(&self, job_index: usize, input_index: usize) -> Option<PpUuid> {
+        self.jobs.get(job_index)?.inputs.get(input_index).copied()
+    }
+}
+
+impl AbiJob {
+    fn as_abi(&self) -> PpJob {
+        let mut value = self.value;
+        value.kind = self.kind.as_ptr();
+        value.target_root = optional_cstring_ptr(self.target_root.as_ref());
+        value.claim_tool_name = optional_cstring_ptr(self.claim_tool_name.as_ref());
+        value.claim_tool_version = optional_cstring_ptr(self.claim_tool_version.as_ref());
+        value.claim_tool_uri = optional_cstring_ptr(self.claim_tool_uri.as_ref());
+        value.claim_agent_name = optional_cstring_ptr(self.claim_agent_name.as_ref());
+        value.claim_agent_identifier_scheme =
+            optional_cstring_ptr(self.claim_agent_identifier_scheme.as_ref());
+        value.claim_agent_identifier_value =
+            optional_cstring_ptr(self.claim_agent_identifier_value.as_ref());
+        value.claim_agent_identifier_qualifier =
+            optional_cstring_ptr(self.claim_agent_identifier_qualifier.as_ref());
+        value.failure_diagnostic = optional_cstring_ptr(self.failure_diagnostic.as_ref());
+        value
+    }
+}
+
+impl TryFrom<&Job> for AbiJob {
+    type Error = Error;
+
+    fn try_from(job: &Job) -> Result<Self, Self::Error> {
+        let kind = exact_cstring(job.kind().as_str(), "job kind")?;
+        let target_root = job
+            .requested_output()
+            .target_root()
+            .map(|value| exact_cstring(value, "job target root"))
+            .transpose()?;
+        let mut value = empty_job(job, kind.as_ptr(), target_root.as_ref());
+        let mut claim_tool_name = None;
+        let mut claim_tool_version = None;
+        let mut claim_tool_uri = None;
+        let mut claim_agent_name = None;
+        let mut claim_agent_identifier_scheme = None;
+        let mut claim_agent_identifier_value = None;
+        let mut claim_agent_identifier_qualifier = None;
+        let mut failure_diagnostic = None;
+        match job.state() {
+            JobState::Requested => value.state = PP_JOB_REQUESTED,
+            JobState::Claimed(claim) => {
+                value.state = PP_JOB_CLAIMED;
+                value.claim_id = PpUuid {
+                    bytes: claim.id().into_bytes(),
+                };
+                value.claim_expires_at_unix_micros = claim.expires_at().as_unix_micros();
+                claim_tool_name = Some(exact_cstring(claim.tool().name(), "claim tool name")?);
+                claim_tool_version = claim
+                    .tool()
+                    .version()
+                    .map(|text| exact_cstring(text, "claim tool version"))
+                    .transpose()?;
+                claim_tool_uri = claim
+                    .tool()
+                    .uri()
+                    .map(|text| exact_cstring(text, "claim tool URI"))
+                    .transpose()?;
+                if let Some(agent) = claim.agent() {
+                    claim_agent_name = agent
+                        .name()
+                        .map(|text| exact_cstring(text, "claim agent name"))
+                        .transpose()?;
+                    if let Some(identifier) = agent.identifier() {
+                        claim_agent_identifier_scheme = Some(exact_cstring(
+                            identifier.scheme().as_str(),
+                            "claim agent identifier scheme",
+                        )?);
+                        claim_agent_identifier_value = Some(exact_cstring(
+                            identifier.value(),
+                            "claim agent identifier value",
+                        )?);
+                        claim_agent_identifier_qualifier = identifier
+                            .qualifier()
+                            .map(|text| exact_cstring(text, "claim agent identifier qualifier"))
+                            .transpose()?;
+                    }
+                }
+            }
+            JobState::Succeeded(completion) => {
+                value.state = PP_JOB_SUCCEEDED;
+                value.completion_activity_id = PpUuid {
+                    bytes: completion.activity_id().into_bytes(),
+                };
+                value.completion_representation_id = PpUuid {
+                    bytes: completion.representation_id().into_bytes(),
+                };
+            }
+            JobState::Failed(failure) => {
+                value.state = PP_JOB_FAILED;
+                failure_diagnostic = Some(exact_cstring(
+                    failure.diagnostic(),
+                    "job failure diagnostic",
+                )?);
+            }
+            JobState::Cancelled => value.state = PP_JOB_CANCELLED,
+            _ => value.state = 0,
+        }
+        Ok(Self {
+            value,
+            kind,
+            target_root,
+            claim_tool_name,
+            claim_tool_version,
+            claim_tool_uri,
+            claim_agent_name,
+            claim_agent_identifier_scheme,
+            claim_agent_identifier_value,
+            claim_agent_identifier_qualifier,
+            failure_diagnostic,
+            inputs: job
+                .inputs()
+                .iter()
+                .map(|id| PpUuid {
+                    bytes: id.into_bytes(),
+                })
+                .collect(),
+        })
+    }
+}
+
+fn empty_job(job: &Job, kind: *const c_char, target_root: Option<&CString>) -> PpJob {
+    PpJob {
+        id: PpUuid {
+            bytes: job.id().into_bytes(),
+        },
+        kind,
+        output_asset_id: PpUuid {
+            bytes: job.requested_output().asset_id().into_bytes(),
+        },
+        output_representation_kind: representation_kind(
+            job.requested_output().representation_kind(),
+        ),
+        target_root: optional_cstring_ptr(target_root),
+        state: 0,
+        input_count: u64::try_from(job.inputs().len()).unwrap_or(u64::MAX),
+        ..PpJob::empty()
+    }
+}
+
+fn optional_cstring_ptr(value: Option<&CString>) -> *const c_char {
+    value.map_or(std::ptr::null(), |text| text.as_ptr())
+}
+
+const fn representation_kind(kind: RepresentationKind) -> u32 {
+    match kind {
+        RepresentationKind::Original => 1,
+        RepresentationKind::Proxy => 2,
+        RepresentationKind::Optimized => 3,
+        RepresentationKind::Derived => 4,
+        _ => 0,
+    }
+}

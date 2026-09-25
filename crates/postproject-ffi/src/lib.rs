@@ -6,6 +6,7 @@
 
 mod artifact;
 mod dependency;
+mod jobs;
 mod metadata;
 mod metadata_input;
 mod provenance;
@@ -30,14 +31,14 @@ use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     ArtifactEvaluationLimits, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, Dependency,
     DependencyKind, DependencyTarget, Error, ErrorKind, EvidenceKind, ExternalIdentifier,
-    FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern, Locator,
-    MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS, MAX_DEPENDENCIES_PER_SET, MAX_SEQUENCE_EXCEPTIONS,
-    MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity,
-    OriginalMediaImport, ProductionId, PropertyId, RationalRate, RepresentationAvailability,
-    RepresentationFingerprint, RepresentationId, RepresentationImport, RepresentationKind,
-    RepresentationResolution, ResolutionEvidence, ResourceFingerprint, ResourceId,
-    ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, Timestamp, ToolIdentity,
-    TransactionLifecycle, VocabularyId,
+    FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern, Job, JobId, JobKind,
+    Locator, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS, MAX_DEPENDENCIES_PER_SET, MAX_JOB_INPUTS,
+    MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef,
+    OriginIdentity, OriginalMediaImport, ProductionId, PropertyId, RationalRate,
+    RepresentationAvailability, RepresentationFingerprint, RepresentationId, RepresentationImport,
+    RepresentationKind, RepresentationResolution, RequestedJobOutput, ResolutionEvidence,
+    ResourceFingerprint, ResourceId, ResourceResolutionState, ResourceRole, RevisionContext,
+    RevisionId, Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, MediaRootMapping,
@@ -52,6 +53,7 @@ pub use artifact::{
     PpArtifactReproducibility, PpArtifactReproducibilityIssue,
 };
 pub use dependency::{PpDependency, PpDependencySet};
+pub use jobs::{PpJob, PpJobSet};
 use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
 pub use metadata_input::PpMetadataInput;
@@ -145,7 +147,7 @@ const PP_REVISION_JOB_FAILED: u32 = 25;
 const PP_REVISION_JOB_CANCELLED: u32 = 26;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 19;
+pub const ABI_VERSION: u32 = 20;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -345,6 +347,7 @@ enum StagedMutation {
     AddMetadataValue(ObjectRef, MetadataProperty, MetadataValue),
     RemoveMetadataProperty(ObjectRef, MetadataProperty),
     Activity(Activity),
+    RequestJob(Job),
 }
 
 #[derive(Clone, Copy)]
@@ -2239,6 +2242,130 @@ pub unsafe extern "C" fn pp_activity_set_release(activities: *mut PpActivitySet)
     let _ = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: Ownership is transferred back exactly once by contract.
         drop(unsafe { Box::from_raw(activities) });
+    }));
+}
+
+/// Loads every durable job in stable identity order.
+///
+/// # Safety
+///
+/// `production` must be live, `out_jobs` must be writable, and `out_error` may
+/// be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_jobs(
+    production: *const PpProduction,
+    out_jobs: *mut *mut PpJobSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are checked before use and output ownership is explicit.
+    unsafe {
+        initialize_output(out_jobs);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            require_output(out_jobs, "out_jobs")?;
+            let inner = lock_production(&production.state);
+            out_jobs.write(Box::into_raw(Box::new(PpJobSet::new(&inner.jobs()?)?)));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the number of jobs in a result set. Null returns zero.
+///
+/// # Safety
+///
+/// `jobs` must be null or a live result-set handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_job_set_count(jobs: *const PpJobSet) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null handle is live by the caller contract.
+        unsafe { jobs.as_ref() }.map_or(0, |set| u64::try_from(set.len()).unwrap_or(u64::MAX))
+    }))
+    .unwrap_or(0)
+}
+
+/// Reads one borrowed job view.
+///
+/// # Safety
+///
+/// `jobs` must be live, `out_job` must be writable, and `out_error` may be null
+/// or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_job_set_get(
+    jobs: *const PpJobSet,
+    index: u64,
+    out_job: *mut PpJob,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_value(out_job, PpJob::empty());
+        ffi_call(out_error, || {
+            let jobs = jobs
+                .as_ref()
+                .ok_or_else(|| invalid_argument("jobs must not be null"))?;
+            require_output(out_job, "out_job")?;
+            let index =
+                usize::try_from(index).map_err(|_| invalid_argument("job index is too large"))?;
+            let job = jobs
+                .get(index)
+                .ok_or_else(|| Error::new(ErrorKind::NotFound, "job index is out of range"))?;
+            out_job.write(job);
+            Ok(())
+        })
+    }
+}
+
+/// Reads one input representation from a job.
+///
+/// # Safety
+///
+/// `jobs` must be live, `out_representation_id` must be writable, and
+/// `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_job_set_get_input(
+    jobs: *const PpJobSet,
+    job_index: u64,
+    input_index: u64,
+    out_representation_id: *mut PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_uuid(out_representation_id);
+        ffi_call(out_error, || {
+            let jobs = jobs
+                .as_ref()
+                .ok_or_else(|| invalid_argument("jobs must not be null"))?;
+            require_output(out_representation_id, "out_representation_id")?;
+            let job_index = usize::try_from(job_index)
+                .map_err(|_| invalid_argument("job index is too large"))?;
+            let input_index = usize::try_from(input_index)
+                .map_err(|_| invalid_argument("job input index is too large"))?;
+            let input = jobs.input(job_index, input_index).ok_or_else(|| {
+                Error::new(ErrorKind::NotFound, "job or input index is out of range")
+            })?;
+            out_representation_id.write(input);
+            Ok(())
+        })
+    }
+}
+
+/// Releases a job result set. Null is a no-op.
+///
+/// # Safety
+///
+/// A non-null handle must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_job_set_release(jobs: *mut PpJobSet) {
+    if jobs.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership is transferred back exactly once by contract.
+        drop(unsafe { Box::from_raw(jobs) });
     }));
 }
 
@@ -4157,6 +4284,85 @@ pub unsafe extern "C" fn pp_transaction_remove_metadata_property(
     }
 }
 
+/// Stages one durable requested job and returns its new identity.
+///
+/// The input ID array and strings are borrowed only for this call. A null
+/// `target_root` means no preferred logical output root.
+///
+/// # Safety
+///
+/// `transaction` must be live, `kind` and `output_asset_id` must be readable,
+/// the input array must contain `input_count` readable UUIDs (or be null when
+/// the count is zero), `out_job_id` must be writable, and `out_error` may be
+/// null or writable.
+#[unsafe(no_mangle)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the C ABI keeps the requested output fields explicit"
+)]
+pub unsafe extern "C" fn pp_transaction_request_job(
+    transaction: *mut PpTransaction,
+    kind: *const c_char,
+    input_representation_ids: *const PpUuid,
+    input_count: u64,
+    output_asset_id: *const PpUuid,
+    output_representation_kind: u32,
+    target_root: *const c_char,
+    out_job_id: *mut PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are checked and copied before this call returns.
+    unsafe {
+        initialize_uuid(out_job_id);
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            require_output(out_job_id, "out_job_id")?;
+            let output_asset_id = output_asset_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("output_asset_id must not be null"))?;
+            let input_count = usize::try_from(input_count)
+                .map_err(|_| invalid_argument("job input count is too large"))?;
+            if input_count > MAX_JOB_INPUTS {
+                return Err(invalid_argument(format!(
+                    "job input count must not exceed {MAX_JOB_INPUTS}"
+                )));
+            }
+            let inputs = if input_count == 0 {
+                Vec::new()
+            } else {
+                if input_representation_ids.is_null() {
+                    return Err(invalid_argument(
+                        "input_representation_ids must not be null when count is nonzero",
+                    ));
+                }
+                // SAFETY: The caller guarantees `input_count` readable UUIDs.
+                std::slice::from_raw_parts(input_representation_ids, input_count)
+                    .iter()
+                    .map(|id| RepresentationId::from_bytes(id.bytes))
+                    .collect()
+            };
+            let job = Job::new(
+                JobId::new(),
+                JobKind::new(required_utf8(kind, "kind")?)?,
+                inputs,
+                RequestedJobOutput::new(
+                    AssetId::from_bytes(output_asset_id.bytes),
+                    representation_kind_from_abi(output_representation_kind)?,
+                    optional_utf8(target_root, "target_root")?.map(str::to_owned),
+                )?,
+            )?;
+            out_job_id.write(PpUuid {
+                bytes: job.id().into_bytes(),
+            });
+            transaction.mutations.push(StagedMutation::RequestJob(job));
+            Ok(())
+        })
+    }
+}
+
 /// Stages one complete production activity.
 ///
 /// Input and output arrays are borrowed only for this call. Edge roles, kind,
@@ -5272,6 +5478,7 @@ impl PpTransaction {
                     StagedMutation::Activity(activity) => {
                         transaction.create_activity(activity)?;
                     }
+                    StagedMutation::RequestJob(job) => transaction.request_job(job)?,
                 }
             }
             transaction.commit()

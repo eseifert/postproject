@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 19 is pre-release and may change during the 0.x series, with every
+ABI version 20 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
@@ -9,7 +9,7 @@ release, but removals or signature changes require an explicit ABI-version bump.
 
 Productions, transactions, asset sets, media-root sets, representation sets,
 resolution sets, activity sets, external-identifier sets, object-reference sets,
-metadata inputs, and errors are opaque handles. A
+job sets, metadata inputs, and errors are opaque handles. A
 successful creation/open call transfers one production ownership reference to the
 caller, which releases it exactly once with `pp_production_release`. Failed calls
 optionally transfer an error object, released exactly once with
@@ -128,6 +128,10 @@ transaction recording, and the dependency-set-recorded revision event.
 ABI version 19 adds the job object-reference kind and projects all seven job
 lifecycle revision events. Job events carry only the job ID; claim-token
 capabilities are never published through the revision feed.
+
+ABI version 20 adds owned job-set reads, complete state-specific job views,
+indexed input access, and transaction-staged job requests. Strings and job
+views borrow the result set; request inputs are copied into the transaction.
 
 ## External identifiers
 

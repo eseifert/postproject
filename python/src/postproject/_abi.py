@@ -53,6 +53,10 @@ class ActivitySet(ctypes.Structure):
     pass
 
 
+class JobSet(ctypes.Structure):
+    pass
+
+
 class DependencySet(ctypes.Structure):
     pass
 
@@ -93,6 +97,10 @@ class ActivityEdge(ctypes.Structure):
     pass
 
 
+class Job(ctypes.Structure):
+    pass
+
+
 class Dependency(ctypes.Structure):
     pass
 
@@ -119,6 +127,7 @@ class MediaRootMapping(ctypes.Structure):
 
 ObjectKind = ctypes.c_uint32
 RepresentationKind = ctypes.c_uint32
+JobState = ctypes.c_uint32
 ContentStructureKind = ctypes.c_uint32
 LocatorAvailability = ctypes.c_uint32
 RevisionEventKind = ctypes.c_uint32
@@ -147,6 +156,11 @@ PP_REPRESENTATION_ORIGINAL = 1
 PP_REPRESENTATION_PROXY = 2
 PP_REPRESENTATION_OPTIMIZED = 3
 PP_REPRESENTATION_DERIVED = 4
+PP_JOB_REQUESTED = 1
+PP_JOB_CLAIMED = 2
+PP_JOB_SUCCEEDED = 3
+PP_JOB_FAILED = 4
+PP_JOB_CANCELLED = 5
 PP_CONTENT_SINGLE_RESOURCE = 1
 PP_CONTENT_IMAGE_SEQUENCE = 2
 PP_CONTENT_ORDERED_PARTS = 3
@@ -305,6 +319,28 @@ ActivityEdge._fields_ = [
     ("role", ctypes.c_char_p),
 ]
 
+Job._fields_ = [
+    ("id", Uuid),
+    ("kind", ctypes.c_char_p),
+    ("output_asset_id", Uuid),
+    ("output_representation_kind", RepresentationKind),
+    ("target_root", ctypes.c_char_p),
+    ("state", JobState),
+    ("input_count", ctypes.c_uint64),
+    ("claim_id", Uuid),
+    ("claim_expires_at_unix_micros", ctypes.c_int64),
+    ("claim_tool_name", ctypes.c_char_p),
+    ("claim_tool_version", ctypes.c_char_p),
+    ("claim_tool_uri", ctypes.c_char_p),
+    ("claim_agent_name", ctypes.c_char_p),
+    ("claim_agent_identifier_scheme", ctypes.c_char_p),
+    ("claim_agent_identifier_value", ctypes.c_char_p),
+    ("claim_agent_identifier_qualifier", ctypes.c_char_p),
+    ("completion_activity_id", Uuid),
+    ("completion_representation_id", Uuid),
+    ("failure_diagnostic", ctypes.c_char_p),
+]
+
 Dependency._fields_ = [
     ("has_source_resource", ctypes.c_uint8),
     ("source_resource_id", Uuid),
@@ -374,6 +410,7 @@ PUBLIC_STRUCTS = {
     "pp_object_ref_t": (ObjectRef, ("kind", "id")),
     "pp_revision_event_t": (RevisionEvent, ("kind", "position", "asset_id", "representation_id", "resource_id", "locator_id", "media_root_id", "activity_id", "job_id", "target", "structural_position", "enabled", "identifier_scheme", "identifier_value", "identifier_qualifier", "vocabulary", "property", "activity_kind", "role", "fingerprint_algorithm", "fingerprint_version")),
     "pp_activity_edge_t": (ActivityEdge, ("representation_id", "role")),
+    "pp_job_t": (Job, ("id", "kind", "output_asset_id", "output_representation_kind", "target_root", "state", "input_count", "claim_id", "claim_expires_at_unix_micros", "claim_tool_name", "claim_tool_version", "claim_tool_uri", "claim_agent_name", "claim_agent_identifier_scheme", "claim_agent_identifier_value", "claim_agent_identifier_qualifier", "completion_activity_id", "completion_representation_id", "failure_diagnostic")),
     "pp_dependency_t": (Dependency, ("has_source_resource", "source_resource_id", "kind", "target", "has_resolved_representation", "resolved_representation_id", "required", "authored_reference")),
     "pp_artifact_dependency_path_segment_t": (ArtifactDependencyPathSegment, ("source_representation_id", "dependency_position", "has_source_resource", "source_resource_id", "kind", "target", "has_resolved_representation", "resolved_representation_id", "authored_reference")),
     "pp_artifact_reason_t": (ArtifactReason, ("kind", "activity_id", "representation_id", "input_representation_id", "edge_kind", "upstream_state", "traversal_limit", "activity_count", "dependency_issue", "dependency_path", "dependency_path_length", "fingerprint_algorithm", "fingerprint_version", "has_snapshot_value", "snapshot_value", "snapshot_value_length", "has_current_value", "current_value", "current_value_length")),
@@ -417,6 +454,10 @@ EXPORTED_SYMBOLS = (
     "pp_host_binding_format",
     "pp_host_binding_parse",
     "pp_host_binding_release",
+    "pp_job_set_count",
+    "pp_job_set_get",
+    "pp_job_set_get_input",
+    "pp_job_set_release",
     "pp_media_root_set_count",
     "pp_media_root_set_get",
     "pp_media_root_set_release",
@@ -470,6 +511,7 @@ EXPORTED_SYMBOLS = (
     "pp_production_find_by_external_identifier",
     "pp_production_find_metadata",
     "pp_production_id",
+    "pp_production_jobs",
     "pp_production_latest_revision",
     "pp_production_media_roots",
     "pp_production_metadata",
@@ -523,6 +565,7 @@ EXPORTED_SYMBOLS = (
     "pp_transaction_remove_external_identifier",
     "pp_transaction_remove_media_root",
     "pp_transaction_remove_metadata_property",
+    "pp_transaction_request_job",
     "pp_transaction_retire_locator",
     "pp_transaction_rollback",
     "pp_transaction_set_media_root_enabled",
@@ -727,6 +770,16 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_activity_set_get_output_snapshot_fingerprint.restype = ErrorCode
     lib.pp_activity_set_release.argtypes = [ctypes.POINTER(ActivitySet)]
     lib.pp_activity_set_release.restype = None
+    lib.pp_production_jobs.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ctypes.POINTER(JobSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_jobs.restype = ErrorCode
+    lib.pp_job_set_count.argtypes = [ctypes.POINTER(JobSet)]
+    lib.pp_job_set_count.restype = ctypes.c_uint64
+    lib.pp_job_set_get.argtypes = [ctypes.POINTER(JobSet), ctypes.c_uint64, ctypes.POINTER(Job), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_job_set_get.restype = ErrorCode
+    lib.pp_job_set_get_input.argtypes = [ctypes.POINTER(JobSet), ctypes.c_uint64, ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_job_set_get_input.restype = ErrorCode
+    lib.pp_job_set_release.argtypes = [ctypes.POINTER(JobSet)]
+    lib.pp_job_set_release.restype = None
     lib.pp_production_latest_revision.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ctypes.POINTER(RevisionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_production_latest_revision.restype = ErrorCode
     lib.pp_production_changes_since.argtypes = [ctypes.POINTER(Production), ctypes.c_uint64, ctypes.c_uint32, ctypes.POINTER(ctypes.POINTER(RevisionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
@@ -805,6 +858,8 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_transaction_add_metadata_value.restype = ErrorCode
     lib.pp_transaction_remove_metadata_property.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(ObjectRef), ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_remove_metadata_property.restype = ErrorCode
+    lib.pp_transaction_request_job.argtypes = [ctypes.POINTER(Transaction), ctypes.c_char_p, ctypes.POINTER(Uuid), ctypes.c_uint64, ctypes.POINTER(Uuid), RepresentationKind, ctypes.c_char_p, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_transaction_request_job.restype = ErrorCode
     lib.pp_transaction_create_activity.argtypes = [ctypes.POINTER(Transaction), ctypes.c_char_p, ctypes.POINTER(ActivityEdge), ctypes.c_uint64, ctypes.POINTER(ActivityEdge), ctypes.c_uint64, ctypes.POINTER(ctypes.c_int64), ctypes.POINTER(ctypes.c_int64), ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_transaction_create_activity.restype = ErrorCode
     lib.pp_transaction_commit.argtypes = [ctypes.POINTER(Transaction), ctypes.POINTER(ctypes.POINTER(Error))]

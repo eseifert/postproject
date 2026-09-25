@@ -31,6 +31,7 @@ typedef struct pp_metadata_set pp_metadata_set_t;
 typedef struct pp_metadata_value pp_metadata_value_t;
 typedef struct pp_metadata_input pp_metadata_input_t;
 typedef struct pp_activity_set pp_activity_set_t;
+typedef struct pp_job_set pp_job_set_t;
 typedef struct pp_dependency_set pp_dependency_set_t;
 typedef struct pp_artifact_evaluation pp_artifact_evaluation_t;
 typedef struct pp_artifact_reproducibility pp_artifact_reproducibility_t;
@@ -62,6 +63,14 @@ typedef uint32_t pp_representation_kind_t;
 #define PP_REPRESENTATION_PROXY UINT32_C(2)
 #define PP_REPRESENTATION_OPTIMIZED UINT32_C(3)
 #define PP_REPRESENTATION_DERIVED UINT32_C(4)
+
+typedef uint32_t pp_job_state_t;
+
+#define PP_JOB_REQUESTED UINT32_C(1)
+#define PP_JOB_CLAIMED UINT32_C(2)
+#define PP_JOB_SUCCEEDED UINT32_C(3)
+#define PP_JOB_FAILED UINT32_C(4)
+#define PP_JOB_CANCELLED UINT32_C(5)
 
 typedef uint32_t pp_content_structure_kind_t;
 
@@ -210,6 +219,30 @@ typedef struct pp_activity_edge {
   pp_uuid_t representation_id;
   const char *role;
 } pp_activity_edge_t;
+
+/* Strings borrow the owning pp_job_set_t. State-specific fields are zero or
+ * NULL outside their applicable state. */
+typedef struct pp_job {
+  pp_uuid_t id;
+  const char *kind;
+  pp_uuid_t output_asset_id;
+  pp_representation_kind_t output_representation_kind;
+  const char *target_root;
+  pp_job_state_t state;
+  uint64_t input_count;
+  pp_uuid_t claim_id;
+  int64_t claim_expires_at_unix_micros;
+  const char *claim_tool_name;
+  const char *claim_tool_version;
+  const char *claim_tool_uri;
+  const char *claim_agent_name;
+  const char *claim_agent_identifier_scheme;
+  const char *claim_agent_identifier_value;
+  const char *claim_agent_identifier_qualifier;
+  pp_uuid_t completion_activity_id;
+  pp_uuid_t completion_representation_id;
+  const char *failure_diagnostic;
+} pp_job_t;
 
 /* Input strings are borrowed for a transaction call. Output strings borrow
  * the owning pp_dependency_set_t. */
@@ -673,6 +706,18 @@ PP_API pp_error_code_t pp_activity_set_get_output_snapshot_fingerprint(
     uint8_t *out_has_observed_revision,
     uint64_t *out_observed_revision_sequence, pp_error_t **out_error);
 PP_API void pp_activity_set_release(pp_activity_set_t *activities);
+/* Job views and their strings borrow the owning result set. */
+PP_API pp_error_code_t pp_production_jobs(
+    const pp_production_t *production, pp_job_set_t **out_jobs,
+    pp_error_t **out_error);
+PP_API uint64_t pp_job_set_count(const pp_job_set_t *jobs);
+PP_API pp_error_code_t pp_job_set_get(
+    const pp_job_set_t *jobs, uint64_t index, pp_job_t *out_job,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_job_set_get_input(
+    const pp_job_set_t *jobs, uint64_t job_index, uint64_t input_index,
+    pp_uuid_t *out_representation_id, pp_error_t **out_error);
+PP_API void pp_job_set_release(pp_job_set_t *jobs);
 /* Revision strings are borrowed until pp_revision_set_release(). Latest
  * returns a set containing zero or one revision. */
 PP_API pp_error_code_t pp_production_latest_revision(
@@ -838,6 +883,15 @@ PP_API pp_error_code_t pp_transaction_add_metadata_value(
 PP_API pp_error_code_t pp_transaction_remove_metadata_property(
     pp_transaction_t *transaction, const pp_object_ref_t *target,
     const char *vocabulary, const char *property, pp_error_t **out_error);
+/* Stages one requested job. The input-ID array and strings are borrowed only
+ * for this call and copied into the transaction. */
+PP_API pp_error_code_t pp_transaction_request_job(
+    pp_transaction_t *transaction, const char *kind,
+    const pp_uuid_t *input_representation_ids, uint64_t input_count,
+    const pp_uuid_t *output_asset_id,
+    pp_representation_kind_t output_representation_kind,
+    const char *target_root, pp_uuid_t *out_job_id,
+    pp_error_t **out_error);
 /* Arrays and strings are borrowed only for this call. A NULL timestamp pointer
  * means absent. Tool and agent fields are independently optional subject to
  * the documented domain invariants. */

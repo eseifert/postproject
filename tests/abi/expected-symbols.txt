@@ -31,6 +31,10 @@ pp_external_identifier_set_release
 pp_host_binding_format
 pp_host_binding_parse
 pp_host_binding_release
+pp_job_set_count
+pp_job_set_get
+pp_job_set_get_input
+pp_job_set_release
 pp_media_root_set_count
 pp_media_root_set_get
 pp_media_root_set_release
@@ -84,6 +88,7 @@ pp_production_external_identifiers
 pp_production_find_by_external_identifier
 pp_production_find_metadata
 pp_production_id
+pp_production_jobs
 pp_production_latest_revision
 pp_production_media_roots
 pp_production_metadata
@@ -137,6 +142,7 @@ pp_transaction_release
 pp_transaction_remove_external_identifier
 pp_transaction_remove_media_root
 pp_transaction_remove_metadata_property
+pp_transaction_request_job
 pp_transaction_retire_locator
 pp_transaction_rollback
 pp_transaction_set_media_root_enabled

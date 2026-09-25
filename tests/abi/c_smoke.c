@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     return 64;
   }
   (void)remove(argv[1]);
-  if (pp_abi_version() != UINT32_C(19)) {
+  if (pp_abi_version() != UINT32_C(20)) {
     return 1;
   }
   pp_error_code_t status =
@@ -1170,6 +1170,49 @@ int main(int argc, char **argv) {
     return 76;
   }
   pp_object_ref_set_release(dependent_set);
+
+  pp_uuid_t job_id = {{0}};
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_request_job(
+          transaction, "org.postproject:generate-proxy", &representation_id,
+          UINT64_C(1), &asset_id, PP_REPRESENTATION_PROXY, NULL, &job_id,
+          &error) != PP_OK ||
+      uuid_is_zero(&job_id) || pp_transaction_commit(transaction, &error) != PP_OK) {
+    fprintf(stderr, "job request failed (%u): %s\n", status,
+            error != NULL ? pp_error_message(error) : "no details");
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 82;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+  pp_job_set_t *jobs = NULL;
+  pp_job_t job = {0};
+  pp_uuid_t job_input_id = {{0}};
+  status = pp_production_jobs(production, &jobs, &error);
+  if (status != PP_OK || jobs == NULL ||
+      pp_job_set_count(jobs) != UINT64_C(1) ||
+      pp_job_set_get(jobs, UINT64_C(0), &job, &error) != PP_OK ||
+      memcmp(job.id.bytes, job_id.bytes, sizeof(job_id.bytes)) != 0 ||
+      job.kind == NULL ||
+      strcmp(job.kind, "org.postproject:generate-proxy") != 0 ||
+      memcmp(job.output_asset_id.bytes, asset_id.bytes, sizeof(asset_id.bytes)) !=
+          0 ||
+      job.output_representation_kind != PP_REPRESENTATION_PROXY ||
+      job.target_root != NULL || job.state != PP_JOB_REQUESTED ||
+      job.input_count != UINT64_C(1) ||
+      pp_job_set_get_input(jobs, UINT64_C(0), UINT64_C(0), &job_input_id,
+                           &error) != PP_OK ||
+      memcmp(job_input_id.bytes, representation_id.bytes,
+             sizeof(representation_id.bytes)) != 0) {
+    pp_job_set_release(jobs);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 83;
+  }
+  pp_job_set_release(jobs);
   pp_production_release(production);
   production = NULL;
 
