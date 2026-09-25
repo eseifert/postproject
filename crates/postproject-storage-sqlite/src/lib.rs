@@ -26,17 +26,18 @@ use postproject_core::{
     ArtifactKnowledgeState, ArtifactReproducibilityReport, Asset, AssetId, ContentStructure,
     Dependency, DependencyKind, DependencyQueryLimits, DependencyQueryMatch, DependencySet,
     DependencySetStatus, DependencyTarget, Error, ErrorKind, ExternalIdentifier, FileFacts,
-    FingerprintSnapshot, FrameRange, IdentifierScheme, ImageSequenceDescriptor,
-    ImageSequencePattern, Job, JobClaim, JobClaimId, JobCompletion, JobFailure, JobId, JobKind,
-    JobQuery, JobState, Locator, LocatorAvailability, LocatorId, MAX_REGENERATION_PLANS,
-    MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
-    MetadataProperty, MetadataQuery, MetadataValue, ObjectRef, OriginIdentity, Production,
-    ProductionId, ProductionRead, ProductionStore, PropertyId, ProvenanceQueryLimits,
+    FilteredRevisionPage, FingerprintSnapshot, FrameRange, IdentifierScheme,
+    ImageSequenceDescriptor, ImageSequencePattern, Job, JobClaim, JobClaimId, JobCompletion,
+    JobFailure, JobId, JobKind, JobQuery, JobState, Locator, LocatorAvailability, LocatorId,
+    MAX_REGENERATION_PLANS, MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId, MetadataAssertion,
+    MetadataMatch, MetadataProperty, MetadataQuery, MetadataValue, ObjectRef, OriginIdentity,
+    Production, ProductionId, ProductionRead, ProductionStore, PropertyId, ProvenanceQueryLimits,
     ProvenanceQueryMatch, QueryCursor, QueryPage, QueryPageRequest, RationalRate,
     RegenerationJobPlan, Representation, RepresentationFingerprint, RepresentationId,
     RepresentationKind, RequestedJobOutput, Resource, ResourceFingerprint, ResourceId,
-    ResourceMember, ResourceRole, Result, Revision, RevisionEvent, RevisionEventKind, RevisionId,
-    StaleArtifactQuery, Timestamp, ToolIdentity, TransactionId, VocabularyId,
+    ResourceMember, ResourceRole, Result, Revision, RevisionEvent, RevisionEventFilter,
+    RevisionEventKind, RevisionEventType, RevisionId, StaleArtifactQuery, Timestamp, ToolIdentity,
+    TransactionId, VocabularyId,
 };
 use rusqlite::{
     Connection, OpenFlags, OptionalExtension, limits::Limit, params, params_from_iter, types::Value,
@@ -151,11 +152,7 @@ impl SqliteProduction {
         );
         persist_new_production(&mut connection, &production)?;
 
-        Ok(Self {
-            path: path.to_path_buf(),
-            connection,
-            production,
-        })
+        Ok(Self::from_parts(path.to_path_buf(), connection, production))
     }
 
     /// Opens an existing production file, applying supported migrations first.
@@ -177,11 +174,15 @@ impl SqliteProduction {
         migrations::migrate(&mut connection)?;
         let production = load_production(&connection)?;
 
-        Ok(Self {
-            path: path.to_path_buf(),
+        Ok(Self::from_parts(path.to_path_buf(), connection, production))
+    }
+
+    fn from_parts(path: PathBuf, connection: Connection, production: Production) -> Self {
+        Self {
+            path,
             connection,
             production,
-        })
+        }
     }
 
     /// Returns the production-file path used by this backend.
@@ -2137,6 +2138,94 @@ impl SqliteProduction {
             .collect()
     }
 
+    /// Returns a bounded ascending page of revisions after `sequence` that
+    /// contain at least one event of the filter's types.
+    ///
+    /// The page's through sequence is the next cursor: a full page ends at its
+    /// last revision, and a short page ends at the newest revision read in the
+    /// same snapshot, or at `sequence` if that is newer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] when `limit` is zero or exceeds
+    /// [`MAX_REVISION_PAGE_SIZE`], or [`ErrorKind::Storage`] for invalid data.
+    pub fn changes_since_filtered(
+        &self,
+        sequence: u64,
+        filter: &RevisionEventFilter,
+        limit: u32,
+    ) -> Result<FilteredRevisionPage> {
+        if limit == 0 || limit > MAX_REVISION_PAGE_SIZE {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                format!("revision page limit must be 1-{MAX_REVISION_PAGE_SIZE}"),
+            ));
+        }
+        let Ok(after) = i64::try_from(sequence) else {
+            return FilteredRevisionPage::new(Vec::new(), sequence);
+        };
+        // One bounded key range per requested kind keeps the read proportional
+        // to the page rather than to the journal suffix.
+        let branches = (0..filter.types().len())
+            .map(|index| {
+                format!(
+                    "SELECT sequence FROM (
+                         SELECT sequence FROM revision_event_kinds
+                         WHERE kind = ?{} AND sequence > ?1
+                         ORDER BY sequence LIMIT ?2
+                     )",
+                    index + 3
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" UNION ");
+        let mut parameters = vec![Value::Integer(after), Value::Integer(i64::from(limit))];
+        for event_type in filter.types() {
+            parameters.push(Value::Integer(stored_revision_event_kind(event_type)?));
+        }
+        let snapshot = self
+            .connection
+            .unchecked_transaction()
+            .map_err(sqlite_error("begin filtered revision snapshot"))?;
+        let revisions = {
+            let mut statement = snapshot
+                .prepare(&format!(
+                    "SELECT id, sequence, transaction_id, committed_at_micros,
+                            origin_name, origin_version, origin_uri, message
+                     FROM revisions WHERE sequence IN ({branches})
+                     ORDER BY sequence LIMIT ?2"
+                ))
+                .map_err(sqlite_error("prepare filtered revision page query"))?;
+            statement
+                .query_map(params_from_iter(parameters), stored_revision_row)
+                .map_err(sqlite_error("query filtered revision page"))?
+                .map(|row| {
+                    row.map_err(sqlite_error("read revision row"))
+                        .and_then(decode_revision)
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+        let through_sequence = match revisions.last() {
+            Some(last) if revisions.len() == limit as usize => last.sequence(),
+            _ => {
+                let latest: i64 = snapshot
+                    .query_row(
+                        "SELECT coalesce(max(sequence), 0) FROM revisions",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(sqlite_error("query latest revision sequence"))?;
+                u64::try_from(latest)
+                    .map_err(|_| {
+                        Error::new(ErrorKind::Storage, "stored revision sequence is negative")
+                    })?
+                    .max(sequence)
+            }
+        };
+        drop(snapshot);
+        FilteredRevisionPage::new(revisions, through_sequence)
+    }
+
     /// Loads one revision's semantic events in stable position order.
     ///
     /// # Errors
@@ -3216,6 +3305,15 @@ impl ProductionRead for SqliteProduction {
         SqliteProduction::changes_since(self, sequence, limit)
     }
 
+    fn changes_since_filtered(
+        &self,
+        sequence: u64,
+        filter: &RevisionEventFilter,
+        limit: u32,
+    ) -> Result<FilteredRevisionPage> {
+        SqliteProduction::changes_since_filtered(self, sequence, filter, limit)
+    }
+
     fn events_for_revision(&self, revision_id: RevisionId) -> Result<Vec<RevisionEvent>> {
         SqliteProduction::events_for_revision(self, revision_id)
     }
@@ -3819,6 +3917,44 @@ fn stored_revision_event_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Stored
         role: row.get(12)?,
         fingerprint_algorithm: row.get(13)?,
         fingerprint_version: row.get(14)?,
+    })
+}
+
+/// Maps an event type to its persisted `revision_events.kind` code.
+fn stored_revision_event_kind(event_type: RevisionEventType) -> Result<i64> {
+    Ok(match event_type {
+        RevisionEventType::AssetImported => 1,
+        RevisionEventType::RepresentationAdded => 2,
+        RevisionEventType::ResourceAdded => 3,
+        RevisionEventType::RepresentationResourceAdded => 4,
+        RevisionEventType::LocatorAdded => 5,
+        RevisionEventType::MediaRootAdded => 6,
+        RevisionEventType::ExternalIdentifierAdded => 7,
+        RevisionEventType::ExternalIdentifierRemoved => 8,
+        RevisionEventType::MetadataAddedOrReplaced => 9,
+        RevisionEventType::MetadataRemoved => 10,
+        RevisionEventType::ActivityCreated => 11,
+        RevisionEventType::ActivityInputAdded => 12,
+        RevisionEventType::ActivityOutputAdded => 13,
+        RevisionEventType::LocatorRetired => 14,
+        RevisionEventType::MediaRootEnabledChanged => 15,
+        RevisionEventType::MediaRootRemoved => 16,
+        RevisionEventType::ResourceFingerprintObserved => 17,
+        RevisionEventType::RepresentationFingerprintObserved => 18,
+        RevisionEventType::DependencySetRecorded => 19,
+        RevisionEventType::JobRequested => 20,
+        RevisionEventType::JobClaimed => 21,
+        RevisionEventType::JobClaimRenewed => 22,
+        RevisionEventType::JobClaimReleased => 23,
+        RevisionEventType::JobSucceeded => 24,
+        RevisionEventType::JobFailed => 25,
+        RevisionEventType::JobCancelled => 26,
+        _ => {
+            return Err(Error::new(
+                ErrorKind::Unsupported,
+                format!("revision event type {event_type} is not stored by this build"),
+            ));
+        }
     })
 }
 

@@ -5,8 +5,8 @@ use postproject_core::{
     AssetId, ContentStructure, ErrorKind, ExternalIdentifier, IdentifierScheme, Locator,
     LocatorAvailability, LocatorId, MediaRoot, MediaRootId, MetadataProperty, MetadataValue,
     ObjectRef, OriginIdentity, OriginalMediaImport, PropertyId, Representation, RepresentationId,
-    RepresentationKind, Resource, ResourceId, RevisionContext, RevisionEventKind, Timestamp,
-    VocabularyId,
+    RepresentationKind, Resource, ResourceId, RevisionContext, RevisionEventFilter,
+    RevisionEventKind, RevisionEventType, Timestamp, VocabularyId,
 };
 use postproject_storage_sqlite::SqliteProduction;
 use tempfile::tempdir;
@@ -379,5 +379,133 @@ fn only_successful_nonempty_transactions_advance_the_feed() {
             .changes_since(u64::MAX, 2)
             .expect("load beyond storage range")
             .is_empty()
+    );
+}
+
+fn sequences(revisions: &[postproject_core::Revision]) -> Vec<u64> {
+    revisions
+        .iter()
+        .map(postproject_core::Revision::sequence)
+        .collect()
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one journal exercises every page boundary of the filtered feed"
+)]
+fn filtered_pages_select_matching_revisions_and_advance_past_the_rest() {
+    let directory = tempdir().expect("create temporary directory");
+    let mut production = SqliteProduction::create(directory.path().join("production.pproj"), None)
+        .expect("create production");
+    let imported = RevisionEventFilter::new([RevisionEventType::AssetImported]).expect("filter");
+    let empty = production
+        .changes_since_filtered(0, &imported, 10)
+        .expect("filter empty journal");
+    assert!(empty.revisions().is_empty());
+    assert_eq!(empty.through_sequence(), 0);
+
+    for label in [10, 20, 30] {
+        let mut transaction = production.begin_transaction().expect("begin import");
+        transaction.import_original(&import(label)).expect("import");
+        transaction.commit().expect("commit import");
+    }
+    let property = MetadataProperty::new(
+        VocabularyId::new("com.example.editorial").expect("valid vocabulary"),
+        PropertyId::new("status").expect("valid property"),
+    );
+    {
+        let mut transaction = production.begin_transaction().expect("begin metadata");
+        transaction
+            .add_metadata_value(
+                ObjectRef::Asset(AssetId::from_bytes([10; 16])),
+                &property,
+                &MetadataValue::string("approved").expect("valid metadata"),
+            )
+            .expect("add metadata");
+        transaction.commit().expect("commit metadata");
+    }
+    {
+        let mut transaction = production.begin_transaction().expect("begin root");
+        transaction
+            .add_media_root(
+                MediaRoot::new(MediaRootId::new(), "media", None, None, 0, true)
+                    .expect("valid root"),
+            )
+            .expect("add root");
+        transaction.commit().expect("commit root");
+    }
+
+    let first = production
+        .changes_since_filtered(0, &imported, 2)
+        .expect("first imported page");
+    assert_eq!(sequences(first.revisions()), [1, 2]);
+    assert_eq!(first.through_sequence(), 2);
+    let second = production
+        .changes_since_filtered(first.through_sequence(), &imported, 2)
+        .expect("second imported page");
+    assert_eq!(sequences(second.revisions()), [3]);
+    assert_eq!(second.through_sequence(), 5);
+    let drained = production
+        .changes_since_filtered(second.through_sequence(), &imported, 2)
+        .expect("drained imported page");
+    assert!(drained.revisions().is_empty());
+    assert_eq!(drained.through_sequence(), 5);
+
+    let metadata_or_roots = RevisionEventFilter::new([
+        RevisionEventType::MediaRootAdded,
+        RevisionEventType::MetadataAddedOrReplaced,
+    ])
+    .expect("filter");
+    let page = production
+        .changes_since_filtered(0, &metadata_or_roots, 10)
+        .expect("metadata or root page");
+    assert_eq!(sequences(page.revisions()), [4, 5]);
+    assert_eq!(
+        page.revisions(),
+        &production.changes_since(3, 2).unwrap()[..]
+    );
+
+    let resources = RevisionEventFilter::new([
+        RevisionEventType::ResourceAdded,
+        RevisionEventType::LocatorAdded,
+    ])
+    .expect("filter");
+    let page = production
+        .changes_since_filtered(1, &resources, 10)
+        .expect("multi-event revisions appear once");
+    assert_eq!(sequences(page.revisions()), [2, 3]);
+
+    let beyond = production
+        .changes_since_filtered(99, &imported, 10)
+        .expect("cursor beyond journal");
+    assert!(beyond.revisions().is_empty());
+    assert_eq!(beyond.through_sequence(), 99);
+    let unrepresentable = production
+        .changes_since_filtered(u64::MAX, &imported, 10)
+        .expect("unrepresentable cursor");
+    assert_eq!(unrepresentable.through_sequence(), u64::MAX);
+
+    for limit in [0, postproject_core::MAX_REVISION_PAGE_SIZE + 1] {
+        assert_eq!(
+            production
+                .changes_since_filtered(0, &imported, limit)
+                .expect_err("invalid limit")
+                .kind(),
+            ErrorKind::InvalidArgument
+        );
+    }
+
+    drop(production);
+    let reopened = SqliteProduction::open(directory.path().join("production.pproj"))
+        .expect("reopen production");
+    assert_eq!(
+        sequences(
+            reopened
+                .changes_since_filtered(0, &metadata_or_roots, 10)
+                .expect("filter after reopen")
+                .revisions()
+        ),
+        [4, 5]
     );
 }

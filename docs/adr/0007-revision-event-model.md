@@ -42,6 +42,12 @@ The pull contract is `latest_revision`, `changes_since(sequence, limit)`, and
 their local sequence and stable event position respectively. Page size is
 explicitly bounded.
 
+ADR 0027 adds `changes_since_filtered(sequence, event types, limit)`, which
+returns only revisions containing at least one event of the requested types
+together with a through sequence that is the next cursor, and a bounded
+blocking wait for the first revisions after a sequence. Neither changes what
+an event means or when a revision is created.
+
 ## Consequences
 
 The journal supports observation and future synchronization work. It is not an

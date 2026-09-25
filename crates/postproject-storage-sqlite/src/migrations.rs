@@ -4,7 +4,7 @@ use postproject_core::{Error, ErrorKind, Result, Timestamp};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 /// The newest schema understood by this build.
-pub const CURRENT_SCHEMA_VERSION: u32 = 12;
+pub const CURRENT_SCHEMA_VERSION: u32 = 13;
 
 struct Migration {
     version: u32,
@@ -59,6 +59,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 12,
         sql: include_str!("migrations/012_query_support.sql"),
+    },
+    Migration {
+        version: 13,
+        sql: include_str!("migrations/013_revision_event_kinds.sql"),
     },
 ];
 
@@ -162,7 +166,7 @@ mod tests {
             .expect("query migration history")
             .collect::<std::result::Result<_, _>>()
             .expect("read migration history");
-        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        assert_eq!(applied, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
         for table in [
             "productions",
             "assets",
@@ -197,6 +201,7 @@ mod tests {
             "job_inputs",
             "unresolved_memberships",
             "activity_output_keys",
+            "revision_event_kinds",
         ] {
             let count: u32 = connection
                 .query_row(
@@ -403,6 +408,71 @@ mod tests {
     }
 
     #[test]
+    fn schema_twelve_backfills_and_maintains_revision_event_kinds() {
+        let mut connection = Connection::open_in_memory().expect("open database");
+        for migration in &MIGRATIONS[..12] {
+            apply_migration(&mut connection, migration).expect("apply old migration");
+        }
+        let insert_revision = |connection: &Connection, label: u8, sequence: i64| {
+            connection
+                .execute(
+                    "INSERT INTO revisions (id, sequence, transaction_id, committed_at_micros)
+                     VALUES (?1, ?2, ?3, 0)",
+                    params![vec![label; 16], sequence, vec![label + 100; 16]],
+                )
+                .expect("insert revision");
+        };
+        let insert_event = |connection: &Connection, label: u8, position: i64, kind: i64| {
+            connection
+                .execute(
+                    "INSERT INTO revision_events (revision_id, position, kind, primary_id)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![vec![label; 16], position, kind, vec![label + 50; 16]],
+                )
+                .expect("insert revision event");
+        };
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 INSERT INTO productions (
+                    singleton, id, schema_version, created_at_micros, display_name
+                 ) VALUES (1, zeroblob(16), 12, 0, NULL);",
+            )
+            .expect("insert production");
+        insert_revision(&connection, 1, 1);
+        insert_event(&connection, 1, 0, 1);
+        insert_event(&connection, 1, 1, 3);
+        insert_event(&connection, 1, 2, 3);
+        insert_revision(&connection, 2, 2);
+        insert_event(&connection, 2, 0, 20);
+
+        migrate(&mut connection).expect("migrate schema twelve");
+
+        let keys = |connection: &Connection| -> Vec<(i64, i64)> {
+            connection
+                .prepare("SELECT kind, sequence FROM revision_event_kinds ORDER BY 1, 2")
+                .expect("prepare kind query")
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .expect("query kinds")
+                .collect::<std::result::Result<_, _>>()
+                .expect("read kinds")
+        };
+        assert_eq!(keys(&connection), [(1, 1), (3, 1), (20, 2)]);
+
+        insert_revision(&connection, 3, 3);
+        insert_event(&connection, 3, 0, 24);
+        insert_event(&connection, 3, 1, 1);
+        assert_eq!(
+            keys(&connection),
+            [(1, 1), (1, 3), (3, 1), (20, 2), (24, 3)]
+        );
+        connection
+            .execute("DELETE FROM revisions WHERE sequence = 3", [])
+            .expect("delete revision");
+        assert_eq!(keys(&connection), [(1, 1), (3, 1), (20, 2)]);
+    }
+
+    #[test]
     fn schema_six_activities_migrate_without_fabricated_snapshots() {
         let mut connection = Connection::open_in_memory().expect("open database");
         for migration in &MIGRATIONS[..6] {
@@ -485,11 +555,8 @@ mod tests {
         assert_eq!(dependency_snapshot_count, 0);
 
         let production = load_production(&connection).expect("load migrated production");
-        let production = SqliteProduction {
-            path: std::path::PathBuf::new(),
-            connection,
-            production,
-        };
+        let production =
+            SqliteProduction::from_parts(std::path::PathBuf::new(), connection, production);
         let evaluation = production
             .evaluate_artifact(
                 RepresentationId::from_bytes([3_u8; 16]),

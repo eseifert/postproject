@@ -3,14 +3,15 @@
 use crate::{
     Activity, ActivityOutputQuery, AgentIdentity, ArtifactEvaluation, ArtifactEvaluationLimits,
     ArtifactReproducibilityReport, Asset, AssetId, Dependency, DependencyQueryLimits,
-    DependencyQueryMatch, DependencySet, DependencyTarget, ExternalIdentifier, IdentifierScheme,
-    Job, JobClaim, JobClaimId, JobFailure, JobId, JobQuery, Locator, MediaRoot, MetadataAssertion,
-    MetadataMatch, MetadataProperty, MetadataQuery, MetadataValue, ObjectRef, OriginalMediaImport,
-    Production, ProvenanceQueryLimits, ProvenanceQueryMatch, QueryPage, QueryPageRequest,
-    RegenerationJobPlan, Representation, RepresentationFingerprint, RepresentationId,
-    RepresentationImport, Resource, ResourceFingerprint, ResourceId, Result, Revision,
-    RevisionContext, RevisionEvent, RevisionId, StaleArtifactQuery, Timestamp, ToolIdentity,
-    TransactionId, TransactionState,
+    DependencyQueryMatch, DependencySet, DependencyTarget, ExternalIdentifier,
+    FilteredRevisionPage, IdentifierScheme, Job, JobClaim, JobClaimId, JobFailure, JobId, JobQuery,
+    Locator, MediaRoot, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataQuery,
+    MetadataValue, ObjectRef, OriginalMediaImport, Production, ProvenanceQueryLimits,
+    ProvenanceQueryMatch, QueryPage, QueryPageRequest, RegenerationJobPlan, Representation,
+    RepresentationFingerprint, RepresentationId, RepresentationImport, Resource,
+    ResourceFingerprint, ResourceId, Result, Revision, RevisionContext, RevisionEvent,
+    RevisionEventFilter, RevisionId, StaleArtifactQuery, Timestamp, ToolIdentity, TransactionId,
+    TransactionState,
 };
 
 /// Read operations required from a production persistence backend.
@@ -401,6 +402,23 @@ pub trait ProductionRead {
     /// Returns a domain error when `limit` is zero or excessive, or when
     /// persisted revision data is invalid.
     fn changes_since(&self, sequence: u64, limit: u32) -> Result<Vec<Revision>>;
+
+    /// Returns revisions after `sequence` that contain at least one event of
+    /// the filter's types, in ascending order, capped by `limit`.
+    ///
+    /// The page's through sequence is the cursor for the next filtered page;
+    /// every matching revision up to it is included.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when `limit` is zero or excessive, or when
+    /// persisted revision data is invalid.
+    fn changes_since_filtered(
+        &self,
+        sequence: u64,
+        filter: &RevisionEventFilter,
+        limit: u32,
+    ) -> Result<FilteredRevisionPage>;
 
     /// Loads the semantic events for one revision in stable position order.
     ///

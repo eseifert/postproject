@@ -9,6 +9,13 @@ Development version: `0.4.0-alpha.1`.
 
 ### Added
 
+- Added event-type-filtered revision pages to Rust storage.
+  `changes_since_filtered` returns the revisions after a sequence that contain
+  at least one event of the requested types, plus a through sequence that is
+  the next cursor, so consumers skip unrelated revisions without reading them.
+- Added SQLite schema 13, which keys every journaled event by event kind and
+  revision sequence in a trigger-maintained table backfilled from the existing
+  journal, so a filtered revision page reads rows proportional to the page.
 - Added an opt-in Rust `ffmpeg` subprocess executor and CLI `job run` worker for
   named proxy and thumbnail profiles, with configurable executable and timeout,
   bounded diagnostics, claim heartbeats, temporary-output cleanup, atomic

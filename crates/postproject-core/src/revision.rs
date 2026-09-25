@@ -1,5 +1,7 @@
 //! Durable semantic revision values for production-local change feeds.
 
+use std::{collections::BTreeSet, fmt, str::FromStr};
+
 use crate::{
     ActivityId, ActivityKind, ActivityRole, AssetId, Error, ErrorKind, ExternalIdentifier, JobId,
     LocatorId, MediaRootId, MetadataProperty, ObjectRef, RepresentationId, ResourceId, Result,
@@ -266,6 +268,291 @@ pub enum RevisionEventKind {
     },
 }
 
+/// Payload-free discriminant of a [`RevisionEventKind`].
+///
+/// Event types select revisions for a filtered change-feed page. Their stable
+/// names are the `snake_case` form of the event kind.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum RevisionEventType {
+    /// A logical asset and its import aggregate were created.
+    AssetImported,
+    /// A representation was attached to an asset.
+    RepresentationAdded,
+    /// A storage resource was created.
+    ResourceAdded,
+    /// A resource was attached to a representation's content structure.
+    RepresentationResourceAdded,
+    /// A resource locator was added or explicitly confirmed.
+    LocatorAdded,
+    /// A superseded resource locator was retired.
+    LocatorRetired,
+    /// A resolver media root was added.
+    MediaRootAdded,
+    /// A resolver media root was enabled or disabled.
+    MediaRootEnabledChanged,
+    /// A resolver media root was removed.
+    MediaRootRemoved,
+    /// An exact external identifier attachment was added.
+    ExternalIdentifierAdded,
+    /// An exact external identifier attachment was removed.
+    ExternalIdentifierRemoved,
+    /// One metadata property's values were appended or replaced.
+    MetadataAddedOrReplaced,
+    /// One metadata property was removed.
+    MetadataRemoved,
+    /// A production activity was created.
+    ActivityCreated,
+    /// A production activity input edge was added.
+    ActivityInputAdded,
+    /// A production activity output edge was added.
+    ActivityOutputAdded,
+    /// A resource fingerprint domain received a new current observation.
+    ResourceFingerprintObserved,
+    /// A representation fingerprint domain received a new current observation.
+    RepresentationFingerprintObserved,
+    /// A representation's complete dependency observation was replaced.
+    DependencySetRecorded,
+    /// A durable work request was created.
+    JobRequested,
+    /// A worker claimed a requested or expired job.
+    JobClaimed,
+    /// The current worker extended a job lease.
+    JobClaimRenewed,
+    /// The current worker released a job claim.
+    JobClaimReleased,
+    /// A job completed with its durable activity and output.
+    JobSucceeded,
+    /// A job ended with a diagnostic and no output.
+    JobFailed,
+    /// A requested or claimed job was cancelled.
+    JobCancelled,
+}
+
+impl RevisionEventType {
+    /// Every event type in catalog order.
+    pub const ALL: &'static [Self] = &[
+        Self::AssetImported,
+        Self::RepresentationAdded,
+        Self::ResourceAdded,
+        Self::RepresentationResourceAdded,
+        Self::LocatorAdded,
+        Self::LocatorRetired,
+        Self::MediaRootAdded,
+        Self::MediaRootEnabledChanged,
+        Self::MediaRootRemoved,
+        Self::ExternalIdentifierAdded,
+        Self::ExternalIdentifierRemoved,
+        Self::MetadataAddedOrReplaced,
+        Self::MetadataRemoved,
+        Self::ActivityCreated,
+        Self::ActivityInputAdded,
+        Self::ActivityOutputAdded,
+        Self::ResourceFingerprintObserved,
+        Self::RepresentationFingerprintObserved,
+        Self::DependencySetRecorded,
+        Self::JobRequested,
+        Self::JobClaimed,
+        Self::JobClaimRenewed,
+        Self::JobClaimReleased,
+        Self::JobSucceeded,
+        Self::JobFailed,
+        Self::JobCancelled,
+    ];
+
+    /// Returns the stable `snake_case` event type name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AssetImported => "asset_imported",
+            Self::RepresentationAdded => "representation_added",
+            Self::ResourceAdded => "resource_added",
+            Self::RepresentationResourceAdded => "representation_resource_added",
+            Self::LocatorAdded => "locator_added",
+            Self::LocatorRetired => "locator_retired",
+            Self::MediaRootAdded => "media_root_added",
+            Self::MediaRootEnabledChanged => "media_root_enabled_changed",
+            Self::MediaRootRemoved => "media_root_removed",
+            Self::ExternalIdentifierAdded => "external_identifier_added",
+            Self::ExternalIdentifierRemoved => "external_identifier_removed",
+            Self::MetadataAddedOrReplaced => "metadata_added_or_replaced",
+            Self::MetadataRemoved => "metadata_removed",
+            Self::ActivityCreated => "activity_created",
+            Self::ActivityInputAdded => "activity_input_added",
+            Self::ActivityOutputAdded => "activity_output_added",
+            Self::ResourceFingerprintObserved => "resource_fingerprint_observed",
+            Self::RepresentationFingerprintObserved => "representation_fingerprint_observed",
+            Self::DependencySetRecorded => "dependency_set_recorded",
+            Self::JobRequested => "job_requested",
+            Self::JobClaimed => "job_claimed",
+            Self::JobClaimRenewed => "job_claim_renewed",
+            Self::JobClaimReleased => "job_claim_released",
+            Self::JobSucceeded => "job_succeeded",
+            Self::JobFailed => "job_failed",
+            Self::JobCancelled => "job_cancelled",
+        }
+    }
+}
+
+impl fmt::Display for RevisionEventType {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for RevisionEventType {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|event_type| event_type.as_str() == value)
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::InvalidArgument,
+                    format!("unknown revision event type: {value}"),
+                )
+            })
+    }
+}
+
+impl RevisionEventKind {
+    /// Returns the payload-free type of this event.
+    #[must_use]
+    pub const fn event_type(&self) -> RevisionEventType {
+        match self {
+            Self::AssetImported { .. } => RevisionEventType::AssetImported,
+            Self::RepresentationAdded { .. } => RevisionEventType::RepresentationAdded,
+            Self::ResourceAdded { .. } => RevisionEventType::ResourceAdded,
+            Self::RepresentationResourceAdded { .. } => {
+                RevisionEventType::RepresentationResourceAdded
+            }
+            Self::LocatorAdded { .. } => RevisionEventType::LocatorAdded,
+            Self::LocatorRetired { .. } => RevisionEventType::LocatorRetired,
+            Self::MediaRootAdded { .. } => RevisionEventType::MediaRootAdded,
+            Self::MediaRootEnabledChanged { .. } => RevisionEventType::MediaRootEnabledChanged,
+            Self::MediaRootRemoved { .. } => RevisionEventType::MediaRootRemoved,
+            Self::ExternalIdentifierAdded { .. } => RevisionEventType::ExternalIdentifierAdded,
+            Self::ExternalIdentifierRemoved { .. } => RevisionEventType::ExternalIdentifierRemoved,
+            Self::MetadataAddedOrReplaced { .. } => RevisionEventType::MetadataAddedOrReplaced,
+            Self::MetadataRemoved { .. } => RevisionEventType::MetadataRemoved,
+            Self::ActivityCreated { .. } => RevisionEventType::ActivityCreated,
+            Self::ActivityInputAdded { .. } => RevisionEventType::ActivityInputAdded,
+            Self::ActivityOutputAdded { .. } => RevisionEventType::ActivityOutputAdded,
+            Self::ResourceFingerprintObserved { .. } => {
+                RevisionEventType::ResourceFingerprintObserved
+            }
+            Self::RepresentationFingerprintObserved { .. } => {
+                RevisionEventType::RepresentationFingerprintObserved
+            }
+            Self::DependencySetRecorded { .. } => RevisionEventType::DependencySetRecorded,
+            Self::JobRequested { .. } => RevisionEventType::JobRequested,
+            Self::JobClaimed { .. } => RevisionEventType::JobClaimed,
+            Self::JobClaimRenewed { .. } => RevisionEventType::JobClaimRenewed,
+            Self::JobClaimReleased { .. } => RevisionEventType::JobClaimReleased,
+            Self::JobSucceeded { .. } => RevisionEventType::JobSucceeded,
+            Self::JobFailed { .. } => RevisionEventType::JobFailed,
+            Self::JobCancelled { .. } => RevisionEventType::JobCancelled,
+        }
+    }
+}
+
+/// Non-empty set of event types that selects revisions for a filtered page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RevisionEventFilter {
+    types: BTreeSet<RevisionEventType>,
+}
+
+impl RevisionEventFilter {
+    /// Creates a filter matching revisions with at least one event of `types`.
+    ///
+    /// Duplicate types are ignored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] when `types` is empty.
+    pub fn new(types: impl IntoIterator<Item = RevisionEventType>) -> Result<Self> {
+        let types: BTreeSet<_> = types.into_iter().collect();
+        if types.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "revision event filter must name at least one event type",
+            ));
+        }
+        Ok(Self { types })
+    }
+
+    /// Returns the selected event types in catalog order.
+    #[must_use]
+    pub fn types(&self) -> impl ExactSizeIterator<Item = RevisionEventType> + '_ {
+        self.types.iter().copied()
+    }
+
+    /// Reports whether an event of `event_type` selects its revision.
+    #[must_use]
+    pub fn matches(&self, event_type: RevisionEventType) -> bool {
+        self.types.contains(&event_type)
+    }
+}
+
+/// One page of revisions that contain at least one event of a filter's types.
+///
+/// Every matching revision with a sequence greater than the requested sequence
+/// and at most [`Self::through_sequence`] is in the page. The through sequence
+/// is the cursor for the next filtered page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilteredRevisionPage {
+    revisions: Vec<Revision>,
+    through_sequence: u64,
+}
+
+impl FilteredRevisionPage {
+    /// Creates a page from ascending matching revisions and its covered range end.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] when revisions are not strictly
+    /// ascending or one lies beyond `through_sequence`.
+    pub fn new(revisions: Vec<Revision>, through_sequence: u64) -> Result<Self> {
+        let ascending = revisions
+            .windows(2)
+            .all(|pair| pair[0].sequence() < pair[1].sequence());
+        if !ascending
+            || revisions
+                .last()
+                .is_some_and(|revision| revision.sequence() > through_sequence)
+        {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "filtered revisions must ascend and end at or before the through sequence",
+            ));
+        }
+        Ok(Self {
+            revisions,
+            through_sequence,
+        })
+    }
+
+    /// Returns the matching revisions in ascending sequence order.
+    #[must_use]
+    pub fn revisions(&self) -> &[Revision] {
+        &self.revisions
+    }
+
+    /// Consumes the page and returns its matching revisions.
+    #[must_use]
+    pub fn into_revisions(self) -> Vec<Revision> {
+        self.revisions
+    }
+
+    /// Returns the last sequence this page accounts for; the next cursor.
+    #[must_use]
+    pub const fn through_sequence(&self) -> u64 {
+        self.through_sequence
+    }
+}
+
 /// One deterministically ordered semantic event within a revision.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RevisionEvent {
@@ -464,5 +751,65 @@ mod tests {
                 ..
             } if *id == representation_id
         ));
+    }
+
+    #[test]
+    fn event_types_round_trip_their_stable_names() {
+        for event_type in RevisionEventType::ALL {
+            assert_eq!(
+                event_type.as_str().parse::<RevisionEventType>().unwrap(),
+                *event_type
+            );
+        }
+        assert_eq!(RevisionEventType::ALL.len(), 26);
+        assert!("row_updated".parse::<RevisionEventType>().is_err());
+        assert_eq!(
+            RevisionEventKind::JobSucceeded {
+                job_id: JobId::new()
+            }
+            .event_type(),
+            RevisionEventType::JobSucceeded
+        );
+    }
+
+    #[test]
+    fn filters_and_filtered_pages_reject_ambiguous_values() {
+        assert!(RevisionEventFilter::new([]).is_err());
+        let filter = RevisionEventFilter::new([
+            RevisionEventType::JobFailed,
+            RevisionEventType::AssetImported,
+            RevisionEventType::JobFailed,
+        ])
+        .unwrap();
+        assert_eq!(
+            filter.types().collect::<Vec<_>>(),
+            [
+                RevisionEventType::AssetImported,
+                RevisionEventType::JobFailed
+            ]
+        );
+        assert!(filter.matches(RevisionEventType::JobFailed));
+        assert!(!filter.matches(RevisionEventType::JobClaimed));
+
+        let revision = |sequence| {
+            Revision::new(
+                RevisionId::new(),
+                sequence,
+                TransactionId::new(),
+                Timestamp::from_unix_micros(0),
+                None,
+                None,
+            )
+            .unwrap()
+        };
+        assert!(FilteredRevisionPage::new(vec![revision(2), revision(4)], 9).is_ok());
+        assert!(FilteredRevisionPage::new(vec![revision(4), revision(2)], 9).is_err());
+        assert!(FilteredRevisionPage::new(vec![revision(4)], 3).is_err());
+        assert_eq!(
+            FilteredRevisionPage::new(Vec::new(), 7)
+                .unwrap()
+                .through_sequence(),
+            7
+        );
     }
 }
