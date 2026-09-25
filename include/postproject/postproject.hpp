@@ -1668,6 +1668,47 @@ public:
     detail::throw_if_error(status, error);
   }
 
+  void recordDependencySet(const Uuid &representation_id,
+                           const std::vector<Dependency> &dependencies) {
+    std::vector<std::string> kinds;
+    std::vector<std::string> authored_references;
+    kinds.reserve(dependencies.size());
+    authored_references.reserve(dependencies.size());
+    for (const Dependency &dependency : dependencies) {
+      kinds.push_back(
+          detail::checked_string(dependency.kind, "dependency kind"));
+      authored_references.push_back(detail::checked_string(
+          dependency.authored_reference, "authored dependency reference"));
+    }
+
+    std::vector<pp_dependency_t> native_dependencies;
+    native_dependencies.reserve(dependencies.size());
+    for (std::size_t index = 0; index < dependencies.size(); ++index) {
+      const Dependency &dependency = dependencies[index];
+      native_dependencies.push_back(
+          {static_cast<std::uint8_t>(
+               dependency.source_resource_id.has_value() ? 1 : 0),
+           dependency.source_resource_id.has_value()
+               ? detail::native_uuid(*dependency.source_resource_id)
+               : pp_uuid_t{},
+           kinds[index].c_str(), detail::native_object_ref(dependency.target),
+           static_cast<std::uint8_t>(
+               dependency.resolved_representation_id.has_value() ? 1 : 0),
+           dependency.resolved_representation_id.has_value()
+               ? detail::native_uuid(*dependency.resolved_representation_id)
+               : pp_uuid_t{},
+           static_cast<std::uint8_t>(dependency.required ? 1 : 0),
+           authored_references[index].c_str()});
+    }
+    const pp_uuid_t native_id = detail::native_uuid(representation_id);
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_transaction_record_dependency_set(
+        transaction_, &native_id,
+        native_dependencies.empty() ? nullptr : native_dependencies.data(),
+        static_cast<std::uint64_t>(native_dependencies.size()), &error);
+    detail::throw_if_error(status, error);
+  }
+
   void addExternalIdentifier(const ObjectRef &target,
                              const ExternalIdentifier &identifier) {
     mutate_external_identifier(false, target, identifier);

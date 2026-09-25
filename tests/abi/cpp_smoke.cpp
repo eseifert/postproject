@@ -355,6 +355,35 @@ int main(int argc, char **argv) {
       return 23;
     }
 
+    const postproject::Dependency dependency{
+        std::nullopt,
+        "org.postproject:reference.character",
+        asset_ref,
+        resolutions[0].representation_id,
+        true,
+        "characters/lead.pproj#character/A"};
+    auto dependency_update = reopened.beginTransaction();
+    dependency_update.recordDependencySet(proxy_id, {dependency});
+    dependency_update.commit();
+    const auto dependencies = reopened.dependencySet(proxy_id);
+    const auto dependents = reopened.dependents(asset_ref);
+    if (!dependencies.has_value() ||
+        dependencies->source_representation_id != proxy_id ||
+        dependencies->recorded_at_revision == 0 ||
+        dependencies->status != postproject::DependencySetStatus::current ||
+        dependencies->dependencies.size() != 1 ||
+        dependencies->dependencies[0].source_resource_id.has_value() ||
+        dependencies->dependencies[0].kind != dependency.kind ||
+        !(dependencies->dependencies[0].target == dependency.target) ||
+        dependencies->dependencies[0].resolved_representation_id !=
+            dependency.resolved_representation_id ||
+        !dependencies->dependencies[0].required ||
+        dependencies->dependencies[0].authored_reference !=
+            dependency.authored_reference ||
+        dependents.size() != 1 || dependents[0] != proxy_id) {
+      return 31;
+    }
+
     try {
       static_cast<void>(postproject::Production::open(path + ".missing"));
       return 6;
