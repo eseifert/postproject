@@ -1021,6 +1021,52 @@ class ProductionTests(unittest.TestCase):
             self.assertEqual(reason.edge_kind, ArtifactEdgeKind.INPUT)
             self.assertEqual(reason.current_value, b"changed-python-fingerprint")
 
+    def test_regeneration_plans_copy_provenance_without_enqueuing(self) -> None:
+        parameter = MetadataProperty("org.postproject.parameters", "profile")
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                source_asset = transaction.import_media(self.media_path)
+                output_asset = transaction.import_media(self.second_media_path)
+            source = production.representations[source_asset][0]
+            output = production.representations[output_asset][0]
+            with production.transaction() as transaction:
+                activity_id = transaction.create_activity(
+                    ActivitySpec(
+                        "org.postproject:transcode",
+                        inputs=(ActivityEdge(source.id),),
+                        outputs=(ActivityEdge(output.id),),
+                    )
+                )
+                transaction.add_metadata(
+                    activity_id, parameter, MetadataString("editorial-proxy")
+                )
+            revision = production.latest_revision
+
+            plans = production.plan_regeneration((output.id, output.id))
+
+            self.assertEqual(len(plans), 1)
+            plan = plans[0]
+            self.assertEqual(plan.artifact_representation_id, output.id)
+            self.assertEqual(plan.job.kind, "org.postproject:transcode")
+            self.assertEqual(plan.job.inputs, (source.id,))
+            self.assertEqual(plan.job.output_asset_id, output_asset)
+            self.assertEqual(
+                plan.job.output_representation_kind, RepresentationKind.ORIGINAL
+            )
+            self.assertEqual(plan.job.state, JobState.REQUESTED)
+            self.assertEqual(
+                plan.parameters,
+                (
+                    MetadataAssertion(
+                        plan.job.id, parameter, MetadataString("editorial-proxy")
+                    ),
+                ),
+            )
+            self.assertEqual(production.jobs, ())
+            self.assertEqual(production.latest_revision, revision)
+
 
 if __name__ == "__main__":
     unittest.main()
