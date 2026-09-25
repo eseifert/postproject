@@ -11,12 +11,14 @@ mod dependency_snapshot;
 mod metadata_codec;
 mod migrations;
 mod query_cursor;
+mod revision_wait;
 mod transaction;
 
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fs::OpenOptions,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -44,7 +46,10 @@ use rusqlite::{
 };
 
 pub use migrations::CURRENT_SCHEMA_VERSION;
+pub use revision_wait::{RevisionWaitCanceller, SqliteRevisionWaiter};
 pub use transaction::SqliteTransaction;
+
+use revision_wait::RevisionSignal;
 
 const MAX_SQLITE_VALUE_BYTES: i32 = 16 * 1024 * 1024;
 
@@ -54,6 +59,7 @@ pub struct SqliteProduction {
     path: PathBuf,
     connection: Connection,
     production: Production,
+    revision_signal: Arc<RevisionSignal>,
 }
 
 struct StoredActivity {
@@ -182,6 +188,7 @@ impl SqliteProduction {
             path,
             connection,
             production,
+            revision_signal: Arc::default(),
         }
     }
 
@@ -204,7 +211,34 @@ impl SqliteProduction {
     /// Returns [`ErrorKind::Storage`] if SQLite cannot start the transaction.
     pub fn begin_transaction(&mut self) -> Result<SqliteTransaction<'_>> {
         let (connection, production) = (&mut self.connection, &mut self.production);
-        SqliteTransaction::begin(connection, production)
+        SqliteTransaction::begin(connection, production, &self.revision_signal)
+    }
+
+    /// Creates a waiter for revisions committed to this production file.
+    ///
+    /// The waiter opens its own read connection. Commits through this
+    /// production wake it immediately; commits from other processes or
+    /// production handles are detected by polling the file's data version.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Storage`] when the file cannot be opened, or
+    /// [`ErrorKind::Conflict`] when it no longer holds this production.
+    pub fn revision_waiter(&self) -> Result<SqliteRevisionWaiter> {
+        SqliteRevisionWaiter::open(
+            &self.path,
+            self.production.id(),
+            Arc::clone(&self.revision_signal),
+        )
+    }
+
+    /// Closes every revision waiter created from this production.
+    ///
+    /// Current and later waits on those waiters return
+    /// [`postproject_core::RevisionWaitOutcome::Closed`]. Dropping the
+    /// production does the same.
+    pub fn close_revision_waiters(&self) {
+        self.revision_signal.close();
     }
 
     /// Loads all assets in deterministic creation/identity order.
@@ -3324,6 +3358,12 @@ impl ProductionRead for SqliteProduction {
         page: &QueryPageRequest,
     ) -> Result<QueryPage<ObjectRef>> {
         SqliteProduction::objects_changed_since(self, sequence, page)
+    }
+}
+
+impl Drop for SqliteProduction {
+    fn drop(&mut self) {
+        self.revision_signal.close();
     }
 }
 

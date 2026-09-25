@@ -1,6 +1,6 @@
 //! Durable semantic revision values for production-local change feeds.
 
-use std::{collections::BTreeSet, fmt, str::FromStr};
+use std::{collections::BTreeSet, fmt, str::FromStr, time::Duration};
 
 use crate::{
     ActivityId, ActivityKind, ActivityRole, AssetId, Error, ErrorKind, ExternalIdentifier, JobId,
@@ -12,6 +12,8 @@ use crate::{
 pub const MAX_REVISION_MESSAGE_BYTES: usize = 4_096;
 /// Maximum revisions returned by one change-feed page.
 pub const MAX_REVISION_PAGE_SIZE: u32 = 1_000;
+/// Longest caller-supplied timeout accepted by one revision wait.
+pub const MAX_REVISION_WAIT: Duration = Duration::from_secs(60);
 
 /// Identity of the integrating application or process that committed a revision.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -553,6 +555,69 @@ impl FilteredRevisionPage {
     }
 }
 
+/// Outcome of one bounded wait for revisions after a sequence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum RevisionWaitOutcome {
+    /// A non-empty ascending page of revisions after the requested sequence.
+    Revisions(Vec<Revision>),
+    /// No revision after the requested sequence appeared within the timeout.
+    TimedOut,
+    /// The production the waiter belongs to was closed. Terminal.
+    Closed,
+    /// The waiter was cancelled. Terminal.
+    Cancelled,
+}
+
+/// Bounded blocking wait for revisions committed after a sequence.
+///
+/// Implementations observe commits from the same process and from other
+/// processes sharing the production. Closed and cancelled outcomes are
+/// terminal for the waiter.
+pub trait RevisionWaiter {
+    /// Waits until at least one revision after `after_sequence` exists, then
+    /// returns up to `limit` of them in ascending order.
+    ///
+    /// A zero `timeout` checks once without blocking.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] when `limit` is zero or exceeds
+    /// [`MAX_REVISION_PAGE_SIZE`], or when `timeout` exceeds
+    /// [`MAX_REVISION_WAIT`]; storage errors are returned unchanged.
+    fn wait_for_revisions(
+        &mut self,
+        after_sequence: u64,
+        limit: u32,
+        timeout: Duration,
+    ) -> Result<RevisionWaitOutcome>;
+}
+
+/// Validates the page limit and timeout of one revision wait.
+///
+/// # Errors
+///
+/// Returns [`ErrorKind::InvalidArgument`] for a zero or excessive limit or an
+/// excessive timeout.
+pub fn validate_revision_wait(limit: u32, timeout: Duration) -> Result<()> {
+    if limit == 0 || limit > MAX_REVISION_PAGE_SIZE {
+        return Err(Error::new(
+            ErrorKind::InvalidArgument,
+            format!("revision page limit must be 1-{MAX_REVISION_PAGE_SIZE}"),
+        ));
+    }
+    if timeout > MAX_REVISION_WAIT {
+        return Err(Error::new(
+            ErrorKind::InvalidArgument,
+            format!(
+                "revision wait timeout must not exceed {} ms",
+                MAX_REVISION_WAIT.as_millis()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// One deterministically ordered semantic event within a revision.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RevisionEvent {
@@ -811,5 +876,14 @@ mod tests {
                 .through_sequence(),
             7
         );
+    }
+
+    #[test]
+    fn revision_waits_are_bounded() {
+        assert!(validate_revision_wait(1, Duration::ZERO).is_ok());
+        assert!(validate_revision_wait(MAX_REVISION_PAGE_SIZE, MAX_REVISION_WAIT).is_ok());
+        assert!(validate_revision_wait(0, Duration::ZERO).is_err());
+        assert!(validate_revision_wait(MAX_REVISION_PAGE_SIZE + 1, Duration::ZERO).is_err());
+        assert!(validate_revision_wait(1, MAX_REVISION_WAIT + Duration::from_millis(1)).is_err());
     }
 }

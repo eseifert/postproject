@@ -80,3 +80,17 @@ also binds staged output media and its provenance activity before commit. Commit
 and rollback close the transaction; repeated close attempts return a conflict.
 Dropping an open transaction uses SQLite rollback semantics, so partially
 staged changes never become visible.
+
+## Revision waits
+
+A revision waiter opens its own connection to the production file, marks it
+query-only, and verifies that the file still holds the production it was
+created from. It never uses the production's connection, so blocking does not
+hold the production. Commits through the same production wake its waiters
+through an in-process signal. Commits by other processes or handles are found
+by polling `PRAGMA data_version` on the waiter connection, starting at 5 ms and
+backing off to 100 ms while nothing changes; the journal is read only when the
+data version moves. The waiter connection uses a 20 ms busy timeout and treats a
+busy file as unchanged until the next poll, so a long writer cannot hold a
+waiter past its timeout. Dropping or closing the production wakes its waiters
+with a closed outcome. ADR 0027 records the design.

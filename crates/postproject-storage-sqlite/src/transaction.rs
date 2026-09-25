@@ -16,7 +16,8 @@ use rusqlite::{
 
 use crate::{
     dependency_snapshot::persist_dependency_snapshot, encode_identifier_target,
-    encode_metadata_target, load_dependency_set, metadata_codec, sqlite_error,
+    encode_metadata_target, load_dependency_set, metadata_codec, revision_wait::RevisionSignal,
+    sqlite_error,
 };
 
 /// An explicit production mutation transaction.
@@ -31,12 +32,14 @@ pub struct SqliteTransaction<'production> {
     pending_roots: Vec<MediaRoot>,
     revision_context: RevisionContext,
     pending_events: Vec<RevisionEventKind>,
+    revision_signal: &'production RevisionSignal,
 }
 
 impl<'production> SqliteTransaction<'production> {
     pub(crate) fn begin(
         connection: &'production mut Connection,
         production: &'production mut Production,
+        revision_signal: &'production RevisionSignal,
     ) -> Result<Self> {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -49,6 +52,7 @@ impl<'production> SqliteTransaction<'production> {
             pending_roots,
             revision_context: RevisionContext::default(),
             pending_events: Vec::new(),
+            revision_signal,
         })
     }
 
@@ -1498,6 +1502,9 @@ impl<'production> SqliteTransaction<'production> {
         self.lifecycle.mark_committed()?;
         self.production
             .set_media_roots(std::mem::take(&mut self.pending_roots));
+        if !self.pending_events.is_empty() {
+            self.revision_signal.notify_commit();
+        }
         self.pending_events.clear();
         Ok(())
     }

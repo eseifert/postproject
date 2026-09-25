@@ -99,9 +99,10 @@ pub use resource::{
     Resource, ResourceFingerprint,
 };
 pub use revision::{
-    FilteredRevisionPage, MAX_REVISION_MESSAGE_BYTES, MAX_REVISION_PAGE_SIZE, OriginIdentity,
-    Revision, RevisionContext, RevisionEvent, RevisionEventFilter, RevisionEventKind,
-    RevisionEventType,
+    FilteredRevisionPage, MAX_REVISION_MESSAGE_BYTES, MAX_REVISION_PAGE_SIZE, MAX_REVISION_WAIT,
+    OriginIdentity, Revision, RevisionContext, RevisionEvent, RevisionEventFilter,
+    RevisionEventKind, RevisionEventType, RevisionWaitOutcome, RevisionWaiter,
+    validate_revision_wait,
 };
 pub use storage::{ProductionRead, ProductionStore, ProductionStoreTransaction};
 pub use time::{RationalRate, RationalTime, TimeRange};

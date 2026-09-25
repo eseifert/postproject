@@ -9,6 +9,13 @@ Development version: `0.4.0-alpha.1`.
 
 ### Added
 
+- Added bounded revision waits to Rust storage.
+  `SqliteProduction::revision_waiter` returns a waiter with its own read
+  connection that blocks until the first revisions after a sequence exist, for
+  at most 60 seconds, and otherwise reports a timeout, a closed production, or
+  cancellation from another thread. Commits through the same production wake it
+  immediately; commits from other processes and handles are detected by polling
+  the SQLite data version with bounded backoff.
 - Added event-type-filtered revision pages to Rust storage.
   `changes_since_filtered` returns the revisions after a sequence that contain
   at least one event of the requested types, plus a through sequence that is
