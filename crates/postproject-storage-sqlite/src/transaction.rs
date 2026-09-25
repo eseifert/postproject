@@ -226,8 +226,22 @@ impl<'production> SqliteTransaction<'production> {
         now: Timestamp,
         expires_at: Timestamp,
     ) -> Result<JobClaim> {
+        self.claim_job_with_id(job_id, JobClaimId::new(), tool, agent, now, expires_at)
+    }
+
+    /// Claims a job using a library-generated capability supplied by an
+    /// adapter that must return the token before transaction commit.
+    #[doc(hidden)]
+    pub fn claim_job_with_id(
+        &mut self,
+        job_id: JobId,
+        claim_id: JobClaimId,
+        tool: &ToolIdentity,
+        agent: Option<&AgentIdentity>,
+        now: Timestamp,
+        expires_at: Timestamp,
+    ) -> Result<JobClaim> {
         validate_future_job_expiry(now, expires_at)?;
-        let claim_id = JobClaimId::new();
         let agent_name = agent.and_then(AgentIdentity::name);
         let agent_identifier = agent.and_then(AgentIdentity::identifier);
         let transaction = self.open_transaction()?;

@@ -31,14 +31,15 @@ use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
     ArtifactEvaluationLimits, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, Dependency,
     DependencyKind, DependencyTarget, Error, ErrorKind, EvidenceKind, ExternalIdentifier,
-    FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern, Job, JobId, JobKind,
-    Locator, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS, MAX_DEPENDENCIES_PER_SET, MAX_JOB_INPUTS,
-    MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef,
-    OriginIdentity, OriginalMediaImport, ProductionId, PropertyId, RationalRate,
-    RepresentationAvailability, RepresentationFingerprint, RepresentationId, RepresentationImport,
-    RepresentationKind, RepresentationResolution, RequestedJobOutput, ResolutionEvidence,
-    ResourceFingerprint, ResourceId, ResourceResolutionState, ResourceRole, RevisionContext,
-    RevisionId, Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
+    FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern, Job, JobClaimId,
+    JobFailure, JobId, JobKind, Locator, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS,
+    MAX_DEPENDENCIES_PER_SET, MAX_JOB_INPUTS, MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MediaRootId,
+    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId,
+    PropertyId, RationalRate, RepresentationAvailability, RepresentationFingerprint,
+    RepresentationId, RepresentationImport, RepresentationKind, RepresentationResolution,
+    RequestedJobOutput, ResolutionEvidence, ResourceFingerprint, ResourceId,
+    ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, Timestamp, ToolIdentity,
+    TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, MediaRootMapping,
@@ -147,7 +148,7 @@ const PP_REVISION_JOB_FAILED: u32 = 25;
 const PP_REVISION_JOB_CANCELLED: u32 = 26;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 20;
+pub const ABI_VERSION: u32 = 21;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -348,6 +349,18 @@ enum StagedMutation {
     RemoveMetadataProperty(ObjectRef, MetadataProperty),
     Activity(Activity),
     RequestJob(Job),
+    ClaimJob {
+        job_id: JobId,
+        claim_id: JobClaimId,
+        tool: ToolIdentity,
+        agent: Option<AgentIdentity>,
+        now: Timestamp,
+        expires_at: Timestamp,
+    },
+    RenewJobClaim(JobId, JobClaimId, Timestamp, Timestamp),
+    ReleaseJobClaim(JobId, JobClaimId),
+    FailJob(JobId, JobClaimId, Timestamp, JobFailure),
+    CancelJob(JobId),
 }
 
 #[derive(Clone, Copy)]
@@ -4363,6 +4376,201 @@ pub unsafe extern "C" fn pp_transaction_request_job(
     }
 }
 
+/// Stages an atomic claim and returns its capability token.
+///
+/// The token becomes usable only after this transaction commits successfully.
+/// All strings are borrowed only for this call.
+///
+/// # Safety
+///
+/// `transaction` must be live, `job_id` readable, `tool_name` valid UTF-8,
+/// `out_claim_id` writable, and `out_error` null or writable. Other strings
+/// may be null or must follow the same UTF-8 contract.
+#[unsafe(no_mangle)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the C ABI keeps worker attribution fields explicit"
+)]
+pub unsafe extern "C" fn pp_transaction_claim_job(
+    transaction: *mut PpTransaction,
+    job_id: *const PpUuid,
+    tool_name: *const c_char,
+    tool_version: *const c_char,
+    tool_uri: *const c_char,
+    agent_name: *const c_char,
+    agent_identifier_scheme: *const c_char,
+    agent_identifier_value: *const c_char,
+    agent_identifier_qualifier: *const c_char,
+    now_unix_micros: i64,
+    expires_at_unix_micros: i64,
+    out_claim_id: *mut PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are checked and copied before this call returns.
+    unsafe {
+        initialize_uuid(out_claim_id);
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let job_id = job_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("job_id must not be null"))?;
+            require_output(out_claim_id, "out_claim_id")?;
+            let (tool, agent) = worker_identity_from_abi(
+                tool_name,
+                tool_version,
+                tool_uri,
+                agent_name,
+                agent_identifier_scheme,
+                agent_identifier_value,
+                agent_identifier_qualifier,
+            )?;
+            let claim_id = JobClaimId::new();
+            out_claim_id.write(PpUuid {
+                bytes: claim_id.into_bytes(),
+            });
+            transaction.mutations.push(StagedMutation::ClaimJob {
+                job_id: JobId::from_bytes(job_id.bytes),
+                claim_id,
+                tool,
+                agent,
+                now: Timestamp::from_unix_micros(now_unix_micros),
+                expires_at: Timestamp::from_unix_micros(expires_at_unix_micros),
+            });
+            Ok(())
+        })
+    }
+}
+
+/// Stages renewal of an active job claim.
+///
+/// # Safety
+///
+/// The transaction must be live; both IDs must be readable; `out_error` may be
+/// null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_renew_job_claim(
+    transaction: *mut PpTransaction,
+    job_id: *const PpUuid,
+    claim_id: *const PpUuid,
+    now_unix_micros: i64,
+    expires_at_unix_micros: i64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: IDs are checked before dereference and copied immediately.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let (job_id, claim_id) = required_job_claim_ids(job_id, claim_id)?;
+            transaction.mutations.push(StagedMutation::RenewJobClaim(
+                job_id,
+                claim_id,
+                Timestamp::from_unix_micros(now_unix_micros),
+                Timestamp::from_unix_micros(expires_at_unix_micros),
+            ));
+            Ok(())
+        })
+    }
+}
+
+/// Stages release of an active job claim.
+///
+/// # Safety
+///
+/// The transaction must be live; both IDs must be readable; `out_error` may be
+/// null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_release_job_claim(
+    transaction: *mut PpTransaction,
+    job_id: *const PpUuid,
+    claim_id: *const PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: IDs are checked before dereference and copied immediately.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let (job_id, claim_id) = required_job_claim_ids(job_id, claim_id)?;
+            transaction
+                .mutations
+                .push(StagedMutation::ReleaseJobClaim(job_id, claim_id));
+            Ok(())
+        })
+    }
+}
+
+/// Stages failure of an active unexpired job claim.
+///
+/// # Safety
+///
+/// The transaction must be live; both IDs and `diagnostic` must be readable;
+/// `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_fail_job(
+    transaction: *mut PpTransaction,
+    job_id: *const PpUuid,
+    claim_id: *const PpUuid,
+    now_unix_micros: i64,
+    diagnostic: *const c_char,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are checked and copied before this call returns.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let (job_id, claim_id) = required_job_claim_ids(job_id, claim_id)?;
+            transaction.mutations.push(StagedMutation::FailJob(
+                job_id,
+                claim_id,
+                Timestamp::from_unix_micros(now_unix_micros),
+                JobFailure::new(required_utf8(diagnostic, "diagnostic")?)?,
+            ));
+            Ok(())
+        })
+    }
+}
+
+/// Stages administrative cancellation of a requested or claimed job.
+///
+/// # Safety
+///
+/// The transaction must be live, `job_id` readable, and `out_error` null or
+/// writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_cancel_job(
+    transaction: *mut PpTransaction,
+    job_id: *const PpUuid,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: The job ID is checked before dereference and copied immediately.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let job_id = job_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("job_id must not be null"))?;
+            transaction
+                .mutations
+                .push(StagedMutation::CancelJob(JobId::from_bytes(job_id.bytes)));
+            Ok(())
+        })
+    }
+}
+
 /// Stages one complete production activity.
 ///
 /// Input and output arrays are borrowed only for this call. Edge roles, kind,
@@ -5122,6 +5330,80 @@ fn optional_uuid_flagged(flag: u8, value: PpUuid, label: &str) -> Result<Option<
     }
 }
 
+unsafe fn required_job_claim_ids(
+    job_id: *const PpUuid,
+    claim_id: *const PpUuid,
+) -> Result<(JobId, JobClaimId), Error> {
+    // SAFETY: Callers of this helper carry the exported readable-pointer contract.
+    let job_id =
+        unsafe { job_id.as_ref() }.ok_or_else(|| invalid_argument("job_id must not be null"))?;
+    // SAFETY: Same contract as `job_id`.
+    let claim_id = unsafe { claim_id.as_ref() }
+        .ok_or_else(|| invalid_argument("claim_id must not be null"))?;
+    Ok((
+        JobId::from_bytes(job_id.bytes),
+        JobClaimId::from_bytes(claim_id.bytes),
+    ))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the helper mirrors explicit C worker-attribution fields"
+)]
+unsafe fn worker_identity_from_abi(
+    tool_name: *const c_char,
+    tool_version: *const c_char,
+    tool_uri: *const c_char,
+    agent_name: *const c_char,
+    agent_identifier_scheme: *const c_char,
+    agent_identifier_value: *const c_char,
+    agent_identifier_qualifier: *const c_char,
+) -> Result<(ToolIdentity, Option<AgentIdentity>), Error> {
+    // SAFETY: Exported callers guarantee valid borrowed strings.
+    let tool_name = unsafe { required_utf8(tool_name, "tool_name") }?;
+    // SAFETY: Optional fields follow the same string contract.
+    let tool_version = unsafe { optional_utf8(tool_version, "tool_version") }?;
+    // SAFETY: Optional fields follow the same string contract.
+    let tool_uri = unsafe { optional_utf8(tool_uri, "tool_uri") }?;
+    let tool = ToolIdentity::new(
+        tool_name,
+        tool_version.map(str::to_owned),
+        tool_uri.map(str::to_owned),
+    )?;
+    // SAFETY: Optional fields follow the same string contract.
+    let agent_name = unsafe { optional_utf8(agent_name, "agent_name") }?;
+    // SAFETY: Optional fields follow the same string contract.
+    let agent_scheme =
+        unsafe { optional_utf8(agent_identifier_scheme, "agent_identifier_scheme") }?;
+    // SAFETY: Optional fields follow the same string contract.
+    let agent_value = unsafe { optional_utf8(agent_identifier_value, "agent_identifier_value") }?;
+    // SAFETY: Optional fields follow the same string contract.
+    let agent_qualifier =
+        unsafe { optional_utf8(agent_identifier_qualifier, "agent_identifier_qualifier") }?;
+    let identifier = match (agent_scheme, agent_value) {
+        (Some(scheme), Some(value)) => Some(ExternalIdentifier::new(
+            IdentifierScheme::new(scheme)?,
+            value,
+            agent_qualifier.map(str::to_owned),
+        )?),
+        (None, None) if agent_qualifier.is_none() => None,
+        _ => {
+            return Err(invalid_argument(
+                "agent identifier scheme and value must be supplied together",
+            ));
+        }
+    };
+    let agent = if agent_name.is_some() || identifier.is_some() {
+        Some(AgentIdentity::new(
+            agent_name.map(str::to_owned),
+            identifier,
+        )?)
+    } else {
+        None
+    };
+    Ok((tool, agent))
+}
+
 fn invalid_argument(message: impl Into<String>) -> Error {
     Error::new(ErrorKind::InvalidArgument, message)
 }
@@ -5479,6 +5761,33 @@ impl PpTransaction {
                         transaction.create_activity(activity)?;
                     }
                     StagedMutation::RequestJob(job) => transaction.request_job(job)?,
+                    StagedMutation::ClaimJob {
+                        job_id,
+                        claim_id,
+                        tool,
+                        agent,
+                        now,
+                        expires_at,
+                    } => {
+                        transaction.claim_job_with_id(
+                            *job_id,
+                            *claim_id,
+                            tool,
+                            agent.as_ref(),
+                            *now,
+                            *expires_at,
+                        )?;
+                    }
+                    StagedMutation::RenewJobClaim(job_id, claim_id, now, expires_at) => {
+                        transaction.renew_job_claim(*job_id, *claim_id, *now, *expires_at)?;
+                    }
+                    StagedMutation::ReleaseJobClaim(job_id, claim_id) => {
+                        transaction.release_job_claim(*job_id, *claim_id)?;
+                    }
+                    StagedMutation::FailJob(job_id, claim_id, now, failure) => {
+                        transaction.fail_job(*job_id, *claim_id, *now, failure)?;
+                    }
+                    StagedMutation::CancelJob(job_id) => transaction.cancel_job(*job_id)?,
                 }
             }
             transaction.commit()

@@ -892,6 +892,31 @@ PP_API pp_error_code_t pp_transaction_request_job(
     pp_representation_kind_t output_representation_kind,
     const char *target_root, pp_uuid_t *out_job_id,
     pp_error_t **out_error);
+/* Claim returns a random token that becomes usable only after commit. Worker
+ * identity strings are borrowed for the call. Lease times are caller-supplied. */
+PP_API pp_error_code_t pp_transaction_claim_job(
+    pp_transaction_t *transaction, const pp_uuid_t *job_id,
+    const char *tool_name, const char *tool_version, const char *tool_uri,
+    const char *agent_name, const char *agent_identifier_scheme,
+    const char *agent_identifier_value,
+    const char *agent_identifier_qualifier, int64_t now_unix_micros,
+    int64_t expires_at_unix_micros, pp_uuid_t *out_claim_id,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_renew_job_claim(
+    pp_transaction_t *transaction, const pp_uuid_t *job_id,
+    const pp_uuid_t *claim_id, int64_t now_unix_micros,
+    int64_t expires_at_unix_micros, pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_release_job_claim(
+    pp_transaction_t *transaction, const pp_uuid_t *job_id,
+    const pp_uuid_t *claim_id, pp_error_t **out_error);
+PP_API pp_error_code_t pp_transaction_fail_job(
+    pp_transaction_t *transaction, const pp_uuid_t *job_id,
+    const pp_uuid_t *claim_id, int64_t now_unix_micros,
+    const char *diagnostic, pp_error_t **out_error);
+/* Cancellation is administrative and therefore does not require a claim token. */
+PP_API pp_error_code_t pp_transaction_cancel_job(
+    pp_transaction_t *transaction, const pp_uuid_t *job_id,
+    pp_error_t **out_error);
 /* Arrays and strings are borrowed only for this call. A NULL timestamp pointer
  * means absent. Tool and agent fields are independently optional subject to
  * the documented domain invariants. */

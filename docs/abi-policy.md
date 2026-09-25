@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 20 is pre-release and may change during the 0.x series, with every
+ABI version 21 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
@@ -132,6 +132,12 @@ capabilities are never published through the revision feed.
 ABI version 20 adds owned job-set reads, complete state-specific job views,
 indexed input access, and transaction-staged job requests. Strings and job
 views borrow the result set; request inputs are copied into the transaction.
+
+ABI version 21 adds transaction-staged job claim, lease renewal, release,
+failure, and administrative cancellation. Claim returns a random capability
+token before commit so a caller can retain it, but the token becomes usable
+only after the transaction commits successfully. Lease time remains explicitly
+caller-supplied.
 
 ## External identifiers
 
