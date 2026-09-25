@@ -356,6 +356,31 @@ int main(int argc, char **argv) {
     pp_error_release(error);
     return 43;
   }
+  pp_dependency_set_t *dependencies = NULL;
+  uint8_t dependencies_present = UINT8_C(1);
+  pp_uuid_t dependency_source_id = {{0}};
+  uint64_t dependency_revision = UINT64_C(1);
+  pp_dependency_set_status_t dependency_status = PP_DEPENDENCY_SET_CURRENT;
+  uint64_t dependency_count = UINT64_C(1);
+  status = pp_production_dependency_set(production, &representation_id,
+                                        &dependencies, &error);
+  if (status != PP_OK || dependencies == NULL ||
+      pp_dependency_set_get(dependencies, &dependencies_present,
+                            &dependency_source_id, &dependency_revision,
+                            &dependency_status, &dependency_count,
+                            &error) != PP_OK ||
+      dependencies_present != UINT8_C(0) || dependency_revision != UINT64_C(0) ||
+      dependency_status != UINT32_C(0) || dependency_count != UINT64_C(0) ||
+      memcmp(dependency_source_id.bytes, representation_id.bytes,
+             sizeof(representation_id.bytes)) != 0) {
+    pp_dependency_set_release(dependencies);
+    pp_representation_set_release(representations);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 43;
+  }
+  pp_dependency_set_release(dependencies);
+  dependencies = NULL;
   const char *representation_fingerprint_algorithm = NULL;
   uint16_t representation_fingerprint_version = 0;
   const uint8_t *representation_fingerprint_value = NULL;

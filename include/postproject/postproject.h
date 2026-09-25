@@ -31,6 +31,7 @@ typedef struct pp_metadata_set pp_metadata_set_t;
 typedef struct pp_metadata_value pp_metadata_value_t;
 typedef struct pp_metadata_input pp_metadata_input_t;
 typedef struct pp_activity_set pp_activity_set_t;
+typedef struct pp_dependency_set pp_dependency_set_t;
 typedef struct pp_artifact_evaluation pp_artifact_evaluation_t;
 typedef struct pp_artifact_reproducibility pp_artifact_reproducibility_t;
 typedef struct pp_revision_set pp_revision_set_t;
@@ -131,6 +132,11 @@ typedef uint32_t pp_artifact_dependency_issue_t;
 #define PP_ARTIFACT_DEPENDENCY_DEPTH_TRUNCATED UINT32_C(3)
 #define PP_ARTIFACT_DEPENDENCY_REPRESENTATIONS_TRUNCATED UINT32_C(4)
 
+typedef uint32_t pp_dependency_set_status_t;
+
+#define PP_DEPENDENCY_SET_CURRENT UINT32_C(1)
+#define PP_DEPENDENCY_SET_NEEDS_EXTRACTION UINT32_C(2)
+
 typedef uint32_t pp_artifact_traversal_limit_t;
 
 #define PP_ARTIFACT_TRAVERSAL_DEPTH UINT32_C(1)
@@ -194,6 +200,19 @@ typedef struct pp_activity_edge {
   pp_uuid_t representation_id;
   const char *role;
 } pp_activity_edge_t;
+
+/* Input strings are borrowed for a transaction call. Output strings borrow
+ * the owning pp_dependency_set_t. */
+typedef struct pp_dependency {
+  uint8_t has_source_resource;
+  pp_uuid_t source_resource_id;
+  const char *kind;
+  pp_object_ref_t target;
+  uint8_t has_resolved_representation;
+  pp_uuid_t resolved_representation_id;
+  uint8_t required;
+  const char *authored_reference;
+} pp_dependency_t;
 
 /* Strings borrow the owning artifact evaluation. */
 typedef struct pp_artifact_dependency_path_segment {
@@ -528,6 +547,24 @@ PP_API pp_error_code_t pp_metadata_input_create_struct(
     const char **names, const pp_metadata_input_t **values, uint64_t count,
     pp_metadata_input_t **out_input, pp_error_t **out_error);
 PP_API void pp_metadata_input_release(pp_metadata_input_t *input);
+/* A successful read always returns a set handle. `out_present` distinguishes
+ * absent knowledge from a recorded empty set. Strings borrow the set. */
+PP_API pp_error_code_t pp_production_dependency_set(
+    const pp_production_t *production, const pp_uuid_t *representation_id,
+    pp_dependency_set_t **out_dependencies, pp_error_t **out_error);
+PP_API pp_error_code_t pp_dependency_set_get(
+    const pp_dependency_set_t *dependencies, uint8_t *out_present,
+    pp_uuid_t *out_source_representation_id,
+    uint64_t *out_recorded_at_revision,
+    pp_dependency_set_status_t *out_status, uint64_t *out_dependency_count,
+    pp_error_t **out_error);
+PP_API pp_error_code_t pp_dependency_set_get_dependency(
+    const pp_dependency_set_t *dependencies, uint64_t index,
+    pp_dependency_t *out_dependency, pp_error_t **out_error);
+PP_API void pp_dependency_set_release(pp_dependency_set_t *dependencies);
+PP_API pp_error_code_t pp_production_dependents(
+    const pp_production_t *production, const pp_object_ref_t *target,
+    pp_object_ref_set_t **out_representations, pp_error_t **out_error);
 /* Artifact evaluation is knowledge-only. Returned strings and byte spans
  * borrow their owning result handle. */
 PP_API pp_error_code_t pp_production_evaluate_artifact(

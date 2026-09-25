@@ -53,6 +53,10 @@ class ActivitySet(ctypes.Structure):
     pass
 
 
+class DependencySet(ctypes.Structure):
+    pass
+
+
 class ArtifactEvaluation(ctypes.Structure):
     pass
 
@@ -89,6 +93,10 @@ class ActivityEdge(ctypes.Structure):
     pass
 
 
+class Dependency(ctypes.Structure):
+    pass
+
+
 class ArtifactDependencyPathSegment(ctypes.Structure):
     pass
 
@@ -118,6 +126,7 @@ ArtifactKnowledgeState = ctypes.c_uint32
 ArtifactEdgeKind = ctypes.c_uint32
 ArtifactReasonKind = ctypes.c_uint32
 ArtifactDependencyIssue = ctypes.c_uint32
+DependencySetStatus = ctypes.c_uint32
 ArtifactTraversalLimit = ctypes.c_uint32
 ArtifactReproducibilityIssueKind = ctypes.c_uint32
 MetadataValueKind = ctypes.c_uint32
@@ -186,6 +195,8 @@ PP_ARTIFACT_DEPENDENCY_NEEDS_EXTRACTION = 1
 PP_ARTIFACT_DEPENDENCY_UNRESOLVED = 2
 PP_ARTIFACT_DEPENDENCY_DEPTH_TRUNCATED = 3
 PP_ARTIFACT_DEPENDENCY_REPRESENTATIONS_TRUNCATED = 4
+PP_DEPENDENCY_SET_CURRENT = 1
+PP_DEPENDENCY_SET_NEEDS_EXTRACTION = 2
 PP_ARTIFACT_TRAVERSAL_DEPTH = 1
 PP_ARTIFACT_TRAVERSAL_REPRESENTATIONS = 2
 PP_ARTIFACT_REPRODUCIBILITY_PRODUCING_ACTIVITY_MISSING = 1
@@ -284,6 +295,17 @@ ActivityEdge._fields_ = [
     ("role", ctypes.c_char_p),
 ]
 
+Dependency._fields_ = [
+    ("has_source_resource", ctypes.c_uint8),
+    ("source_resource_id", Uuid),
+    ("kind", ctypes.c_char_p),
+    ("target", ObjectRef),
+    ("has_resolved_representation", ctypes.c_uint8),
+    ("resolved_representation_id", Uuid),
+    ("required", ctypes.c_uint8),
+    ("authored_reference", ctypes.c_char_p),
+]
+
 ArtifactDependencyPathSegment._fields_ = [
     ("source_representation_id", Uuid),
     ("dependency_position", ctypes.c_uint32),
@@ -342,6 +364,7 @@ PUBLIC_STRUCTS = {
     "pp_object_ref_t": (ObjectRef, ("kind", "id")),
     "pp_revision_event_t": (RevisionEvent, ("kind", "position", "asset_id", "representation_id", "resource_id", "locator_id", "media_root_id", "activity_id", "target", "structural_position", "enabled", "identifier_scheme", "identifier_value", "identifier_qualifier", "vocabulary", "property", "activity_kind", "role", "fingerprint_algorithm", "fingerprint_version")),
     "pp_activity_edge_t": (ActivityEdge, ("representation_id", "role")),
+    "pp_dependency_t": (Dependency, ("has_source_resource", "source_resource_id", "kind", "target", "has_resolved_representation", "resolved_representation_id", "required", "authored_reference")),
     "pp_artifact_dependency_path_segment_t": (ArtifactDependencyPathSegment, ("source_representation_id", "dependency_position", "has_source_resource", "source_resource_id", "kind", "target", "has_resolved_representation", "resolved_representation_id", "authored_reference")),
     "pp_artifact_reason_t": (ArtifactReason, ("kind", "activity_id", "representation_id", "input_representation_id", "edge_kind", "upstream_state", "traversal_limit", "activity_count", "dependency_issue", "dependency_path", "dependency_path_length", "fingerprint_algorithm", "fingerprint_version", "has_snapshot_value", "snapshot_value", "snapshot_value_length", "has_current_value", "current_value", "current_value_length")),
     "pp_artifact_reproducibility_issue_t": (ArtifactReproducibilityIssue, ("kind", "activity_id", "representation_id", "activity_count")),
@@ -372,6 +395,9 @@ EXPORTED_SYMBOLS = (
     "pp_asset_set_count",
     "pp_asset_set_get",
     "pp_asset_set_release",
+    "pp_dependency_set_get",
+    "pp_dependency_set_get_dependency",
+    "pp_dependency_set_release",
     "pp_error_code",
     "pp_error_message",
     "pp_error_release",
@@ -427,6 +453,8 @@ EXPORTED_SYMBOLS = (
     "pp_production_begin_transaction",
     "pp_production_changes_since",
     "pp_production_create",
+    "pp_production_dependency_set",
+    "pp_production_dependents",
     "pp_production_evaluate_artifact",
     "pp_production_external_identifiers",
     "pp_production_find_by_external_identifier",
@@ -630,6 +658,16 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_metadata_input_create_struct.restype = ErrorCode
     lib.pp_metadata_input_release.argtypes = [ctypes.POINTER(MetadataInput)]
     lib.pp_metadata_input_release.restype = None
+    lib.pp_production_dependency_set.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(DependencySet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_dependency_set.restype = ErrorCode
+    lib.pp_dependency_set_get.argtypes = [ctypes.POINTER(DependencySet), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(DependencySetStatus), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_dependency_set_get.restype = ErrorCode
+    lib.pp_dependency_set_get_dependency.argtypes = [ctypes.POINTER(DependencySet), ctypes.c_uint64, ctypes.POINTER(Dependency), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_dependency_set_get_dependency.restype = ErrorCode
+    lib.pp_dependency_set_release.argtypes = [ctypes.POINTER(DependencySet)]
+    lib.pp_dependency_set_release.restype = None
+    lib.pp_production_dependents.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ObjectRef), ctypes.POINTER(ctypes.POINTER(ObjectRefSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_dependents.restype = ErrorCode
     lib.pp_production_evaluate_artifact.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(ctypes.POINTER(ArtifactEvaluation)), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_production_evaluate_artifact.restype = ErrorCode
     lib.pp_artifact_evaluation_get.argtypes = [ctypes.POINTER(ArtifactEvaluation), ctypes.POINTER(Uuid), ctypes.POINTER(ArtifactKnowledgeState), ctypes.POINTER(ctypes.c_uint32), ctypes.POINTER(ctypes.c_uint8), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]

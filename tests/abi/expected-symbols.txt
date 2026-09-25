@@ -19,6 +19,9 @@ pp_artifact_reproducibility_release
 pp_asset_set_count
 pp_asset_set_get
 pp_asset_set_release
+pp_dependency_set_get
+pp_dependency_set_get_dependency
+pp_dependency_set_release
 pp_error_code
 pp_error_message
 pp_error_release
@@ -74,6 +77,8 @@ pp_production_assets
 pp_production_begin_transaction
 pp_production_changes_since
 pp_production_create
+pp_production_dependency_set
+pp_production_dependents
 pp_production_evaluate_artifact
 pp_production_external_identifiers
 pp_production_find_by_external_identifier

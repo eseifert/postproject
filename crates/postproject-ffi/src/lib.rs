@@ -5,6 +5,7 @@
 //! shipped `postproject.h` rather than depending on Rust declarations.
 
 mod artifact;
+mod dependency;
 mod metadata;
 mod metadata_input;
 mod provenance;
@@ -27,15 +28,15 @@ use std::{
 
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
-    ArtifactEvaluationLimits, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, Error,
-    ErrorKind, EvidenceKind, ExternalIdentifier, FrameRange, HostObjectBinding, IdentifierScheme,
-    ImageSequencePattern, Locator, MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS,
-    MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef,
-    OriginIdentity, OriginalMediaImport, ProductionId, PropertyId, RationalRate,
-    RepresentationAvailability, RepresentationFingerprint, RepresentationId, RepresentationImport,
-    RepresentationKind, RepresentationResolution, ResolutionEvidence, ResourceFingerprint,
-    ResourceId, ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, Timestamp,
-    ToolIdentity, TransactionLifecycle, VocabularyId,
+    ArtifactEvaluationLimits, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind,
+    DependencyTarget, Error, ErrorKind, EvidenceKind, ExternalIdentifier, FrameRange,
+    HostObjectBinding, IdentifierScheme, ImageSequencePattern, Locator, MAX_ACTIVITY_EDGES,
+    MAX_CONTENT_MEMBERS, MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MediaRootId, MetadataProperty,
+    MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId, PropertyId,
+    RationalRate, RepresentationAvailability, RepresentationFingerprint, RepresentationId,
+    RepresentationImport, RepresentationKind, RepresentationResolution, ResolutionEvidence,
+    ResourceFingerprint, ResourceId, ResourceResolutionState, ResourceRole, RevisionContext,
+    RevisionId, Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, MediaRootMapping,
@@ -49,6 +50,7 @@ pub use artifact::{
     PpArtifactDependencyPathSegment, PpArtifactEvaluation, PpArtifactReason,
     PpArtifactReproducibility, PpArtifactReproducibilityIssue,
 };
+pub use dependency::{PpDependency, PpDependencySet};
 use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
 pub use metadata_input::PpMetadataInput;
@@ -1215,6 +1217,186 @@ pub unsafe extern "C" fn pp_metadata_set_release(metadata: *mut PpMetadataSet) {
         // SAFETY: Ownership is transferred back exactly once by contract.
         drop(unsafe { Box::from_raw(metadata) });
     }));
+}
+
+/// Loads one complete dependency observation.
+///
+/// # Safety
+///
+/// `production` and `representation_id` must be live readable values,
+/// `out_dependencies` must be writable, and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_dependency_set(
+    production: *const PpProduction,
+    representation_id: *const PpUuid,
+    out_dependencies: *mut *mut PpDependencySet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before use and result ownership is explicit.
+    unsafe {
+        initialize_output(out_dependencies);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            let representation_id = representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+            require_output(out_dependencies, "out_dependencies")?;
+            let representation_id = RepresentationId::from_bytes(representation_id.bytes);
+            let inner = lock_production(&production.state);
+            let dependencies =
+                PpDependencySet::new(representation_id, inner.dependency_set(representation_id)?)?;
+            out_dependencies.write(Box::into_raw(Box::new(dependencies)));
+            Ok(())
+        })
+    }
+}
+
+/// Reads dependency-observation summary fields.
+///
+/// # Safety
+///
+/// `dependencies` must be live, all outputs must be writable, and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the C ABI exposes each summary field as an explicit output"
+)]
+pub unsafe extern "C" fn pp_dependency_set_get(
+    dependencies: *const PpDependencySet,
+    out_present: *mut u8,
+    out_source_representation_id: *mut PpUuid,
+    out_recorded_at_revision: *mut u64,
+    out_status: *mut u32,
+    out_dependency_count: *mut u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_value(out_present, 0);
+        initialize_uuid(out_source_representation_id);
+        initialize_value(out_recorded_at_revision, 0);
+        initialize_value(out_status, 0);
+        initialize_value(out_dependency_count, 0);
+        ffi_call(out_error, || {
+            let dependencies = dependencies
+                .as_ref()
+                .ok_or_else(|| invalid_argument("dependencies must not be null"))?;
+            require_output(out_present, "out_present")?;
+            require_output(out_source_representation_id, "out_source_representation_id")?;
+            require_output(out_recorded_at_revision, "out_recorded_at_revision")?;
+            require_output(out_status, "out_status")?;
+            require_output(out_dependency_count, "out_dependency_count")?;
+            out_present.write(u8::from(dependencies.present));
+            out_source_representation_id.write(PpUuid {
+                bytes: dependencies.source_representation_id.into_bytes(),
+            });
+            out_recorded_at_revision.write(dependencies.recorded_at_revision);
+            out_status.write(dependencies.status);
+            out_dependency_count.write(length_as_u64(dependencies.len())?);
+            Ok(())
+        })
+    }
+}
+
+/// Reads one borrowed dependency edge.
+///
+/// # Safety
+///
+/// `dependencies` must be live, `out_dependency` writable, and `out_error`
+/// may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_dependency_set_get_dependency(
+    dependencies: *const PpDependencySet,
+    index: u64,
+    out_dependency: *mut PpDependency,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_value(out_dependency, zero_dependency());
+        ffi_call(out_error, || {
+            require_output(out_dependency, "out_dependency")?;
+            let dependencies = dependencies
+                .as_ref()
+                .ok_or_else(|| invalid_argument("dependencies must not be null"))?;
+            let index = usize::try_from(index)
+                .map_err(|_| invalid_argument("dependency index is out of range"))?;
+            let dependency = dependencies.get(index).ok_or_else(|| {
+                invalid_argument(format!("dependency index {index} is out of range"))
+            })?;
+            out_dependency.write(dependency);
+            Ok(())
+        })
+    }
+}
+
+/// Releases a dependency observation. Null is a no-op.
+///
+/// # Safety
+///
+/// A non-null pointer must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_dependency_set_release(dependencies: *mut PpDependencySet) {
+    if dependencies.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership is transferred back exactly once by contract.
+        drop(unsafe { Box::from_raw(dependencies) });
+    }));
+}
+
+/// Loads representations that directly depend on an asset or representation.
+///
+/// # Safety
+///
+/// `production` and `target` must be live readable values, `out_representations`
+/// must be writable, and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_dependents(
+    production: *const PpProduction,
+    target: *const PpObjectRef,
+    out_representations: *mut *mut PpObjectRefSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated before use and result ownership is explicit.
+    unsafe {
+        initialize_output(out_representations);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            let target = target
+                .as_ref()
+                .ok_or_else(|| invalid_argument("target must not be null"))?;
+            require_output(out_representations, "out_representations")?;
+            let target = match object_ref_from_abi(*target)? {
+                ObjectRef::Asset(id) => DependencyTarget::Asset(id),
+                ObjectRef::Representation(id) => DependencyTarget::Representation(id),
+                _ => {
+                    return Err(invalid_argument(
+                        "dependency target must be an asset or representation",
+                    ));
+                }
+            };
+            let inner = lock_production(&production.state);
+            let objects = inner
+                .dependents(target)?
+                .into_iter()
+                .map(|id| PpObjectRef {
+                    kind: PP_OBJECT_REPRESENTATION,
+                    id: PpUuid {
+                        bytes: id.into_bytes(),
+                    },
+                })
+                .collect();
+            out_representations.write(Box::into_raw(Box::new(PpObjectRefSet { objects })));
+            Ok(())
+        })
+    }
 }
 
 /// Evaluates artifact knowledge without accessing media files.
@@ -4365,6 +4547,22 @@ const fn zero_artifact_reason() -> PpArtifactReason {
         has_current_value: 0,
         current_value: ptr::null(),
         current_value_length: 0,
+    }
+}
+
+const fn zero_dependency() -> PpDependency {
+    PpDependency {
+        has_source_resource: 0,
+        source_resource_id: PpUuid { bytes: [0; 16] },
+        kind: ptr::null(),
+        target: PpObjectRef {
+            kind: 0,
+            id: PpUuid { bytes: [0; 16] },
+        },
+        has_resolved_representation: 0,
+        resolved_representation_id: PpUuid { bytes: [0; 16] },
+        required: 0,
+        authored_reference: ptr::null(),
     }
 }
 
