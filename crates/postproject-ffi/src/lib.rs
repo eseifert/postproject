@@ -28,15 +28,16 @@ use std::{
 
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
-    ArtifactEvaluationLimits, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind,
-    DependencyTarget, Error, ErrorKind, EvidenceKind, ExternalIdentifier, FrameRange,
-    HostObjectBinding, IdentifierScheme, ImageSequencePattern, Locator, MAX_ACTIVITY_EDGES,
-    MAX_CONTENT_MEMBERS, MAX_SEQUENCE_EXCEPTIONS, MediaRoot, MediaRootId, MetadataProperty,
-    MetadataValue, ObjectRef, OriginIdentity, OriginalMediaImport, ProductionId, PropertyId,
-    RationalRate, RepresentationAvailability, RepresentationFingerprint, RepresentationId,
-    RepresentationImport, RepresentationKind, RepresentationResolution, ResolutionEvidence,
-    ResourceFingerprint, ResourceId, ResourceResolutionState, ResourceRole, RevisionContext,
-    RevisionId, Timestamp, ToolIdentity, TransactionLifecycle, VocabularyId,
+    ArtifactEvaluationLimits, Asset, AssetId, AvailabilityIssue, AvailabilityIssueKind, Dependency,
+    DependencyKind, DependencyTarget, Error, ErrorKind, EvidenceKind, ExternalIdentifier,
+    FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern, Locator,
+    MAX_ACTIVITY_EDGES, MAX_CONTENT_MEMBERS, MAX_DEPENDENCIES_PER_SET, MAX_SEQUENCE_EXCEPTIONS,
+    MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef, OriginIdentity,
+    OriginalMediaImport, ProductionId, PropertyId, RationalRate, RepresentationAvailability,
+    RepresentationFingerprint, RepresentationId, RepresentationImport, RepresentationKind,
+    RepresentationResolution, ResolutionEvidence, ResourceFingerprint, ResourceId,
+    ResourceResolutionState, ResourceRole, RevisionContext, RevisionId, Timestamp, ToolIdentity,
+    TransactionLifecycle, VocabularyId,
 };
 use postproject_media::{
     FileResourceSource, ImageSequenceSource, MediaResolver, MediaRootMapping,
@@ -327,6 +328,7 @@ enum StagedMutation {
     RetireLocator(postproject_core::LocatorId),
     RecordResourceFingerprint(ResourceId, ResourceFingerprint),
     RecordRepresentationFingerprint(RepresentationId, RepresentationFingerprint),
+    RecordDependencySet(RepresentationId, Vec<Dependency>),
     AddExternalIdentifier(ObjectRef, ExternalIdentifier),
     RemoveExternalIdentifier(ObjectRef, ExternalIdentifier),
     AddMetadataValue(ObjectRef, MetadataProperty, MetadataValue),
@@ -3955,6 +3957,45 @@ pub unsafe extern "C" fn pp_transaction_record_representation_fingerprint(
     }
 }
 
+/// Stages replacement of one representation's complete dependency observation.
+///
+/// The array and all strings are copied during this call. A null array is valid
+/// only when `dependency_count` is zero.
+///
+/// # Safety
+///
+/// `transaction` and `representation_id` must be live, every dependency and
+/// string must be readable for this call, and `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_transaction_record_dependency_set(
+    transaction: *mut PpTransaction,
+    representation_id: *const PpUuid,
+    dependencies: *const PpDependency,
+    dependency_count: u64,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are validated and copied before staging the mutation.
+    unsafe {
+        ffi_call(out_error, || {
+            let transaction = transaction
+                .as_mut()
+                .ok_or_else(|| invalid_argument("transaction must not be null"))?;
+            transaction.lifecycle.ensure_open()?;
+            let representation_id = representation_id
+                .as_ref()
+                .ok_or_else(|| invalid_argument("representation_id must not be null"))?;
+            let dependencies = dependencies_from_abi(dependencies, dependency_count)?;
+            transaction
+                .mutations
+                .push(StagedMutation::RecordDependencySet(
+                    RepresentationId::from_bytes(representation_id.bytes),
+                    dependencies,
+                ));
+            Ok(())
+        })
+    }
+}
+
 /// Stages an external identifier attachment.
 ///
 /// `qualifier` may be null; other string inputs are required borrowed
@@ -4785,6 +4826,84 @@ unsafe fn activity_edges_from_abi(
         .collect()
 }
 
+unsafe fn dependencies_from_abi(
+    dependencies: *const PpDependency,
+    count: u64,
+) -> Result<Vec<Dependency>, Error> {
+    let count =
+        usize::try_from(count).map_err(|_| invalid_argument("dependency count is too large"))?;
+    if count > MAX_DEPENDENCIES_PER_SET {
+        return Err(invalid_argument(format!(
+            "dependency count must not exceed {MAX_DEPENDENCIES_PER_SET}"
+        )));
+    }
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if dependencies.is_null() {
+        return Err(invalid_argument(
+            "dependencies must not be null when count is nonzero",
+        ));
+    }
+    // SAFETY: The caller guarantees `count` readable contiguous dependency values.
+    unsafe { std::slice::from_raw_parts(dependencies, count) }
+        .iter()
+        .map(|dependency| {
+            // SAFETY: Each string follows the exported borrowed-string contract.
+            let kind = unsafe { required_utf8(dependency.kind, "dependency kind") }?;
+            // SAFETY: The authored reference follows the same contract.
+            let authored_reference = unsafe {
+                required_utf8(
+                    dependency.authored_reference,
+                    "dependency authored_reference",
+                )
+            }?;
+            let source_resource_id = optional_uuid_flagged(
+                dependency.has_source_resource,
+                dependency.source_resource_id,
+                "has_source_resource",
+            )?
+            .map(ResourceId::from_bytes);
+            let target = match object_ref_from_abi(dependency.target)? {
+                ObjectRef::Asset(id) => DependencyTarget::Asset(id),
+                ObjectRef::Representation(id) => DependencyTarget::Representation(id),
+                _ => {
+                    return Err(invalid_argument(
+                        "dependency target must be an asset or representation",
+                    ));
+                }
+            };
+            let resolved_representation_id = optional_uuid_flagged(
+                dependency.has_resolved_representation,
+                dependency.resolved_representation_id,
+                "has_resolved_representation",
+            )?
+            .map(RepresentationId::from_bytes);
+            let required = match dependency.required {
+                0 => false,
+                1 => true,
+                _ => return Err(invalid_argument("dependency required must be zero or one")),
+            };
+            Dependency::new(
+                source_resource_id,
+                DependencyKind::new(kind)?,
+                target,
+                resolved_representation_id,
+                required,
+                authored_reference,
+            )
+        })
+        .collect()
+}
+
+fn optional_uuid_flagged(flag: u8, value: PpUuid, label: &str) -> Result<Option<[u8; 16]>, Error> {
+    match flag {
+        0 => Ok(None),
+        1 => Ok(Some(value.bytes)),
+        _ => Err(invalid_argument(format!("{label} must be zero or one"))),
+    }
+}
+
 fn invalid_argument(message: impl Into<String>) -> Error {
     Error::new(ErrorKind::InvalidArgument, message)
 }
@@ -5118,6 +5237,9 @@ impl PpTransaction {
                     ) => {
                         transaction
                             .record_representation_fingerprint(*representation_id, fingerprint)?;
+                    }
+                    StagedMutation::RecordDependencySet(representation_id, dependencies) => {
+                        transaction.record_dependency_set(*representation_id, dependencies)?;
                     }
                     StagedMutation::AddExternalIdentifier(target, identifier) => {
                         transaction.add_external_identifier(*target, identifier)?;

@@ -1069,6 +1069,77 @@ int main(int argc, char **argv) {
     return 73;
   }
   pp_representation_set_release(representations);
+
+  const pp_dependency_t recorded_dependency = {
+      UINT8_C(0),
+      {{0}},
+      "org.postproject:requires",
+      {PP_OBJECT_REPRESENTATION, proxy_representation_id},
+      UINT8_C(0),
+      {{0}},
+      UINT8_C(1),
+      "proxy.mov",
+  };
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_record_dependency_set(
+          transaction, &representation_id, &recorded_dependency, UINT64_C(1),
+          &error) != PP_OK ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 74;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+  status = pp_production_dependency_set(production, &representation_id,
+                                        &dependencies, &error);
+  pp_dependency_t read_dependency = {0};
+  if (status != PP_OK || dependencies == NULL ||
+      pp_dependency_set_get(dependencies, &dependencies_present,
+                            &dependency_source_id, &dependency_revision,
+                            &dependency_status, &dependency_count,
+                            &error) != PP_OK ||
+      dependencies_present != UINT8_C(1) || dependency_revision == UINT64_C(0) ||
+      dependency_status != PP_DEPENDENCY_SET_CURRENT ||
+      dependency_count != UINT64_C(1) ||
+      pp_dependency_set_get_dependency(dependencies, UINT64_C(0),
+                                       &read_dependency, &error) != PP_OK ||
+      read_dependency.kind == NULL ||
+      strcmp(read_dependency.kind, "org.postproject:requires") != 0 ||
+      read_dependency.target.kind != PP_OBJECT_REPRESENTATION ||
+      memcmp(read_dependency.target.id.bytes, proxy_representation_id.bytes,
+             sizeof(proxy_representation_id.bytes)) != 0 ||
+      read_dependency.required != UINT8_C(1) ||
+      read_dependency.authored_reference == NULL ||
+      strcmp(read_dependency.authored_reference, "proxy.mov") != 0) {
+    pp_dependency_set_release(dependencies);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 75;
+  }
+  pp_dependency_set_release(dependencies);
+  dependencies = NULL;
+  const pp_object_ref_t dependency_target = {
+      PP_OBJECT_REPRESENTATION, proxy_representation_id};
+  pp_object_ref_set_t *dependent_set = NULL;
+  pp_object_ref_t dependent = {0};
+  if (pp_production_dependents(production, &dependency_target, &dependent_set,
+                               &error) != PP_OK ||
+      dependent_set == NULL ||
+      pp_object_ref_set_count(dependent_set) != UINT64_C(1) ||
+      pp_object_ref_set_get(dependent_set, UINT64_C(0), &dependent, &error) !=
+          PP_OK ||
+      dependent.kind != PP_OBJECT_REPRESENTATION ||
+      memcmp(dependent.id.bytes, representation_id.bytes,
+             sizeof(representation_id.bytes)) != 0) {
+    pp_object_ref_set_release(dependent_set);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 76;
+  }
+  pp_object_ref_set_release(dependent_set);
   pp_production_release(production);
   production = NULL;
 

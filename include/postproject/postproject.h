@@ -803,6 +803,12 @@ PP_API pp_error_code_t pp_transaction_record_representation_fingerprint(
     pp_transaction_t *transaction, const pp_uuid_t *representation_id,
     const char *algorithm, uint16_t version, const uint8_t *value,
     uint64_t value_length, pp_error_t **out_error);
+/* Replaces the complete ordered dependency observation. The array and strings
+ * are borrowed for this call and copied into the transaction. */
+PP_API pp_error_code_t pp_transaction_record_dependency_set(
+    pp_transaction_t *transaction, const pp_uuid_t *representation_id,
+    const pp_dependency_t *dependencies, uint64_t dependency_count,
+    pp_error_t **out_error);
 /* Scheme and value are required borrowed UTF-8 without embedded NUL. Qualifier
  * may be NULL. The complete mutation is validated and persisted at commit. */
 PP_API pp_error_code_t pp_transaction_add_external_identifier(
