@@ -1359,6 +1359,129 @@ int main(int argc, char **argv) {
     return 93;
   }
   pp_job_set_release(jobs);
+
+  pp_uuid_t completed_job_id = {{0}};
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_request_job(
+          transaction, "org.postproject:generate-proxy", &representation_id,
+          UINT64_C(1), &asset_id, PP_REPRESENTATION_PROXY, NULL,
+          &completed_job_id, &error) != PP_OK ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 94;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+
+  pp_uuid_t completion_claim_id = {{0}};
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status != PP_OK ||
+      pp_transaction_claim_job(
+          transaction, &completed_job_id, "C worker", NULL, NULL, NULL, NULL,
+          NULL, NULL, INT64_C(41), INT64_C(50), &completion_claim_id,
+          &error) != PP_OK ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 95;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+
+  pp_uuid_t completed_representation_id = {{0}};
+  pp_uuid_t completion_activity_id = {{0}};
+  status = pp_production_begin_transaction(production, &transaction, &error);
+  if (status == PP_OK) {
+    status = pp_transaction_add_single_file_representation(
+        transaction, &asset_id, PP_REPRESENTATION_PROXY, moved_media_path,
+        &completed_representation_id, &error);
+  }
+  const pp_activity_edge_t completion_input = {
+      representation_id, "org.postproject:input.primary-video"};
+  const pp_activity_edge_t completion_output = {
+      completed_representation_id, "org.postproject:output.proxy"};
+  if (status == PP_OK) {
+    status = pp_transaction_create_activity(
+        transaction, "org.postproject:transcode", &completion_input,
+        UINT64_C(1), &completion_output, UINT64_C(1), NULL, NULL, "C worker",
+        NULL, NULL, NULL, NULL, NULL, NULL, &completion_activity_id, &error);
+  }
+  if (status == PP_OK) {
+    status = pp_transaction_complete_job(
+        transaction, &completed_job_id, &completion_claim_id, INT64_C(42),
+        &completed_representation_id, &completion_activity_id, &error);
+  }
+  if (status != PP_OK || uuid_is_zero(&completed_representation_id) ||
+      uuid_is_zero(&completion_activity_id) ||
+      pp_transaction_commit(transaction, &error) != PP_OK) {
+    pp_transaction_release(transaction);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 96;
+  }
+  pp_transaction_release(transaction);
+  transaction = NULL;
+
+  jobs = NULL;
+  pp_job_t completed_job = {0};
+  uint8_t found_completed_job = UINT8_C(0);
+  if (pp_production_jobs(production, &jobs, &error) != PP_OK || jobs == NULL ||
+      pp_job_set_count(jobs) != UINT64_C(3)) {
+    pp_job_set_release(jobs);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 97;
+  }
+  for (uint64_t index = 0; index < pp_job_set_count(jobs); ++index) {
+    pp_job_t candidate = {0};
+    if (pp_job_set_get(jobs, index, &candidate, &error) != PP_OK) {
+      pp_job_set_release(jobs);
+      pp_production_release(production);
+      pp_error_release(error);
+      return 97;
+    }
+    if (memcmp(candidate.id.bytes, completed_job_id.bytes,
+               sizeof(completed_job_id.bytes)) == 0) {
+      completed_job = candidate;
+      found_completed_job = UINT8_C(1);
+    }
+  }
+  if (found_completed_job != UINT8_C(1) ||
+      completed_job.state != PP_JOB_SUCCEEDED ||
+      memcmp(completed_job.completion_representation_id.bytes,
+             completed_representation_id.bytes,
+             sizeof(completed_representation_id.bytes)) != 0 ||
+      memcmp(completed_job.completion_activity_id.bytes,
+             completion_activity_id.bytes, sizeof(completion_activity_id.bytes)) !=
+          0) {
+    pp_job_set_release(jobs);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 98;
+  }
+  pp_job_set_release(jobs);
+  jobs = NULL;
+
+  activities = NULL;
+  if (pp_production_activities_producing(
+          production, &completed_representation_id, &activities, &error) != PP_OK ||
+      activities == NULL || pp_activity_set_count(activities) != UINT64_C(1) ||
+      pp_activity_set_get_output_snapshot(
+          activities, UINT64_C(0), UINT64_C(0), &has_output_snapshot,
+          &output_snapshot_revision, &output_snapshot_fingerprint_count,
+          &error) != PP_OK ||
+      has_output_snapshot != UINT8_C(1) || output_snapshot_revision == 0 ||
+      output_snapshot_fingerprint_count == 0) {
+    pp_activity_set_release(activities);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 99;
+  }
+  pp_activity_set_release(activities);
   pp_production_release(production);
   production = NULL;
 
