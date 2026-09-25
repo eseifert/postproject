@@ -54,7 +54,7 @@ pub use artifact::{
     PpArtifactReproducibility, PpArtifactReproducibilityIssue,
 };
 pub use dependency::{PpDependency, PpDependencySet};
-pub use jobs::{PpJob, PpJobSet};
+pub use jobs::{PpJob, PpJobSet, PpRegenerationPlanSet};
 use metadata::AbiMetadataValue;
 pub use metadata::{PpMetadataSet, PpMetadataValue};
 pub use metadata_input::PpMetadataInput;
@@ -148,7 +148,7 @@ const PP_REVISION_JOB_FAILED: u32 = 25;
 const PP_REVISION_JOB_CANCELLED: u32 = 26;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 22;
+pub const ABI_VERSION: u32 = 23;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -2386,6 +2386,141 @@ pub unsafe extern "C" fn pp_job_set_release(jobs: *mut PpJobSet) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         // SAFETY: Ownership is transferred back exactly once by contract.
         drop(unsafe { Box::from_raw(jobs) });
+    }));
+}
+
+/// Plans explicit regeneration requests without persisting or running work.
+///
+/// # Safety
+///
+/// `production` must be live; the artifact array must contain `artifact_count`
+/// readable UUIDs (or be null for zero); `out_plans` must be writable; and
+/// `out_error` may be null or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_production_plan_regeneration(
+    production: *const PpProduction,
+    artifact_representation_ids: *const PpUuid,
+    artifact_count: u64,
+    out_plans: *mut *mut PpRegenerationPlanSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Inputs are checked before use and output ownership is explicit.
+    unsafe {
+        initialize_output(out_plans);
+        ffi_call(out_error, || {
+            let production = production
+                .as_ref()
+                .ok_or_else(|| invalid_argument("production must not be null"))?;
+            require_output(out_plans, "out_plans")?;
+            let artifact_count = usize::try_from(artifact_count)
+                .map_err(|_| invalid_argument("artifact count is too large"))?;
+            let artifacts = if artifact_count == 0 {
+                Vec::new()
+            } else {
+                if artifact_representation_ids.is_null() {
+                    return Err(invalid_argument(
+                        "artifact_representation_ids must not be null when count is nonzero",
+                    ));
+                }
+                // SAFETY: The caller guarantees `artifact_count` readable UUIDs.
+                std::slice::from_raw_parts(artifact_representation_ids, artifact_count)
+                    .iter()
+                    .map(|id| RepresentationId::from_bytes(id.bytes))
+                    .collect()
+            };
+            let inner = lock_production(&production.state);
+            let plans = inner.plan_regeneration(&artifacts)?;
+            out_plans.write(Box::into_raw(Box::new(PpRegenerationPlanSet::new(plans))));
+            Ok(())
+        })
+    }
+}
+
+/// Returns the number of regeneration plans. Null returns zero.
+///
+/// # Safety
+///
+/// `plans` must be null or a live result-set handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_regeneration_plan_set_count(
+    plans: *const PpRegenerationPlanSet,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: A non-null handle is live by the caller contract.
+        unsafe { plans.as_ref() }.map_or(0, |set| u64::try_from(set.len()).unwrap_or(u64::MAX))
+    }))
+    .unwrap_or(0)
+}
+
+/// Copies one artifact ID and transfers owned one-job and parameter sets.
+///
+/// The returned metadata assertions are targeted at the planned job ID so they
+/// can be copied directly when the caller explicitly enqueues that job.
+///
+/// # Safety
+///
+/// `plans` must be live; every output must be writable; and `out_error` may be
+/// null or writable. Each returned set must be released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_regeneration_plan_set_get(
+    plans: *const PpRegenerationPlanSet,
+    index: u64,
+    out_artifact_representation_id: *mut PpUuid,
+    out_job: *mut *mut PpJobSet,
+    out_parameters: *mut *mut PpMetadataSet,
+    out_error: *mut *mut PpError,
+) -> u32 {
+    // SAFETY: Outputs are initialized and checked before writes.
+    unsafe {
+        initialize_uuid(out_artifact_representation_id);
+        initialize_output(out_job);
+        initialize_output(out_parameters);
+        ffi_call(out_error, || {
+            require_output(
+                out_artifact_representation_id,
+                "out_artifact_representation_id",
+            )?;
+            require_output(out_job, "out_job")?;
+            require_output(out_parameters, "out_parameters")?;
+            let plans = plans
+                .as_ref()
+                .ok_or_else(|| invalid_argument("plans must not be null"))?;
+            let index = usize::try_from(index)
+                .map_err(|_| invalid_argument("regeneration plan index is too large"))?;
+            let plan = plans.get(index).ok_or_else(|| {
+                Error::new(
+                    ErrorKind::NotFound,
+                    "regeneration plan index is out of range",
+                )
+            })?;
+            let job = Box::new(PpJobSet::new(std::slice::from_ref(plan.job()))?);
+            let parameters = Box::new(PpMetadataSet::from_assertions(
+                ObjectRef::Job(plan.job().id()),
+                plan.parameters(),
+            )?);
+            out_artifact_representation_id.write(PpUuid {
+                bytes: plan.artifact_representation_id().into_bytes(),
+            });
+            out_job.write(Box::into_raw(job));
+            out_parameters.write(Box::into_raw(parameters));
+            Ok(())
+        })
+    }
+}
+
+/// Releases a regeneration-plan result set. Null is a no-op.
+///
+/// # Safety
+///
+/// A non-null handle must be live and released exactly once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pp_regeneration_plan_set_release(plans: *mut PpRegenerationPlanSet) {
+    if plans.is_null() {
+        return;
+    }
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: Ownership is transferred back exactly once by contract.
+        drop(unsafe { Box::from_raw(plans) });
     }));
 }
 

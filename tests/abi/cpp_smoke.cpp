@@ -18,7 +18,7 @@ int main(int argc, char **argv) {
   std::remove(path.c_str());
 
   try {
-    if (postproject::abi_version() != 22) {
+    if (postproject::abi_version() != 23) {
       return 3;
     }
 

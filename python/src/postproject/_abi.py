@@ -57,6 +57,10 @@ class JobSet(ctypes.Structure):
     pass
 
 
+class RegenerationPlanSet(ctypes.Structure):
+    pass
+
+
 class DependencySet(ctypes.Structure):
     pass
 
@@ -516,12 +520,16 @@ EXPORTED_SYMBOLS = (
     "pp_production_media_roots",
     "pp_production_metadata",
     "pp_production_open",
+    "pp_production_plan_regeneration",
     "pp_production_provenance_ancestors",
     "pp_production_provenance_descendants",
     "pp_production_release",
     "pp_production_representations",
     "pp_production_resolve_asset",
     "pp_production_revision_events",
+    "pp_regeneration_plan_set_count",
+    "pp_regeneration_plan_set_get",
+    "pp_regeneration_plan_set_release",
     "pp_representation_set_count",
     "pp_representation_set_get",
     "pp_representation_set_get_fingerprint",
@@ -786,6 +794,14 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_job_set_get_input.restype = ErrorCode
     lib.pp_job_set_release.argtypes = [ctypes.POINTER(JobSet)]
     lib.pp_job_set_release.restype = None
+    lib.pp_production_plan_regeneration.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.c_uint64, ctypes.POINTER(ctypes.POINTER(RegenerationPlanSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_plan_regeneration.restype = ErrorCode
+    lib.pp_regeneration_plan_set_count.argtypes = [ctypes.POINTER(RegenerationPlanSet)]
+    lib.pp_regeneration_plan_set_count.restype = ctypes.c_uint64
+    lib.pp_regeneration_plan_set_get.argtypes = [ctypes.POINTER(RegenerationPlanSet), ctypes.c_uint64, ctypes.POINTER(Uuid), ctypes.POINTER(ctypes.POINTER(JobSet)), ctypes.POINTER(ctypes.POINTER(MetadataSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_regeneration_plan_set_get.restype = ErrorCode
+    lib.pp_regeneration_plan_set_release.argtypes = [ctypes.POINTER(RegenerationPlanSet)]
+    lib.pp_regeneration_plan_set_release.restype = None
     lib.pp_production_latest_revision.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ctypes.POINTER(RevisionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_production_latest_revision.restype = ErrorCode
     lib.pp_production_changes_since.argtypes = [ctypes.POINTER(Production), ctypes.c_uint64, ctypes.c_uint32, ctypes.POINTER(ctypes.POINTER(RevisionSet)), ctypes.POINTER(ctypes.POINTER(Error))]

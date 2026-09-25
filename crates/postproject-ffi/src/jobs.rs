@@ -2,7 +2,7 @@
 
 use std::ffi::{CString, c_char};
 
-use postproject_core::{Error, Job, JobState, RepresentationKind};
+use postproject_core::{Error, Job, JobState, RegenerationJobPlan, RepresentationKind};
 
 use crate::{PpUuid, exact_cstring};
 
@@ -15,6 +15,11 @@ const PP_JOB_CANCELLED: u32 = 5;
 /// Opaque immutable job result set owned by the C caller.
 pub struct PpJobSet {
     jobs: Vec<AbiJob>,
+}
+
+/// Opaque immutable regeneration-plan result set owned by the C caller.
+pub struct PpRegenerationPlanSet {
+    plans: Vec<RegenerationJobPlan>,
 }
 
 /// Borrowed fixed-layout view of one durable job.
@@ -122,6 +127,20 @@ impl PpJobSet {
 
     pub(crate) fn input(&self, job_index: usize, input_index: usize) -> Option<PpUuid> {
         self.jobs.get(job_index)?.inputs.get(input_index).copied()
+    }
+}
+
+impl PpRegenerationPlanSet {
+    pub(crate) const fn new(plans: Vec<RegenerationJobPlan>) -> Self {
+        Self { plans }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.plans.len()
+    }
+
+    pub(crate) fn get(&self, index: usize) -> Option<&RegenerationJobPlan> {
+        self.plans.get(index)
     }
 }
 

@@ -32,6 +32,7 @@ typedef struct pp_metadata_value pp_metadata_value_t;
 typedef struct pp_metadata_input pp_metadata_input_t;
 typedef struct pp_activity_set pp_activity_set_t;
 typedef struct pp_job_set pp_job_set_t;
+typedef struct pp_regeneration_plan_set pp_regeneration_plan_set_t;
 typedef struct pp_dependency_set pp_dependency_set_t;
 typedef struct pp_artifact_evaluation pp_artifact_evaluation_t;
 typedef struct pp_artifact_reproducibility pp_artifact_reproducibility_t;
@@ -718,6 +719,20 @@ PP_API pp_error_code_t pp_job_set_get_input(
     const pp_job_set_t *jobs, uint64_t job_index, uint64_t input_index,
     pp_uuid_t *out_representation_id, pp_error_t **out_error);
 PP_API void pp_job_set_release(pp_job_set_t *jobs);
+/* Planning is read-only. Each get transfers a one-job set and its job-targeted
+ * parameter metadata set; release both with their normal release functions. */
+PP_API pp_error_code_t pp_production_plan_regeneration(
+    const pp_production_t *production,
+    const pp_uuid_t *artifact_representation_ids, uint64_t artifact_count,
+    pp_regeneration_plan_set_t **out_plans, pp_error_t **out_error);
+PP_API uint64_t pp_regeneration_plan_set_count(
+    const pp_regeneration_plan_set_t *plans);
+PP_API pp_error_code_t pp_regeneration_plan_set_get(
+    const pp_regeneration_plan_set_t *plans, uint64_t index,
+    pp_uuid_t *out_artifact_representation_id, pp_job_set_t **out_job,
+    pp_metadata_set_t **out_parameters, pp_error_t **out_error);
+PP_API void pp_regeneration_plan_set_release(
+    pp_regeneration_plan_set_t *plans);
 /* Revision strings are borrowed until pp_revision_set_release(). Latest
  * returns a set containing zero or one revision. */
 PP_API pp_error_code_t pp_production_latest_revision(

@@ -36,6 +36,8 @@ Development version: `0.4.0-alpha.1`.
 
 ### Changed
 
+- Bumped the pre-release C ABI to version 23 with read-only regeneration plans
+  containing the artifact, proposed job, and copied job parameters.
 - Bumped the pre-release C ABI to version 22 with atomic job completion over a
   representation and activity staged in the same transaction.
 - Bumped the pre-release C ABI to version 21 with transaction-staged job claim,

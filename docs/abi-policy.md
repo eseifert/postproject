@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 22 is pre-release and may change during the 0.x series, with every
+ABI version 23 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
@@ -143,6 +143,11 @@ ABI version 22 adds atomic job completion by binding a representation and
 activity already staged in the same transaction. This reuses every public
 representation shape while ensuring the output, its resources, provenance
 snapshots, and terminal job state commit or roll back together.
+
+ABI version 23 adds read-only regeneration planning. Each plan returns the
+existing artifact identity, a one-job owned set, and an owned metadata set
+retargeted to that planned job so callers can inspect or explicitly enqueue the
+complete request without an implicit write.
 
 ## External identifiers
 
