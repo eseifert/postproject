@@ -24,6 +24,7 @@ src/integrators/media-resolution
 src/integrators/compound-media
 src/integrators/metadata-vocabularies
 src/integrators/provenance
+src/integrators/jobs-and-workers
 src/integrators/revision-feed
 src/integrators/host-object-bindings
 src/contributors/README
@@ -44,6 +45,7 @@ src/concepts/metadata
 src/concepts/provenance
 src/concepts/dependencies
 src/concepts/artifact-knowledge
+src/concepts/jobs
 src/concepts/rational-time
 src/concepts/revisions-and-events
 src/concepts/standards-boundaries
@@ -102,4 +104,8 @@ adr/0017-portable-root-identity
 adr/0018-discovery-index-location
 adr/0019-media-inspection-boundary
 adr/0020-integration-preview-compatibility
+adr/0021-fingerprint-observations-and-activity-snapshots
+adr/0022-managed-artifact-state-and-staleness
+adr/0023-job-model-and-execution-boundary
+adr/0024-dependency-relationships
 ```

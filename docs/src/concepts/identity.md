@@ -2,8 +2,9 @@
 
 PostProject object IDs answer “which object in this production model is this?” A
 production, logical asset, concrete representation, storage resource, locator,
-activity, and revision each have a distinct ID type. Matching UUID bytes do not
-make two different object types interchangeable.
+activity, job, and revision each have a distinct ID type. Matching UUID bytes
+do not make two different object types interchangeable. A job claim ID is a
+short-lived capability for one active claim, not another durable object.
 
 An industry, registry, camera, vendor, or application identifier answers a
 different question. A UMID, EIDR, ISAN, camera serial, or application ID is

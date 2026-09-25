@@ -47,10 +47,23 @@ consumer to re-query current state.
 | `ActivityCreated` | A production activity was recorded. |
 | `ActivityInputAdded` | A consumed-representation edge was recorded. |
 | `ActivityOutputAdded` | A produced-representation edge was recorded. |
+| `ResourceFingerprintObserved` | A resource fingerprint domain received a new current observation. |
+| `RepresentationFingerprintObserved` | A representation fingerprint domain received a new current observation. |
+| `DependencySetRecorded` | A representation's complete dependency observation was replaced. |
+| `JobRequested` | A durable work request was created. |
+| `JobClaimed` | A worker claimed requested or expired work. |
+| `JobClaimRenewed` | The current worker extended its lease. |
+| `JobClaimReleased` | The current worker returned work to requested state. |
+| `JobSucceeded` | Output and provenance committed atomically with completion. |
+| `JobFailed` | Work failed with no output representation or activity. |
+| `JobCancelled` | Requested or claimed work was cancelled. |
 
 The catalog is semantic, not a stream of SQL row operations or serialized Rust
 objects. Multiple events in one revision preserve their stable transaction
 order.
+
+Job events carry only the job ID. Consumers reload the job for current state;
+the claim token is never published in the journal.
 
 ## Pull model
 

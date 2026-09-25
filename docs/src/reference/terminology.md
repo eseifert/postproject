@@ -11,4 +11,8 @@
 | External identifier | A scheme-qualified industry, registry, vendor, or application value. |
 | Activity | An operation that consumes inputs and produces outputs. |
 | Provenance | Production knowledge about how media or results were produced. |
+| Dependency | A live authored reference needed when a representation is used. |
+| Managed artifact | A representation produced by exactly one recorded activity. |
+| Job | Durable knowledge of requested, claimed, completed, failed, or cancelled work. |
+| Claim token | A production-scoped capability required to change one active job claim. |
 | Revision | One durable, successful local mutation transaction and its semantic events. |

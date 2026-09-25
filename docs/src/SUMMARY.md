@@ -11,6 +11,7 @@
 - [Production provenance](concepts/provenance.md)
 - [Dependency relationships](concepts/dependencies.md)
 - [Artifact knowledge and reproducibility](concepts/artifact-knowledge.md)
+- [Jobs and production work](concepts/jobs.md)
 - [Revisions and semantic events](concepts/revisions-and-events.md)
 - [Rational time and ranges](concepts/rational-time.md)
 - [Standards boundaries](concepts/standards-boundaries.md)
@@ -36,6 +37,7 @@
 - [Compound-media integration](integrators/compound-media.md)
 - [Metadata vocabularies](integrators/metadata-vocabularies.md)
 - [Provenance integration](integrators/provenance.md)
+- [Jobs and workers](integrators/jobs-and-workers.md)
 - [Revision feed](integrators/revision-feed.md)
 
 # For contributors
