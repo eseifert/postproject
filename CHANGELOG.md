@@ -30,6 +30,16 @@ Development version: `0.4.0-alpha.1`.
   provenance, stale-artifact, and changed-object pages. Producing and consuming
   activity selection now occurs in SQL, and representation pages use
   set-oriented structure and fingerprint loading.
+- Added the bounded domain queries to C ABI version 25, the C++17 wrapper,
+  Python, and the CLI: asset, representation, resource, and locator pages;
+  representations under a logical media root; knowledge-only unresolved media;
+  metadata-property pages with an optional exact scalar value; activities
+  producing or consuming a representation; outputs by activity kind or exact
+  tool identity; depth-bounded provenance ancestors and descendants; stale
+  artifacts, optionally restricted to descendants of one source; and objects
+  changed after a revision sequence. Locators can record the logical root they
+  were confirmed under. The whole-set asset and representation enumerations of
+  the 0.3.x integration subset remain available unchanged.
 - Added SQLite schema 12 query-support tables for unresolved memberships,
   representations under a logical root, and activity-output kind and tool keys.
   Triggers maintain them on every write path, and migration backfills them from
@@ -68,6 +78,14 @@ Development version: `0.4.0-alpha.1`.
   scalar metadata predicates, activity-output filters, explicit provenance
   bounds, stale-artifact and changed-object queries, and root-aware locator
   confirmation.
+- Paginated the experimental CLI commands `activity producing`, `activity
+  consuming`, `activity ancestors`, `activity descendants`, and `metadata find`.
+  Their JSON output is now a page object with `items`, `next_cursor`, and
+  `traversal_truncated` instead of a bare array; they accept `--limit` and
+  `--cursor`, ancestors and descendants accept `--max-depth` and
+  `--max-representations` and report each match's depth, and `metadata find`
+  accepts `--value-file` for an exact scalar value. `media list` keeps its
+  complete-list output unless `--limit` or `--cursor` is given.
 - Bumped the pre-release C ABI to version 24. Complete dependent and job lists
   are replaced by bounded pages, and forward dependency traversal is public.
 - Bumped the pre-release C ABI to version 23 with read-only regeneration plans

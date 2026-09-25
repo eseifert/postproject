@@ -198,7 +198,7 @@ fn exercise_job_completion(
         .find(|job| job["id"] == completed_job_id)
         .expect("completed job in third process");
     assert_eq!(observed, &completed);
-    let producing = run_json(&["activity", "producing", production, output_id]);
+    let producing = run_json(&["activity", "producing", production, output_id])["items"].clone();
     assert_eq!(producing.as_array().expect("activity array").len(), 1);
     assert_eq!(producing[0]["id"], completed["completion_activity_id"]);
     assert!(producing[0]["inputs"][0]["snapshot"].is_object());
@@ -409,7 +409,11 @@ fn exercise_metadata(production_path: &str, asset_id: &str) {
     }
 
     let found = run_json(&["metadata", "find", production_path, vocabulary, "title"]);
-    assert_eq!(found.as_array().expect("metadata matches").len(), 2);
+    assert_eq!(
+        found["items"].as_array().expect("metadata matches").len(),
+        2
+    );
+    assert!(found["next_cursor"].is_null());
 
     inject_structured_metadata(production_path, asset_id);
     let listed = run_json(&["metadata", "list", production_path, "asset", asset_id]);
@@ -568,9 +572,9 @@ fn exercise_provenance(
         production,
         output_representation_id,
     ]);
-    assert_eq!(producing[0]["id"], activity_id);
+    assert_eq!(producing["items"][0]["id"], activity_id);
     let consuming = run_json(&["activity", "consuming", production, input_representation_id]);
-    assert_eq!(consuming[0]["id"], activity_id);
+    assert_eq!(consuming["items"][0]["id"], activity_id);
 
     let ancestors = run_json(&[
         "activity",
@@ -578,7 +582,12 @@ fn exercise_provenance(
         production,
         output_representation_id,
     ]);
-    assert_eq!(ancestors[0]["representation_id"], input_representation_id);
+    assert_eq!(
+        ancestors["items"][0]["representation_id"],
+        input_representation_id
+    );
+    assert_eq!(ancestors["items"][0]["depth"], 1);
+    assert_eq!(ancestors["traversal_truncated"], false);
     let descendants = run_json(&[
         "activity",
         "descendants",
@@ -586,7 +595,7 @@ fn exercise_provenance(
         input_representation_id,
     ]);
     assert_eq!(
-        descendants[0]["representation_id"],
+        descendants["items"][0]["representation_id"],
         output_representation_id
     );
 

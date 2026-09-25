@@ -91,7 +91,7 @@ postproject activity ancestors production.pproj "$SEQUENCE_ID"
 # [/provenance]
 
 test "$(postproject --json activity ancestors production.pproj "$SEQUENCE_ID" |
-  jq -r '.[0].representation_id')" = "$ORIGINAL_ID"
+  jq -r '.items[0].representation_id')" = "$ORIGINAL_ID"
 
 # [artifact-knowledge]
 postproject --json artifact evaluate production.pproj "$SEQUENCE_ID" \

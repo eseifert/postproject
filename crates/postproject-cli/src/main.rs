@@ -13,22 +13,23 @@ use std::{
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use postproject_core::{
-    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole, AgentIdentity,
-    ArtifactDependencyIssue, ArtifactDependencyPathSegment, ArtifactEdgeKind,
-    ArtifactEvaluationLimits, ArtifactKnowledgeReason, ArtifactKnowledgeState,
+    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityOutputQuery,
+    ActivityRole, AgentIdentity, ArtifactDependencyIssue, ArtifactDependencyPathSegment,
+    ArtifactEdgeKind, ArtifactEvaluationLimits, ArtifactKnowledgeReason, ArtifactKnowledgeState,
     ArtifactReproducibilityIssue, ArtifactTraversalLimitKind, Asset, AssetId, AvailabilityIssue,
     AvailabilityIssueKind, DecimalValue, Dependency, DependencyKind, DependencyQueryLimits,
     DependencySet, DependencySetStatus, DependencyTarget, EvidenceKind, ExternalIdentifier,
     FrameRange, IdentifierScheme, ImageSequencePattern, Job, JobClaimId, JobFailure, JobId,
     JobKind, JobQuery, JobState, JobStateKind, Locator, LocatorAvailability, LocatorId,
     MAX_JOB_DIAGNOSTIC_BYTES, MediaRoot, MediaRootId, MetadataAssertion, MetadataField,
-    MetadataProperty, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity,
-    OriginalMediaImport, ProductionId, ProductionStoreTransaction, PropertyId, QueryCursor,
-    QueryPageRequest, RationalRate, RationalValue, Representation, RepresentationAvailability,
-    RepresentationId, RepresentationKind, RepresentationResolution, RequestedJobOutput,
-    ResolutionEvidence, Resource, ResourceId, ResourceResolution, ResourceResolutionState,
-    ResourceRole, Revision, RevisionContext, RevisionEvent, RevisionEventKind, RevisionId,
-    Timestamp, ToolIdentity, VocabularyId,
+    MetadataProperty, MetadataQuery, MetadataValue, MetadataValueKind, ObjectRef, OriginIdentity,
+    OriginalMediaImport, ProductionId, ProductionStoreTransaction, PropertyId,
+    ProvenanceQueryLimits, QueryCursor, QueryPage, QueryPageRequest, RationalRate, RationalValue,
+    Representation, RepresentationAvailability, RepresentationId, RepresentationKind,
+    RepresentationResolution, RequestedJobOutput, ResolutionEvidence, Resource, ResourceId,
+    ResourceResolution, ResourceResolutionState, ResourceRole, Revision, RevisionContext,
+    RevisionEvent, RevisionEventKind, RevisionId, StaleArtifactQuery, Timestamp, ToolIdentity,
+    VocabularyId,
 };
 use postproject_media::{
     EXECUTOR_PARAMETER_VOCABULARY, EXECUTOR_PROFILE_PROPERTY, ExecutionOutcome, ExecutionRequest,
@@ -102,8 +103,8 @@ struct MediaArgs {
 enum MediaCommand {
     /// Import an original media file.
     Add(MediaAddArgs),
-    /// List logical media assets.
-    List(ProductionArgs),
+    /// List logical media assets; `--limit` or `--cursor` returns one page.
+    List(MediaListArgs),
     /// Show an asset, its representations, resources, and locators.
     Show(MediaAssetArgs),
     /// Resolve an asset under configured media roots.
@@ -112,6 +113,43 @@ enum MediaCommand {
     Inventory(MediaInventoryArgs),
     /// Record a freshly computed resource and representation fingerprint.
     Fingerprint(MediaFingerprintArgs),
+    /// Query representations with a required resource that has no durable locator.
+    ///
+    /// Knowledge-only: no filesystem path is checked. Use `media resolve` or
+    /// `media inventory` for current filesystem state.
+    Unresolved(ProductionQueryArgs),
+    /// Query representations with a locator recorded under a logical media root.
+    ///
+    /// Knowledge-only: only locators confirmed with root knowledge match.
+    UnderRoot(MediaUnderRootArgs),
+}
+
+#[derive(Debug, Args)]
+struct MediaListArgs {
+    production: PathBuf,
+    /// Maximum assets returned in one page; opts into paginated output.
+    #[arg(long)]
+    limit: Option<u32>,
+    /// Opaque continuation returned by the preceding page; opts into
+    /// paginated output.
+    #[arg(long)]
+    cursor: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct ProductionQueryArgs {
+    production: PathBuf,
+    #[command(flatten)]
+    page: QueryPageArgs,
+}
+
+#[derive(Debug, Args)]
+struct MediaUnderRootArgs {
+    production: PathBuf,
+    /// Logical media root name.
+    root: String,
+    #[command(flatten)]
+    page: QueryPageArgs,
 }
 
 #[derive(Debug, Args)]
@@ -195,6 +233,26 @@ struct RepresentationArgs {
 enum RepresentationCommand {
     /// Add a representation described by a JSON specification.
     Add(RepresentationAddArgs),
+    /// Query one page of an asset's representations in identity order.
+    List(RepresentationListArgs),
+    /// Query one page of a representation's resources in structural order.
+    Resources(RepresentationResourcesArgs),
+}
+
+#[derive(Debug, Args)]
+struct RepresentationListArgs {
+    production: PathBuf,
+    asset_id: String,
+    #[command(flatten)]
+    page: QueryPageArgs,
+}
+
+#[derive(Debug, Args)]
+struct RepresentationResourcesArgs {
+    production: PathBuf,
+    representation_id: String,
+    #[command(flatten)]
+    page: QueryPageArgs,
 }
 
 #[derive(Debug, Args)]
@@ -326,6 +384,16 @@ struct LocatorArgs {
 enum LocatorCommand {
     /// Retire a locator that no longer identifies a useful access route.
     Retire(LocatorRetireArgs),
+    /// Query one page of a resource's known locators in identity order.
+    List(LocatorListArgs),
+}
+
+#[derive(Debug, Args)]
+struct LocatorListArgs {
+    production: PathBuf,
+    resource_id: String,
+    #[command(flatten)]
+    page: QueryPageArgs,
 }
 
 #[derive(Debug, Args)]
@@ -400,7 +468,7 @@ enum MetadataCommand {
     List(MetadataTargetArgs),
     /// Remove every value of one property from an object.
     Remove(MetadataPropertyArgs),
-    /// Find assertions using an exact vocabulary and property.
+    /// Query objects carrying an exact vocabulary and property.
     Find(MetadataFindArgs),
 }
 
@@ -457,6 +525,11 @@ struct MetadataFindArgs {
     production: PathBuf,
     vocabulary: String,
     property: String,
+    /// JSON file containing one tagged scalar value that must match exactly.
+    #[arg(long, value_name = "PATH")]
+    value_file: Option<PathBuf>,
+    #[command(flatten)]
+    page: QueryPageArgs,
 }
 
 #[derive(Debug, Args)]
@@ -471,14 +544,62 @@ enum ActivityCommand {
     Add(Box<ActivityAddArgs>),
     /// List production activities with their inputs and outputs.
     List(ProductionArgs),
-    /// List activities that produced a representation.
-    Producing(ActivityRepresentationArgs),
-    /// List activities that consume a representation.
-    Consuming(ActivityRepresentationArgs),
-    /// List every transitive provenance ancestor of a representation.
-    Ancestors(ActivityRepresentationArgs),
-    /// List every transitive provenance descendant of a representation.
-    Descendants(ActivityRepresentationArgs),
+    /// Query activities that produced a representation.
+    Producing(ActivityRepresentationQueryArgs),
+    /// Query activities that consume a representation.
+    Consuming(ActivityRepresentationQueryArgs),
+    /// Query bounded provenance ancestors with their shortest depth.
+    Ancestors(ProvenanceQueryArgs),
+    /// Query bounded provenance descendants with their shortest depth.
+    Descendants(ProvenanceQueryArgs),
+    /// Query representations produced by an activity kind or exact tool.
+    Outputs(ActivityOutputsArgs),
+}
+
+#[derive(Debug, Args)]
+struct ActivityRepresentationQueryArgs {
+    production: PathBuf,
+    representation_id: String,
+    #[command(flatten)]
+    page: QueryPageArgs,
+}
+
+#[derive(Debug, Args)]
+struct ProvenanceQueryArgs {
+    production: PathBuf,
+    representation_id: String,
+    /// Maximum number of activity steps to traverse.
+    #[arg(long, default_value_t = 64)]
+    max_depth: u32,
+    /// Maximum distinct representations to traverse.
+    #[arg(long, default_value_t = 1_000)]
+    max_representations: u32,
+    #[command(flatten)]
+    page: QueryPageArgs,
+}
+
+#[derive(Debug, Args)]
+#[command(group(
+    clap::ArgGroup::new("selector")
+        .required(true)
+        .args(["kind", "tool_name"])
+))]
+struct ActivityOutputsArgs {
+    production: PathBuf,
+    /// Exact namespaced activity kind.
+    #[arg(long)]
+    kind: Option<String>,
+    /// Exact tool name; the complete tool identity must match.
+    #[arg(long)]
+    tool_name: Option<String>,
+    /// Exact tool version; absent matches only tools without a version.
+    #[arg(long, requires = "tool_name")]
+    tool_version: Option<String>,
+    /// Exact tool URI; absent matches only tools without a URI.
+    #[arg(long, requires = "tool_name")]
+    tool_uri: Option<String>,
+    #[command(flatten)]
+    page: QueryPageArgs,
 }
 
 #[derive(Debug, Args)]
@@ -542,10 +663,13 @@ enum DependencyCommand {
     Dependents(DependencyTargetArgs),
 }
 
+/// Page size used when a query command is not given `--limit`.
+const DEFAULT_QUERY_PAGE_SIZE: u32 = 100;
+
 #[derive(Debug, Args)]
 struct QueryPageArgs {
     /// Maximum items returned in this page.
-    #[arg(long, default_value_t = 100)]
+    #[arg(long, default_value_t = DEFAULT_QUERY_PAGE_SIZE)]
     limit: u32,
     /// Opaque continuation returned by the preceding page.
     #[arg(long)]
@@ -626,6 +750,24 @@ enum ArtifactCommand {
     Evaluate(ArtifactEvaluateArgs),
     /// Report whether stored knowledge can reproduce an artifact.
     Reproducibility(ActivityRepresentationArgs),
+    /// Query activity-produced representations currently evaluated as stale.
+    Stale(ArtifactStaleArgs),
+}
+
+#[derive(Debug, Args)]
+struct ArtifactStaleArgs {
+    production: PathBuf,
+    /// Restrict candidates to provenance descendants of this representation.
+    #[arg(long, value_name = "REPRESENTATION_ID")]
+    source: Option<String>,
+    /// Maximum number of upstream activity edges followed per artifact.
+    #[arg(long, default_value_t = 64)]
+    max_depth: u32,
+    /// Maximum number of distinct representations inspected per artifact.
+    #[arg(long, default_value_t = 1_000)]
+    max_representations: u32,
+    #[command(flatten)]
+    page: QueryPageArgs,
 }
 
 #[derive(Debug, Args)]
@@ -820,6 +962,18 @@ enum RevisionsCommand {
     Since(RevisionsSinceArgs),
     /// List the ordered semantic events belonging to one revision.
     Events(RevisionEventsArgs),
+    /// Query distinct objects touched after a revision sequence.
+    Changed(RevisionsChangedArgs),
+}
+
+#[derive(Debug, Args)]
+struct RevisionsChangedArgs {
+    production: PathBuf,
+    /// Include objects touched by revisions with a sequence greater than this.
+    #[arg(long, default_value_t = 0)]
+    after: u64,
+    #[command(flatten)]
+    page: QueryPageArgs,
 }
 
 #[derive(Debug, Args)]
@@ -1204,6 +1358,38 @@ struct QueryPageView<T> {
 }
 
 #[derive(Debug, Serialize)]
+struct ProvenanceMatchView {
+    representation_id: String,
+    depth: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct RepresentationSummaryView {
+    id: String,
+    asset_id: String,
+    kind: &'static str,
+    structure: &'static str,
+    fingerprints: Vec<FingerprintView>,
+}
+
+#[derive(Debug, Serialize)]
+struct ResourceSummaryView {
+    id: String,
+    fingerprints: Vec<FingerprintView>,
+    file_size_bytes: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct LocatorQueryView {
+    id: String,
+    resource_id: String,
+    uri: String,
+    availability: &'static str,
+    last_seen_unix_micros: Option<i64>,
+    media_root: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
 struct DependencyMatchView {
     target: ObjectRefView,
     depth: u32,
@@ -1523,9 +1709,13 @@ fn execute(cli: Cli) -> Result<()> {
             MediaCommand::Resolve(args) => media_resolve(args, cli.json),
             MediaCommand::Inventory(args) => media_inventory(&args, cli.json),
             MediaCommand::Fingerprint(args) => media_fingerprint(&args, cli.json),
+            MediaCommand::Unresolved(args) => media_unresolved(&args, cli.json),
+            MediaCommand::UnderRoot(args) => media_under_root(&args, cli.json),
         },
         Command::Representation(args) => match args.command {
             RepresentationCommand::Add(args) => representation_add(&args, cli.json),
+            RepresentationCommand::List(args) => representation_list(&args, cli.json),
+            RepresentationCommand::Resources(args) => representation_resources(&args, cli.json),
         },
         Command::Root(args) => match args.command {
             RootCommand::Add(args) => root_add(args, cli.json),
@@ -1536,6 +1726,7 @@ fn execute(cli: Cli) -> Result<()> {
         },
         Command::Locator(args) => match args.command {
             LocatorCommand::Retire(args) => locator_retire(&args, cli.json),
+            LocatorCommand::List(args) => locator_list(&args, cli.json),
         },
         Command::Identifier(args) => match args.command {
             IdentifierCommand::Add(args) => identifier_mutate(args, false, cli.json),
@@ -1565,6 +1756,7 @@ fn execute(cli: Cli) -> Result<()> {
             ActivityCommand::Descendants(args) => {
                 activity_relatives(&args, ProvenanceDirection::Descendants, cli.json)
             }
+            ActivityCommand::Outputs(args) => activity_outputs(args, cli.json),
         },
         Command::Dependency(args) => match args.command {
             DependencyCommand::Record(args) => dependency_record(&args, cli.json),
@@ -1575,6 +1767,7 @@ fn execute(cli: Cli) -> Result<()> {
         Command::Artifact(args) => match args.command {
             ArtifactCommand::Evaluate(args) => artifact_evaluate(&args, cli.json),
             ArtifactCommand::Reproducibility(args) => artifact_reproducibility(&args, cli.json),
+            ArtifactCommand::Stale(args) => artifact_stale(&args, cli.json),
         },
         Command::Job(args) => match args.command {
             JobCommand::Request(args) => job_request(args, cli.json),
@@ -1592,6 +1785,7 @@ fn execute(cli: Cli) -> Result<()> {
             RevisionsCommand::Latest(args) => revisions_latest(&args, cli.json),
             RevisionsCommand::Since(args) => revisions_since(&args, cli.json),
             RevisionsCommand::Events(args) => revisions_events(&args, cli.json),
+            RevisionsCommand::Changed(args) => revisions_changed(&args, cli.json),
         },
     }
 }
@@ -1894,34 +2088,177 @@ fn file_resource_sources(members: Vec<FileResourceSpec>) -> Result<Vec<FileResou
         .collect()
 }
 
-fn media_list(args: &ProductionArgs, json: bool) -> Result<()> {
+fn media_list(args: &MediaListArgs, json: bool) -> Result<()> {
     let production = SqliteProduction::open(&args.production).context("open production")?;
-    let mut views = Vec::new();
-    for asset in production.assets().context("load assets")? {
-        let representation_count = production
-            .representations(asset.id())
-            .context("load asset representations")?
-            .len();
-        views.push(AssetSummary {
-            id: asset.id().to_string(),
-            display_name: asset.display_name().map(str::to_owned),
-            created_at_unix_micros: asset.created_at().as_unix_micros(),
-            representation_count,
-        });
+    if args.limit.is_some() || args.cursor.is_some() {
+        let page_args = QueryPageArgs {
+            limit: args.limit.unwrap_or(DEFAULT_QUERY_PAGE_SIZE),
+            cursor: args.cursor.clone(),
+        };
+        let page = production
+            .assets_page(&query_page_request(&page_args)?)
+            .context("query assets")?;
+        let view = query_page_view(&page, |asset| asset_summary(&production, asset))?;
+        return print_query_page(&view, json, false, print_asset_summary);
     }
+    let views = production
+        .assets()
+        .context("load assets")?
+        .iter()
+        .map(|asset| asset_summary(&production, asset))
+        .collect::<Result<Vec<_>>>()?;
 
     if json {
         print_json(&views)
     } else {
         for asset in &views {
-            println!(
-                "{}\t{}\t{} representation(s)",
-                asset.id,
-                asset.display_name.as_deref().unwrap_or("-"),
-                asset.representation_count
-            );
+            print_asset_summary(asset);
         }
         Ok(())
+    }
+}
+
+fn asset_summary(production: &SqliteProduction, asset: &Asset) -> Result<AssetSummary> {
+    let representation_count = production
+        .representations(asset.id())
+        .context("load asset representations")?
+        .len();
+    Ok(AssetSummary {
+        id: asset.id().to_string(),
+        display_name: asset.display_name().map(str::to_owned),
+        created_at_unix_micros: asset.created_at().as_unix_micros(),
+        representation_count,
+    })
+}
+
+fn print_asset_summary(asset: &AssetSummary) {
+    println!(
+        "{}\t{}\t{} representation(s)",
+        asset.id,
+        asset.display_name.as_deref().unwrap_or("-"),
+        asset.representation_count
+    );
+}
+
+fn media_unresolved(args: &ProductionQueryArgs, json: bool) -> Result<()> {
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let page = production
+        .unresolved_media(&query_page_request(&args.page)?)
+        .context("query unresolved media")?;
+    let view = query_page_view(&page, |id| Ok(representation_ref_view(*id)))?;
+    print_query_page(&view, json, false, |item| {
+        println!("{}", item.representation_id);
+    })
+}
+
+fn media_under_root(args: &MediaUnderRootArgs, json: bool) -> Result<()> {
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let page = production
+        .representations_under_media_root(&args.root, &query_page_request(&args.page)?)
+        .context("query representations under media root")?;
+    let view = query_page_view(&page, |representation| {
+        Ok(representation_summary_view(representation))
+    })?;
+    print_query_page(&view, json, false, print_representation_summary)
+}
+
+fn representation_list(args: &RepresentationListArgs, json: bool) -> Result<()> {
+    let asset_id = parse_asset_id(&args.asset_id)?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let page = production
+        .representations_page(asset_id, &query_page_request(&args.page)?)
+        .context("query asset representations")?;
+    let view = query_page_view(&page, |representation| {
+        Ok(representation_summary_view(representation))
+    })?;
+    print_query_page(&view, json, false, print_representation_summary)
+}
+
+fn representation_resources(args: &RepresentationResourcesArgs, json: bool) -> Result<()> {
+    let representation_id = parse_representation_id(&args.representation_id)?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let page = production
+        .resources_page(representation_id, &query_page_request(&args.page)?)
+        .context("query representation resources")?;
+    let view = query_page_view(&page, |resource| Ok(resource_summary_view(resource)))?;
+    print_query_page(&view, json, false, |item| {
+        println!(
+            "{}\t{}\t{} fingerprint(s)",
+            item.id,
+            item.file_size_bytes
+                .map_or_else(|| "-".to_owned(), |size| size.to_string()),
+            item.fingerprints.len()
+        );
+    })
+}
+
+fn locator_list(args: &LocatorListArgs, json: bool) -> Result<()> {
+    let resource_id = ResourceId::from_str(&args.resource_id).context("parse resource ID")?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let page = production
+        .locators_page(resource_id, &query_page_request(&args.page)?)
+        .context("query resource locators")?;
+    let view = query_page_view(&page, |locator| Ok(locator_query_view(locator)))?;
+    print_query_page(&view, json, false, |item| {
+        println!(
+            "{}\t{}\t{}\t{}",
+            item.id,
+            item.uri,
+            item.availability,
+            item.media_root.as_deref().unwrap_or("-")
+        );
+    })
+}
+
+fn representation_ref_view(id: RepresentationId) -> RepresentationRefView {
+    RepresentationRefView {
+        representation_id: id.to_string(),
+    }
+}
+
+fn representation_summary_view(representation: &Representation) -> RepresentationSummaryView {
+    RepresentationSummaryView {
+        id: representation.id().to_string(),
+        asset_id: representation.asset_id().to_string(),
+        kind: representation_kind(representation.kind()),
+        structure: content_structure_kind(representation.content_structure().kind()),
+        fingerprints: representation
+            .fingerprints()
+            .iter()
+            .map(|fingerprint| FingerprintView {
+                algorithm: fingerprint.algorithm().to_owned(),
+                version: fingerprint.version(),
+                value_hex: hex::encode(fingerprint.value()),
+            })
+            .collect(),
+    }
+}
+
+fn print_representation_summary(item: &RepresentationSummaryView) {
+    println!(
+        "{}\t{}\t{}\t{}",
+        item.id, item.asset_id, item.kind, item.structure
+    );
+}
+
+fn resource_summary_view(resource: &Resource) -> ResourceSummaryView {
+    let view = resource_view(resource, &[]);
+    ResourceSummaryView {
+        id: view.id,
+        fingerprints: view.fingerprints,
+        file_size_bytes: view.file_size_bytes,
+    }
+}
+
+fn locator_query_view(locator: &Locator) -> LocatorQueryView {
+    let view = LocatorView::from(locator);
+    LocatorQueryView {
+        id: view.id,
+        resource_id: locator.resource_id().to_string(),
+        uri: view.uri,
+        availability: view.availability,
+        last_seen_unix_micros: view.last_seen_unix_micros,
+        media_root: locator.media_root().map(str::to_owned),
     }
 }
 
@@ -2239,11 +2576,7 @@ fn metadata_add_text(args: MetadataAddTextArgs, json: bool) -> Result<()> {
 fn metadata_add(args: MetadataAddArgs, json: bool) -> Result<()> {
     let target = parse_metadata_target(args.target.target_kind, &args.target.target_id)?;
     let property = parse_metadata_property(args.vocabulary, args.property)?;
-    let encoded = fs::read_to_string(&args.value_file)
-        .with_context(|| format!("read metadata value {}", args.value_file.display()))?;
-    let input: MetadataValueInput =
-        serde_json::from_str(&encoded).context("parse typed metadata JSON")?;
-    let value = input.into_value()?;
+    let value = read_metadata_value_file(&args.value_file)?;
     let assertion = MetadataAssertion::new(property.clone(), value.clone());
     let view = metadata_assertion_view(target, &assertion)?;
     let mut production =
@@ -2317,15 +2650,35 @@ fn metadata_remove(args: MetadataPropertyArgs, json: bool) -> Result<()> {
 
 fn metadata_find(args: MetadataFindArgs, json: bool) -> Result<()> {
     let property = parse_metadata_property(args.vocabulary, args.property)?;
+    let exact_value = args
+        .value_file
+        .as_deref()
+        .map(read_metadata_value_file)
+        .transpose()?;
+    let query =
+        MetadataQuery::new(property, exact_value).context("validate metadata query predicate")?;
     let production = SqliteProduction::open(&args.production).context("open production")?;
-    let views = production
-        .query_by_metadata_property(&property)
-        .context("query metadata property")?
-        .iter()
-        .map(|matched| metadata_assertion_view(matched.target(), matched.assertion()))
-        .collect::<Result<Vec<_>>>()?;
+    let page = production
+        .metadata_query(&query, &query_page_request(&args.page)?)
+        .context("query metadata property")?;
+    let view = query_page_view(&page, |matched| {
+        metadata_assertion_view(matched.target(), matched.assertion())
+    })?;
+    if json {
+        print_json(&view)
+    } else {
+        print_metadata_assertions(&view.items, false)?;
+        print_page_trailer(&view, false);
+        Ok(())
+    }
+}
 
-    print_metadata_assertions(&views, json)
+fn read_metadata_value_file(path: &Path) -> Result<MetadataValue> {
+    let encoded = fs::read_to_string(path)
+        .with_context(|| format!("read metadata value {}", path.display()))?;
+    let input: MetadataValueInput =
+        serde_json::from_str(&encoded).context("parse typed metadata JSON")?;
+    input.into_value()
 }
 
 fn activity_list(args: &ProductionArgs, json: bool) -> Result<()> {
@@ -2341,20 +2694,24 @@ fn activity_list(args: &ProductionArgs, json: bool) -> Result<()> {
 }
 
 fn activity_lookup(
-    args: &ActivityRepresentationArgs,
+    args: &ActivityRepresentationQueryArgs,
     lookup: ActivityLookup,
     json: bool,
 ) -> Result<()> {
     let representation_id = parse_representation_id(&args.representation_id)?;
     let production = SqliteProduction::open(&args.production).context("open production")?;
-    let activities = match lookup {
-        ActivityLookup::Producing => production.activities_producing(representation_id),
-        ActivityLookup::Consuming => production.activities_consuming(representation_id),
+    let request = query_page_request(&args.page)?;
+    let page = match lookup {
+        ActivityLookup::Producing => {
+            production.activities_producing_page(representation_id, &request)
+        }
+        ActivityLookup::Consuming => {
+            production.activities_consuming_page(representation_id, &request)
+        }
     }
     .context("query representation activities")?;
-    let views: Vec<_> = activities.iter().map(activity_view).collect();
-
-    print_activity_views(&views, json)
+    let view = query_page_view(&page, |activity| Ok(activity_view(activity)))?;
+    print_query_page(&view, json, false, print_activity_summary)
 }
 
 fn print_activity_views(views: &[ActivityView], json: bool) -> Result<()> {
@@ -2362,45 +2719,71 @@ fn print_activity_views(views: &[ActivityView], json: bool) -> Result<()> {
         print_json(&views)
     } else {
         for view in views {
-            println!(
-                "{}\t{}\t{} input(s)\t{} output(s)",
-                view.id,
-                view.kind,
-                view.inputs.len(),
-                view.outputs.len()
-            );
+            print_activity_summary(view);
         }
         Ok(())
     }
 }
 
+fn print_activity_summary(view: &ActivityView) {
+    println!(
+        "{}\t{}\t{} input(s)\t{} output(s)",
+        view.id,
+        view.kind,
+        view.inputs.len(),
+        view.outputs.len()
+    );
+}
+
 fn activity_relatives(
-    args: &ActivityRepresentationArgs,
+    args: &ProvenanceQueryArgs,
     direction: ProvenanceDirection,
     json: bool,
 ) -> Result<()> {
     let representation_id = parse_representation_id(&args.representation_id)?;
+    let limits = ProvenanceQueryLimits::new(args.max_depth, args.max_representations)
+        .context("validate provenance query bounds")?;
+    let request = query_page_request(&args.page)?;
     let production = SqliteProduction::open(&args.production).context("open production")?;
-    let representation_ids = match direction {
-        ProvenanceDirection::Ancestors => production.ancestors(representation_id),
-        ProvenanceDirection::Descendants => production.descendants(representation_id),
+    let page = match direction {
+        ProvenanceDirection::Ancestors => {
+            production.ancestors_page(representation_id, limits, &request)
+        }
+        ProvenanceDirection::Descendants => {
+            production.descendants_page(representation_id, limits, &request)
+        }
     }
     .context("traverse provenance")?;
-    let views: Vec<_> = representation_ids
-        .into_iter()
-        .map(|id| RepresentationRefView {
-            representation_id: id.to_string(),
+    let view = query_page_view(&page, |item| {
+        Ok(ProvenanceMatchView {
+            representation_id: item.representation_id().to_string(),
+            depth: item.depth(),
         })
-        .collect();
+    })?;
+    print_query_page(&view, json, true, |item| {
+        println!("{}\t{}", item.representation_id, item.depth);
+    })
+}
 
-    if json {
-        print_json(&views)
+fn activity_outputs(args: ActivityOutputsArgs, json: bool) -> Result<()> {
+    let query = if let Some(kind) = args.kind {
+        ActivityOutputQuery::Kind(ActivityKind::new(kind).context("validate activity kind")?)
+    } else if let Some(name) = args.tool_name {
+        ActivityOutputQuery::Tool(
+            ToolIdentity::new(name, args.tool_version, args.tool_uri)
+                .context("validate tool identity")?,
+        )
     } else {
-        for view in views {
-            println!("{}", view.representation_id);
-        }
-        Ok(())
-    }
+        bail!("either --kind or --tool-name is required");
+    };
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let page = production
+        .activity_outputs(&query, &query_page_request(&args.page)?)
+        .context("query activity outputs")?;
+    let view = query_page_view(&page, |id| Ok(representation_ref_view(*id)))?;
+    print_query_page(&view, json, false, |item| {
+        println!("{}", item.representation_id);
+    })
 }
 
 fn dependency_show(args: &ActivityRepresentationArgs, json: bool) -> Result<()> {
@@ -2977,6 +3360,45 @@ fn job_list(args: &JobListArgs, json: bool) -> Result<()> {
             println!("next_cursor\t{cursor}");
         }
         Ok(())
+    }
+}
+
+fn query_page_view<T, U>(
+    page: &QueryPage<T>,
+    view: impl FnMut(&T) -> Result<U>,
+) -> Result<QueryPageView<U>> {
+    Ok(QueryPageView {
+        items: page.items().iter().map(view).collect::<Result<Vec<_>>>()?,
+        next_cursor: page.next_cursor().map(|cursor| cursor.as_str().to_owned()),
+        traversal_truncated: page.traversal_truncated(),
+    })
+}
+
+/// Prints one query page; `traversal` adds the explicit truncation line used
+/// by bounded traversal queries.
+fn print_query_page<T: Serialize>(
+    view: &QueryPageView<T>,
+    json: bool,
+    traversal: bool,
+    print_item: impl Fn(&T),
+) -> Result<()> {
+    if json {
+        print_json(view)
+    } else {
+        for item in &view.items {
+            print_item(item);
+        }
+        print_page_trailer(view, traversal);
+        Ok(())
+    }
+}
+
+fn print_page_trailer<T>(view: &QueryPageView<T>, traversal: bool) {
+    if let Some(cursor) = &view.next_cursor {
+        println!("next_cursor\t{cursor}");
+    }
+    if traversal {
+        println!("traversal_truncated\t{}", view.traversal_truncated);
     }
 }
 
@@ -3676,6 +4098,25 @@ fn artifact_evaluate(args: &ArtifactEvaluateArgs, json: bool) -> Result<()> {
     }
 }
 
+fn artifact_stale(args: &ArtifactStaleArgs, json: bool) -> Result<()> {
+    let source = args
+        .source
+        .as_deref()
+        .map(parse_representation_id)
+        .transpose()?;
+    let limits = ArtifactEvaluationLimits::new(args.max_depth, args.max_representations)
+        .context("validate artifact evaluation bounds")?;
+    let request = query_page_request(&args.page)?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let page = production
+        .stale_artifacts(StaleArtifactQuery::new(source, limits), &request)
+        .context("query stale artifacts")?;
+    let view = query_page_view(&page, |id| Ok(representation_ref_view(*id)))?;
+    print_query_page(&view, json, true, |item| {
+        println!("{}", item.representation_id);
+    })
+}
+
 fn artifact_reason_view(reason: &ArtifactKnowledgeReason) -> Result<ArtifactReasonView> {
     match reason {
         ArtifactKnowledgeReason::ProducingActivityMissing { representation_id } => {
@@ -3992,6 +4433,18 @@ fn revisions_since(args: &RevisionsSinceArgs, json: bool) -> Result<()> {
         }
         Ok(())
     }
+}
+
+fn revisions_changed(args: &RevisionsChangedArgs, json: bool) -> Result<()> {
+    let request = query_page_request(&args.page)?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let page = production
+        .objects_changed_since(args.after, &request)
+        .context("query changed objects")?;
+    let view = query_page_view(&page, |target| object_ref_view(*target))?;
+    print_query_page(&view, json, false, |item| {
+        println!("{}\t{}", item.kind, item.id);
+    })
 }
 
 fn revisions_events(args: &RevisionEventsArgs, json: bool) -> Result<()> {
