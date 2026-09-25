@@ -1,4 +1,4 @@
-//! Informational performance baselines for iteration-one workloads.
+//! Informational performance baselines for the 0.1 release workloads.
 
 #![allow(
     missing_docs,
@@ -227,5 +227,5 @@ fn synthetic_import(index: usize) -> OriginalMediaImport {
         .expect("construct benchmark import")
 }
 
-criterion_group!(iteration_one, benchmarks);
-criterion_main!(iteration_one);
+criterion_group!(release_0_1, benchmarks);
+criterion_main!(release_0_1);

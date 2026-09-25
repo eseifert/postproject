@@ -1,4 +1,4 @@
-//! Baseline timings for existing read paths on the iteration-four fixture.
+//! Baseline timings for existing read paths on the 0.4 release fixture.
 
 use std::{env, hint::black_box, path::PathBuf, time::Instant};
 
@@ -15,7 +15,7 @@ const REVISION_COUNT: u64 = 100_000;
 
 fn main() {
     let path = env::var_os("POSTPROJECT_BENCH_FIXTURE").map_or_else(
-        || PathBuf::from("target/bench-fixtures/iteration-four.pproj"),
+        || PathBuf::from("target/bench-fixtures/release-0.4.pproj"),
         PathBuf::from,
     );
     let seed = env::var("POSTPROJECT_BENCH_SEED").unwrap_or_else(|_| "postproject-i4".into());

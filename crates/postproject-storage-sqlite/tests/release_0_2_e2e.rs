@@ -1,4 +1,4 @@
-//! End-to-end coverage for compound representations on one logical asset.
+//! End-to-end 0.2 release coverage for compound representations on one logical asset.
 
 use std::{
     fs,

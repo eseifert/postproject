@@ -12,10 +12,10 @@ const REVISIONS: u64 = 100_000;
 
 fn main() {
     let path = env::var_os("POSTPROJECT_BENCH_FIXTURE").map_or_else(
-        || PathBuf::from("target/bench-fixtures/iteration-four.pproj"),
+        || PathBuf::from("target/bench-fixtures/release-0.4.pproj"),
         PathBuf::from,
     );
-    let seed = env::var("POSTPROJECT_BENCH_SEED").unwrap_or_else(|_| "postproject-i4".into());
+    let seed = env::var("POSTPROJECT_BENCH_SEED").unwrap_or_else(|_| "postproject-0.4".into());
     if path.is_file() {
         validate(&path, &seed);
         println!("reusing {}", path.display());
@@ -24,7 +24,7 @@ fn main() {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create fixture cache directory");
     }
-    SqliteProduction::create(&path, Some(format!("Iteration 4 fixture ({seed})")))
+    SqliteProduction::create(&path, Some(format!("Release 0.4 fixture ({seed})")))
         .expect("create fixture production");
     populate(&path, &seed);
     validate(&path, &seed);

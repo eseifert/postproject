@@ -1,4 +1,4 @@
-//! Complete iteration-one relocation, ambiguity, and persistence scenario.
+//! Complete 0.1 release relocation, ambiguity, and persistence scenario.
 
 use std::{collections::BTreeMap, fs};
 
