@@ -10,10 +10,11 @@ mod dependency_evaluation;
 mod dependency_snapshot;
 mod metadata_codec;
 mod migrations;
+mod query_cursor;
 mod transaction;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs::OpenOptions,
     path::{Path, PathBuf},
     time::Duration,
@@ -23,18 +24,21 @@ use postproject_core::{
     Activity, ActivityEdgeSnapshot, ActivityId, ActivityInput, ActivityKind, ActivityOutput,
     ActivityRole, AgentIdentity, ArtifactEvaluation, ArtifactEvaluationLimits,
     ArtifactReproducibilityReport, Asset, AssetId, ContentStructure, Dependency, DependencyKind,
-    DependencySet, DependencySetStatus, DependencyTarget, Error, ErrorKind, ExternalIdentifier,
-    FileFacts, FingerprintSnapshot, FrameRange, IdentifierScheme, ImageSequenceDescriptor,
-    ImageSequencePattern, Job, JobClaim, JobClaimId, JobCompletion, JobFailure, JobId, JobKind,
-    JobState, Locator, LocatorAvailability, LocatorId, MAX_REGENERATION_PLANS,
-    MAX_REVISION_PAGE_SIZE, MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch,
-    MetadataProperty, MetadataValue, ObjectRef, OriginIdentity, Production, ProductionId,
-    ProductionRead, ProductionStore, PropertyId, RationalRate, RegenerationJobPlan, Representation,
+    DependencyQueryLimits, DependencyQueryMatch, DependencySet, DependencySetStatus,
+    DependencyTarget, Error, ErrorKind, ExternalIdentifier, FileFacts, FingerprintSnapshot,
+    FrameRange, IdentifierScheme, ImageSequenceDescriptor, ImageSequencePattern, Job, JobClaim,
+    JobClaimId, JobCompletion, JobFailure, JobId, JobKind, JobQuery, JobState, Locator,
+    LocatorAvailability, LocatorId, MAX_REGENERATION_PLANS, MAX_REVISION_PAGE_SIZE, MediaRoot,
+    MediaRootId, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
+    OriginIdentity, Production, ProductionId, ProductionRead, ProductionStore, PropertyId,
+    QueryCursor, QueryPage, QueryPageRequest, RationalRate, RegenerationJobPlan, Representation,
     RepresentationFingerprint, RepresentationId, RepresentationKind, RequestedJobOutput, Resource,
     ResourceFingerprint, ResourceId, ResourceMember, ResourceRole, Result, Revision, RevisionEvent,
     RevisionEventKind, RevisionId, Timestamp, ToolIdentity, TransactionId, VocabularyId,
 };
-use rusqlite::{Connection, OpenFlags, OptionalExtension, limits::Limit, params};
+use rusqlite::{
+    Connection, OpenFlags, OptionalExtension, limits::Limit, params, params_from_iter, types::Value,
+};
 
 pub use migrations::CURRENT_SCHEMA_VERSION;
 pub use transaction::SqliteTransaction;
@@ -939,6 +943,78 @@ impl SqliteProduction {
         load_dependency_set(&self.connection, representation_id)
     }
 
+    /// Queries direct or transitive dependency targets with explicit bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the source is absent,
+    /// [`ErrorKind::InvalidArgument`] for a cursor from another query, or a
+    /// storage-domain error when persisted dependencies are malformed.
+    pub fn query_dependencies(
+        &self,
+        source: RepresentationId,
+        limits: DependencyQueryLimits,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<DependencyQueryMatch>> {
+        self.ensure_representation_exists(source)?;
+        let position = query_cursor::dependency_position(page, source, limits)?;
+        let mut visited = BTreeSet::from([source]);
+        let mut pending = VecDeque::from([(source, 0_u32)]);
+        let mut matches = BTreeMap::<(u8, [u8; 16]), (DependencyTarget, u32)>::new();
+        let mut traversal_truncated = false;
+
+        while let Some((representation_id, depth)) = pending.pop_front() {
+            let dependencies = load_dependency_set(&self.connection, representation_id)?
+                .map_or_else(Vec::new, |set| set.dependencies().to_vec());
+            if depth == limits.max_depth() {
+                traversal_truncated |= dependencies.iter().any(|dependency| {
+                    let target = dependency.target();
+                    let introduces_target = target != DependencyTarget::Representation(source)
+                        && !matches.contains_key(&dependency_key(target));
+                    let introduces_traversal = dependency_representation(dependency)
+                        .is_some_and(|next| !visited.contains(&next));
+                    introduces_target || introduces_traversal
+                });
+                continue;
+            }
+            let match_depth = depth + 1;
+            for dependency in dependencies {
+                let target = dependency.target();
+                let Some(next) = dependency_representation(&dependency) else {
+                    matches
+                        .entry(dependency_key(target))
+                        .and_modify(|(_, current_depth)| {
+                            *current_depth = (*current_depth).min(match_depth);
+                        })
+                        .or_insert((target, match_depth));
+                    continue;
+                };
+                if target != DependencyTarget::Representation(source) {
+                    matches
+                        .entry(dependency_key(target))
+                        .and_modify(|(_, current_depth)| {
+                            *current_depth = (*current_depth).min(match_depth);
+                        })
+                        .or_insert((target, match_depth));
+                }
+                if visited.contains(&next) {
+                    continue;
+                }
+                if u32::try_from(visited.len()).unwrap_or(u32::MAX) >= limits.max_representations()
+                {
+                    traversal_truncated = true;
+                    continue;
+                }
+                visited.insert(next);
+                pending.push_back((next, match_depth));
+            }
+        }
+
+        dependency_page(matches, position, page, traversal_truncated, |key| {
+            query_cursor::dependency_cursor(source, limits, key)
+        })
+    }
+
     /// Loads representations that directly depend on `target`.
     ///
     /// # Errors
@@ -1000,6 +1076,67 @@ impl SqliteProduction {
             .collect()
     }
 
+    /// Queries direct or transitive dependent representations with bounds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when the target is absent,
+    /// [`ErrorKind::InvalidArgument`] for a cursor from another query, or a
+    /// storage-domain error when persisted dependency IDs are malformed.
+    pub fn query_dependents(
+        &self,
+        target: DependencyTarget,
+        limits: DependencyQueryLimits,
+        page: &QueryPageRequest,
+    ) -> Result<QueryPage<DependencyQueryMatch>> {
+        let position = query_cursor::dependent_position(page, target, limits)?;
+        let mut visited = BTreeSet::new();
+        if let DependencyTarget::Representation(id) = target {
+            visited.insert(id);
+        }
+        let mut pending = VecDeque::from([(target, 0_u32)]);
+        let mut matches = BTreeMap::<(u8, [u8; 16]), (DependencyTarget, u32)>::new();
+        let mut traversal_truncated = false;
+
+        while let Some((current_target, depth)) = pending.pop_front() {
+            let direct = self.dependents(current_target)?;
+            if depth == limits.max_depth() {
+                traversal_truncated |= direct.iter().any(|id| !visited.contains(id));
+                continue;
+            }
+            let match_depth = depth + 1;
+            for source in direct {
+                let source_target = DependencyTarget::Representation(source);
+                if source_target != target {
+                    matches
+                        .entry(dependency_key(source_target))
+                        .and_modify(|(_, current_depth)| {
+                            *current_depth = (*current_depth).min(match_depth);
+                        })
+                        .or_insert((source_target, match_depth));
+                }
+                if visited.contains(&source) {
+                    continue;
+                }
+                if u32::try_from(visited.len()).unwrap_or(u32::MAX) >= limits.max_representations()
+                {
+                    traversal_truncated = true;
+                    continue;
+                }
+                visited.insert(source);
+                pending.push_back((source_target, match_depth));
+            }
+        }
+
+        dependency_page(
+            matches,
+            position.map(|id| (2, id)),
+            page,
+            traversal_truncated,
+            |key| query_cursor::dependent_cursor(target, limits, key.1),
+        )
+    }
+
     /// Loads all durable jobs in stable identity order.
     ///
     /// # Errors
@@ -1028,6 +1165,74 @@ impl SqliteProduction {
             .into_iter()
             .map(|job| decode_job(&self.connection, job))
             .collect()
+    }
+
+    /// Queries durable jobs in stable identity order with optional exact predicates.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] for a cursor from another query,
+    /// or [`ErrorKind::Storage`] when persisted job data is malformed.
+    pub fn query_jobs(&self, query: &JobQuery, page: &QueryPageRequest) -> Result<QueryPage<Job>> {
+        let position = query_cursor::job_position(page, query)?;
+        let mut clauses = Vec::new();
+        let mut parameters = Vec::<Value>::new();
+        if let Some(state) = query.state() {
+            clauses.push("state = ?");
+            parameters.push(Value::Integer(i64::from(query_cursor::job_state_code(
+                state,
+            ))));
+        }
+        if let Some(kind) = query.kind() {
+            clauses.push("kind = ?");
+            parameters.push(Value::Text(kind.as_str().to_owned()));
+        }
+        if let Some(position) = position {
+            clauses.push("id > ?");
+            parameters.push(Value::Blob(position.to_vec()));
+        }
+        let where_clause = if clauses.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", clauses.join(" AND "))
+        };
+        parameters.push(Value::Integer(i64::from(page.limit()) + 1));
+        let sql = format!(
+            "SELECT id, kind, output_asset_id, output_representation_kind,
+                    target_root, state, claim_id, claim_tool_name,
+                    claim_tool_version, claim_tool_uri, claim_agent_name,
+                    claim_agent_scheme, claim_agent_value, claim_agent_qualifier,
+                    claim_expires_at_micros, completion_activity_id,
+                    completion_representation_id, failure_diagnostic
+             FROM jobs{where_clause} ORDER BY id LIMIT ?"
+        );
+        let mut statement = self
+            .connection
+            .prepare(&sql)
+            .map_err(sqlite_error("prepare paginated job query"))?;
+        let mut stored = statement
+            .query_map(params_from_iter(parameters), stored_job_row)
+            .map_err(sqlite_error("query paginated jobs"))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sqlite_error("read paginated job row"))?;
+        let has_more = stored.len() > page.limit() as usize;
+        stored.truncate(page.limit() as usize);
+        let next_cursor = if has_more {
+            stored
+                .last()
+                .map(|job| {
+                    id_bytes(job.id.clone(), "job")
+                        .and_then(|id| query_cursor::job_cursor(query, id))
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let jobs = stored
+            .into_iter()
+            .map(|job| decode_job(&self.connection, job))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(QueryPage::new(jobs, next_cursor, false))
     }
 
     /// Loads one durable job by identity.
@@ -2424,6 +2629,51 @@ pub(crate) fn load_dependency_set(
     )
     .map(Some)
     .map_err(stored_domain_error("dependency set"))
+}
+
+fn dependency_key(target: DependencyTarget) -> (u8, [u8; 16]) {
+    match target {
+        DependencyTarget::Asset(id) => (1, id.into_bytes()),
+        DependencyTarget::Representation(id) => (2, id.into_bytes()),
+        _ => (0, [0; 16]),
+    }
+}
+
+fn dependency_representation(dependency: &Dependency) -> Option<RepresentationId> {
+    match dependency.target() {
+        DependencyTarget::Asset(_) => dependency.resolved_representation_id(),
+        DependencyTarget::Representation(id) => Some(id),
+        _ => None,
+    }
+}
+
+fn dependency_page<F>(
+    matches: BTreeMap<(u8, [u8; 16]), (DependencyTarget, u32)>,
+    position: Option<(u8, [u8; 16])>,
+    page: &QueryPageRequest,
+    traversal_truncated: bool,
+    cursor: F,
+) -> Result<QueryPage<DependencyQueryMatch>>
+where
+    F: FnOnce((u8, [u8; 16])) -> Result<QueryCursor>,
+{
+    let mut selected = matches
+        .into_iter()
+        .filter(|(key, _)| position.is_none_or(|position| *key > position))
+        .take(page.limit() as usize + 1)
+        .collect::<Vec<_>>();
+    let has_more = selected.len() > page.limit() as usize;
+    selected.truncate(page.limit() as usize);
+    let next_cursor = if has_more {
+        selected.last().map(|(key, _)| cursor(*key)).transpose()?
+    } else {
+        None
+    };
+    let items = selected
+        .into_iter()
+        .map(|(_, (target, depth))| DependencyQueryMatch::new(target, depth))
+        .collect();
+    Ok(QueryPage::new(items, next_cursor, traversal_truncated))
 }
 
 pub(crate) fn id_bytes(value: Vec<u8>, label: &str) -> Result<[u8; 16]> {
