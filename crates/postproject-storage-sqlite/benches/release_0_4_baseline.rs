@@ -15,10 +15,15 @@ const REVISION_COUNT: u64 = 100_000;
 
 fn main() {
     let path = env::var_os("POSTPROJECT_BENCH_FIXTURE").map_or_else(
-        || PathBuf::from("target/bench-fixtures/release-0.4.pproj"),
+        || {
+            PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../target/bench-fixtures/release-0.4.pproj"
+            ))
+        },
         PathBuf::from,
     );
-    let seed = env::var("POSTPROJECT_BENCH_SEED").unwrap_or_else(|_| "postproject-i4".into());
+    let seed = env::var("POSTPROJECT_BENCH_SEED").unwrap_or_else(|_| "postproject-0.4".into());
     let runs = env::var("POSTPROJECT_BENCH_RUNS").map_or(3, |value| {
         value.parse().expect("POSTPROJECT_BENCH_RUNS is an integer")
     });
