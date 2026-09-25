@@ -114,6 +114,35 @@ class ExternalIdentifier:
     qualifier: str | None = None
 
 
+class DependencySetStatus(Enum):
+    """Freshness of one complete dependency observation."""
+
+    CURRENT = "current"
+    NEEDS_EXTRACTION = "needs_extraction"
+
+
+@dataclass(frozen=True, slots=True)
+class Dependency:
+    """One exact authored dependency edge."""
+
+    kind: str
+    target: AssetId | RepresentationId
+    authored_reference: str
+    required: bool = True
+    source_resource_id: ResourceId | None = None
+    resolved_representation_id: RepresentationId | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DependencySet:
+    """One complete ordered dependency observation."""
+
+    source_representation_id: RepresentationId
+    recorded_at_revision: int
+    status: DependencySetStatus
+    dependencies: tuple[Dependency, ...]
+
+
 @dataclass(frozen=True, slots=True)
 class FingerprintSnapshot:
     """Fingerprint evidence captured at one semantic revision."""

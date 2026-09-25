@@ -36,6 +36,10 @@ from ._abi import (
 from ._abi import (
     ArtifactReproducibility as NativeArtifactReproducibility,
 )
+from ._abi import Dependency as NativeDependency
+from ._abi import (
+    DependencySet as NativeDependencySet,
+)
 from ._abi import (
     FileResourceInput as NativeFileResourceInput,
 )
@@ -76,6 +80,9 @@ from ._model import (
     AvailabilityIssue,
     AvailabilityIssueKind,
     ContentStructureKind,
+    Dependency,
+    DependencySet,
+    DependencySetStatus,
     EvidenceKind,
     ExternalIdentifier,
     ExternalIdentifierAddedEvent,
@@ -526,6 +533,87 @@ class Production:
 
         self._require_open()
         return _Representations(self)
+
+    def dependency_set(
+        self, representation_id: RepresentationId
+    ) -> DependencySet | None:
+        """Return recorded dependency knowledge, preserving absent versus empty."""
+
+        self._require_open()
+        native_id = _native_uuid(representation_id.value)
+        handle = ctypes.POINTER(NativeDependencySet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_dependency_set(
+            self._handle,
+            ctypes.byref(native_id),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native dependency query returned no result set")
+        try:
+            present = ctypes.c_uint8()
+            source_id = Uuid()
+            revision = ctypes.c_uint64()
+            set_status = _abi.DependencySetStatus()
+            count = ctypes.c_uint64()
+            summary_error = ctypes.POINTER(Error)()
+            summary_status = self._native.lib.pp_dependency_set_get(
+                handle,
+                ctypes.byref(present),
+                ctypes.byref(source_id),
+                ctypes.byref(revision),
+                ctypes.byref(set_status),
+                ctypes.byref(count),
+                ctypes.byref(summary_error),
+            )
+            self._native.check(summary_status, summary_error)
+            if not present.value:
+                return None
+            return DependencySet(
+                RepresentationId(_uuid(source_id)),
+                int(revision.value),
+                _dependency_set_status(int(set_status.value)),
+                tuple(
+                    _dependency_at(self._native, handle, index)
+                    for index in range(int(count.value))
+                ),
+            )
+        finally:
+            self._native.lib.pp_dependency_set_release(handle)
+
+    def dependents(
+        self, target: AssetId | RepresentationId
+    ) -> tuple[RepresentationId, ...]:
+        """Return representations that directly depend on ``target``."""
+
+        self._require_open()
+        native_target = _native_object_reference(target)
+        handle = ctypes.POINTER(ObjectRefSet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_dependents(
+            self._handle,
+            ctypes.byref(native_target),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native dependents query returned no result set")
+        try:
+            count = self._native.lib.pp_object_ref_set_count(handle)
+            result: list[RepresentationId] = []
+            for index in range(int(count)):
+                reference = _object_reference_at(self._native, handle, index)
+                if not isinstance(reference, RepresentationId):
+                    raise RuntimeError(
+                        "native dependents query returned a non-representation"
+                    )
+                result.append(reference)
+            return tuple(result)
+        finally:
+            self._native.lib.pp_object_ref_set_release(handle)
 
     @property
     def host_bindings(self) -> _HostBindings:
@@ -1638,6 +1726,40 @@ def _object_reference_at(
     return _object_reference(value)
 
 
+def _dependency_at(
+    native: NativeLibrary,
+    dependencies: _Pointer[NativeDependencySet],
+    index: int,
+) -> Dependency:
+    value = NativeDependency()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_dependency_set_get_dependency(
+        dependencies, index, ctypes.byref(value), ctypes.byref(error)
+    )
+    native.check(status, error)
+    target = _object_reference(value.target)
+    if not isinstance(target, (AssetId, RepresentationId)):
+        raise RuntimeError("native dependency has an unsupported target")
+    return Dependency(
+        kind=_decode_required(value.kind, "dependency kind"),
+        target=target,
+        authored_reference=_decode_required(
+            value.authored_reference, "authored dependency reference"
+        ),
+        required=bool(value.required),
+        source_resource_id=(
+            ResourceId(_uuid(value.source_resource_id))
+            if value.has_source_resource
+            else None
+        ),
+        resolved_representation_id=(
+            RepresentationId(_uuid(value.resolved_representation_id))
+            if value.has_resolved_representation
+            else None
+        ),
+    )
+
+
 def _activity_at(
     native: NativeLibrary,
     activities: _Pointer[ActivitySet],
@@ -2748,6 +2870,16 @@ def _representation_kind(value: int) -> RepresentationKind:
     }.get(value)
     if result is None:
         raise RuntimeError("representation has an unknown kind")
+    return result
+
+
+def _dependency_set_status(value: int) -> DependencySetStatus:
+    result = {
+        _abi.PP_DEPENDENCY_SET_CURRENT: DependencySetStatus.CURRENT,
+        _abi.PP_DEPENDENCY_SET_NEEDS_EXTRACTION: DependencySetStatus.NEEDS_EXTRACTION,
+    }.get(value)
+    if result is None:
+        raise RuntimeError("dependency set has an unknown status")
     return result
 
 

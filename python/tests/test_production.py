@@ -125,6 +125,8 @@ class ProductionTests(unittest.TestCase):
             with production.transaction() as transaction:
                 asset_id = transaction.import_media(self.media_path)
             representations = production.representations[asset_id]
+            self.assertIsNone(production.dependency_set(representations[0].id))
+            self.assertEqual(production.dependents(asset_id), ())
 
         self.assertEqual(len(representations), 1)
         representation = representations[0]
