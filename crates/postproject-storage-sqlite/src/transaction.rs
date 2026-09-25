@@ -2,12 +2,13 @@
 
 use postproject_core::{
     Activity, ContentStructure, ContentStructureKind, Dependency, DependencySetStatus,
-    DependencyTarget, Error, ErrorKind, ExternalIdentifier, Locator, LocatorAvailability,
-    LocatorId, MAX_DEPENDENCIES_PER_SET, MediaRoot, MediaRootId, MetadataProperty, MetadataValue,
-    ObjectRef, OriginalMediaImport, Production, ProductionStoreTransaction, Representation,
-    RepresentationFingerprint, RepresentationId, RepresentationImport, RepresentationKind,
-    Resource, ResourceFingerprint, ResourceId, Result, RevisionContext, RevisionEventKind,
-    RevisionId, Timestamp, TransactionId, TransactionLifecycle, TransactionState,
+    DependencyTarget, Error, ErrorKind, ExternalIdentifier, Job, JobState, Locator,
+    LocatorAvailability, LocatorId, MAX_DEPENDENCIES_PER_SET, MediaRoot, MediaRootId,
+    MetadataProperty, MetadataValue, ObjectRef, OriginalMediaImport, Production,
+    ProductionStoreTransaction, Representation, RepresentationFingerprint, RepresentationId,
+    RepresentationImport, RepresentationKind, Resource, ResourceFingerprint, ResourceId, Result,
+    RevisionContext, RevisionEventKind, RevisionId, Timestamp, TransactionId, TransactionLifecycle,
+    TransactionState,
 };
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior, params,
@@ -126,6 +127,88 @@ impl<'production> SqliteTransaction<'production> {
             import.resources(),
             import.locators(),
         )
+    }
+
+    /// Stages one requested job with its canonical inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::InvalidArgument`] when the supplied job is not in
+    /// the requested state, [`ErrorKind::NotFound`] when an asset, input, or
+    /// target root is absent, or a transaction/storage error.
+    pub fn request_job(&mut self, job: &Job) -> Result<()> {
+        self.lifecycle.ensure_open()?;
+        if !matches!(job.state(), JobState::Requested) {
+            return Err(Error::new(
+                ErrorKind::InvalidArgument,
+                "only a requested job can be persisted as a new request",
+            ));
+        }
+        if let Some(target_root) = job.requested_output().target_root() {
+            if !self
+                .pending_roots
+                .iter()
+                .any(|root| root.name() == target_root)
+            {
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    "job target root does not exist",
+                ));
+            }
+        }
+        let output_kind = encode_representation_kind(job.requested_output().representation_kind())?;
+        let transaction = self.open_transaction()?;
+        if !asset_exists(transaction, job.requested_output().asset_id())? {
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                "job output asset does not exist",
+            ));
+        }
+        for input in job.inputs() {
+            if !representation_exists(transaction, *input)? {
+                return Err(Error::new(
+                    ErrorKind::NotFound,
+                    "job input representation does not exist",
+                ));
+            }
+        }
+        transaction
+            .execute(
+                "INSERT INTO jobs (
+                    id, kind, output_asset_id, output_representation_kind,
+                    target_root, state
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 1)",
+                params![
+                    job.id().as_bytes().as_slice(),
+                    job.kind().as_str(),
+                    job.requested_output().asset_id().as_bytes().as_slice(),
+                    output_kind,
+                    job.requested_output().target_root(),
+                ],
+            )
+            .map_err(mutation_error("persist job request"))?;
+        for (position, input) in job.inputs().iter().enumerate() {
+            let position = i64::try_from(position).map_err(|error| {
+                Error::new(
+                    ErrorKind::Unsupported,
+                    format!("job input position cannot be stored: {error}"),
+                )
+            })?;
+            transaction
+                .execute(
+                    "INSERT INTO job_inputs (job_id, position, representation_id)
+                     VALUES (?1, ?2, ?3)",
+                    params![
+                        job.id().as_bytes().as_slice(),
+                        position,
+                        input.as_bytes().as_slice(),
+                    ],
+                )
+                .map_err(mutation_error("persist job input"))?;
+        }
+        self.pending_events
+            .push(RevisionEventKind::JobRequested { job_id: job.id() });
+        Ok(())
     }
 
     fn persist_representation(
@@ -1458,6 +1541,10 @@ impl ProductionStoreTransaction for SqliteTransaction<'_> {
         SqliteTransaction::record_representation_fingerprint(self, representation_id, fingerprint)
     }
 
+    fn request_job(&mut self, job: &Job) -> Result<()> {
+        SqliteTransaction::request_job(self, job)
+    }
+
     fn commit(&mut self) -> Result<()> {
         SqliteTransaction::commit(self)
     }
@@ -1890,6 +1977,7 @@ fn ensure_metadata_target_exists(
         2 => "representations",
         3 => "resources",
         4 => "activities",
+        5 => "jobs",
         _ => {
             return Err(Error::new(
                 ErrorKind::Unsupported,

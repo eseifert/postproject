@@ -25,11 +25,12 @@ use postproject_core::{
     ArtifactReproducibilityReport, Asset, AssetId, ContentStructure, Dependency, DependencyKind,
     DependencySet, DependencySetStatus, DependencyTarget, Error, ErrorKind, ExternalIdentifier,
     FileFacts, FingerprintSnapshot, FrameRange, IdentifierScheme, ImageSequenceDescriptor,
-    ImageSequencePattern, JobId, Locator, LocatorAvailability, LocatorId, MAX_REVISION_PAGE_SIZE,
-    MediaRoot, MediaRootId, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue,
-    ObjectRef, OriginIdentity, Production, ProductionId, ProductionRead, ProductionStore,
-    PropertyId, RationalRate, Representation, RepresentationFingerprint, RepresentationId,
-    RepresentationKind, Resource, ResourceFingerprint, ResourceId, ResourceMember, ResourceRole,
+    ImageSequencePattern, Job, JobClaim, JobClaimId, JobCompletion, JobFailure, JobId, JobKind,
+    JobState, Locator, LocatorAvailability, LocatorId, MAX_REVISION_PAGE_SIZE, MediaRoot,
+    MediaRootId, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue, ObjectRef,
+    OriginIdentity, Production, ProductionId, ProductionRead, ProductionStore, PropertyId,
+    RationalRate, Representation, RepresentationFingerprint, RepresentationId, RepresentationKind,
+    RequestedJobOutput, Resource, ResourceFingerprint, ResourceId, ResourceMember, ResourceRole,
     Result, Revision, RevisionEvent, RevisionEventKind, RevisionId, Timestamp, ToolIdentity,
     TransactionId, VocabularyId,
 };
@@ -89,6 +90,27 @@ struct StoredRevisionEvent {
     role: Option<String>,
     fingerprint_algorithm: Option<String>,
     fingerprint_version: Option<i64>,
+}
+
+struct StoredJob {
+    id: Vec<u8>,
+    kind: String,
+    output_asset_id: Vec<u8>,
+    output_representation_kind: i64,
+    target_root: Option<String>,
+    state: i64,
+    claim_id: Option<Vec<u8>>,
+    claim_tool_name: Option<String>,
+    claim_tool_version: Option<String>,
+    claim_tool_uri: Option<String>,
+    claim_agent_name: Option<String>,
+    claim_agent_scheme: Option<String>,
+    claim_agent_value: Option<String>,
+    claim_agent_qualifier: Option<String>,
+    claim_expires_at: Option<i64>,
+    completion_activity_id: Option<Vec<u8>>,
+    completion_representation_id: Option<Vec<u8>>,
+    failure_diagnostic: Option<String>,
 }
 
 struct StoredActivityEdge {
@@ -978,6 +1000,62 @@ impl SqliteProduction {
             .collect()
     }
 
+    /// Loads all durable jobs in stable identity order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::Storage`] when persisted job data is malformed or
+    /// cannot be read.
+    pub fn jobs(&self) -> Result<Vec<Job>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, kind, output_asset_id, output_representation_kind,
+                        target_root, state, claim_id, claim_tool_name,
+                        claim_tool_version, claim_tool_uri, claim_agent_name,
+                        claim_agent_scheme, claim_agent_value, claim_agent_qualifier,
+                        claim_expires_at_micros, completion_activity_id,
+                        completion_representation_id, failure_diagnostic
+                 FROM jobs ORDER BY id",
+            )
+            .map_err(sqlite_error("prepare job query"))?;
+        let stored = statement
+            .query_map([], stored_job_row)
+            .map_err(sqlite_error("query jobs"))?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sqlite_error("read job row"))?;
+        stored
+            .into_iter()
+            .map(|job| decode_job(&self.connection, job))
+            .collect()
+    }
+
+    /// Loads one durable job by identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorKind::NotFound`] when `job_id` is absent, or
+    /// [`ErrorKind::Storage`] when persisted job data is malformed.
+    pub fn job(&self, job_id: JobId) -> Result<Job> {
+        let stored = self
+            .connection
+            .query_row(
+                "SELECT id, kind, output_asset_id, output_representation_kind,
+                        target_root, state, claim_id, claim_tool_name,
+                        claim_tool_version, claim_tool_uri, claim_agent_name,
+                        claim_agent_scheme, claim_agent_value, claim_agent_qualifier,
+                        claim_expires_at_micros, completion_activity_id,
+                        completion_representation_id, failure_diagnostic
+                 FROM jobs WHERE id = ?1",
+                [job_id.as_bytes().as_slice()],
+                stored_job_row,
+            )
+            .optional()
+            .map_err(sqlite_error("load job"))?
+            .ok_or_else(|| Error::new(ErrorKind::NotFound, "job does not exist"))?;
+        decode_job(&self.connection, stored)
+    }
+
     /// Returns the newest durable revision, if the journal is non-empty.
     ///
     /// # Errors
@@ -1286,6 +1364,14 @@ impl ProductionRead for SqliteProduction {
         representation_id: RepresentationId,
     ) -> Result<ArtifactReproducibilityReport> {
         SqliteProduction::artifact_reproducibility(self, representation_id)
+    }
+
+    fn jobs(&self) -> Result<Vec<Job>> {
+        SqliteProduction::jobs(self)
+    }
+
+    fn job(&self, job_id: JobId) -> Result<Job> {
+        SqliteProduction::job(self, job_id)
     }
 
     fn latest_revision(&self) -> Result<Option<Revision>> {
@@ -1658,6 +1744,197 @@ fn stored_revision_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredRevisi
     })
 }
 
+fn stored_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredJob> {
+    Ok(StoredJob {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        output_asset_id: row.get(2)?,
+        output_representation_kind: row.get(3)?,
+        target_root: row.get(4)?,
+        state: row.get(5)?,
+        claim_id: row.get(6)?,
+        claim_tool_name: row.get(7)?,
+        claim_tool_version: row.get(8)?,
+        claim_tool_uri: row.get(9)?,
+        claim_agent_name: row.get(10)?,
+        claim_agent_scheme: row.get(11)?,
+        claim_agent_value: row.get(12)?,
+        claim_agent_qualifier: row.get(13)?,
+        claim_expires_at: row.get(14)?,
+        completion_activity_id: row.get(15)?,
+        completion_representation_id: row.get(16)?,
+        failure_diagnostic: row.get(17)?,
+    })
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "keeping persisted job-state validation together makes corruption handling auditable"
+)]
+fn decode_job(connection: &Connection, stored: StoredJob) -> Result<Job> {
+    let id = JobId::from_bytes(id_bytes(stored.id.clone(), "job")?);
+    let mut statement = connection
+        .prepare(
+            "SELECT position, representation_id
+             FROM job_inputs WHERE job_id = ?1 ORDER BY position",
+        )
+        .map_err(sqlite_error("prepare job-input query"))?;
+    let inputs = statement
+        .query_map([id.as_bytes().as_slice()], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })
+        .map_err(sqlite_error("query job inputs"))?
+        .enumerate()
+        .map(|(expected, row)| {
+            let (position, representation_id) = row.map_err(sqlite_error("read job-input row"))?;
+            let expected = i64::try_from(expected)
+                .map_err(|_| stored_invariant("job input position is too large"))?;
+            if position != expected {
+                return Err(stored_invariant("job input positions are not contiguous"));
+            }
+            id_bytes(representation_id, "job input").map(RepresentationId::from_bytes)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let state = match stored.state {
+        1 | 5 => {
+            ensure_job_detail_empty(&stored)?;
+            if stored.state == 1 {
+                JobState::Requested
+            } else {
+                JobState::Cancelled
+            }
+        }
+        2 => {
+            if stored.completion_activity_id.is_some()
+                || stored.completion_representation_id.is_some()
+                || stored.failure_diagnostic.is_some()
+            {
+                return Err(stored_invariant("claimed job has terminal detail"));
+            }
+            let claim_id = JobClaimId::from_bytes(id_bytes(
+                required_stored(stored.claim_id, "job claim ID")?,
+                "job claim",
+            )?);
+            let tool = ToolIdentity::new(
+                required_stored(stored.claim_tool_name, "job claim tool name")?,
+                stored.claim_tool_version,
+                stored.claim_tool_uri,
+            )
+            .map_err(stored_domain_error("job claim tool"))?;
+            let identifier = match (stored.claim_agent_scheme, stored.claim_agent_value) {
+                (Some(scheme), Some(value)) => Some(decode_external_identifier(
+                    scheme,
+                    value,
+                    stored.claim_agent_qualifier,
+                )?),
+                (None, None) if stored.claim_agent_qualifier.is_none() => None,
+                _ => return Err(stored_invariant("job claim agent identifier is incomplete")),
+            };
+            let agent = match (stored.claim_agent_name, identifier) {
+                (None, None) => None,
+                (name, identifier) => Some(
+                    AgentIdentity::new(name, identifier)
+                        .map_err(stored_domain_error("job claim agent"))?,
+                ),
+            };
+            JobState::Claimed(JobClaim::new(
+                claim_id,
+                tool,
+                agent,
+                Timestamp::from_unix_micros(required_stored(
+                    stored.claim_expires_at,
+                    "job claim expiry",
+                )?),
+            ))
+        }
+        3 => {
+            ensure_job_claim_detail_empty(&stored)?;
+            if stored.failure_diagnostic.is_some() {
+                return Err(stored_invariant("succeeded job has failure detail"));
+            }
+            JobState::Succeeded(JobCompletion::new(
+                ActivityId::from_bytes(id_bytes(
+                    required_stored(stored.completion_activity_id, "job completion activity")?,
+                    "job completion activity",
+                )?),
+                RepresentationId::from_bytes(id_bytes(
+                    required_stored(
+                        stored.completion_representation_id,
+                        "job completion representation",
+                    )?,
+                    "job completion representation",
+                )?),
+            ))
+        }
+        4 => {
+            ensure_job_claim_detail_empty(&stored)?;
+            if stored.completion_activity_id.is_some()
+                || stored.completion_representation_id.is_some()
+            {
+                return Err(stored_invariant("failed job has completion detail"));
+            }
+            JobState::Failed(
+                JobFailure::new(required_stored(
+                    stored.failure_diagnostic,
+                    "job failure diagnostic",
+                )?)
+                .map_err(stored_domain_error("job failure"))?,
+            )
+        }
+        value => {
+            return Err(Error::new(
+                ErrorKind::Storage,
+                format!("stored job state {value} is invalid"),
+            ));
+        }
+    };
+    let output = RequestedJobOutput::new(
+        AssetId::from_bytes(id_bytes(stored.output_asset_id, "job output asset")?),
+        decode_representation_kind(stored.output_representation_kind)?,
+        stored.target_root,
+    )
+    .map_err(stored_domain_error("job requested output"))?;
+    let job = Job::new(
+        id,
+        JobKind::new(stored.kind).map_err(stored_domain_error("job kind"))?,
+        inputs.clone(),
+        output,
+    )
+    .map_err(stored_domain_error("job"))?;
+    if job.inputs() != inputs {
+        return Err(stored_invariant("job inputs are not in canonical order"));
+    }
+    Ok(job.with_state(state))
+}
+
+fn ensure_job_claim_detail_empty(stored: &StoredJob) -> Result<()> {
+    if stored.claim_id.is_some()
+        || stored.claim_tool_name.is_some()
+        || stored.claim_tool_version.is_some()
+        || stored.claim_tool_uri.is_some()
+        || stored.claim_agent_name.is_some()
+        || stored.claim_agent_scheme.is_some()
+        || stored.claim_agent_value.is_some()
+        || stored.claim_agent_qualifier.is_some()
+        || stored.claim_expires_at.is_some()
+    {
+        return Err(stored_invariant("unclaimed job has claim detail"));
+    }
+    Ok(())
+}
+
+fn ensure_job_detail_empty(stored: &StoredJob) -> Result<()> {
+    ensure_job_claim_detail_empty(stored)?;
+    if stored.completion_activity_id.is_some()
+        || stored.completion_representation_id.is_some()
+        || stored.failure_diagnostic.is_some()
+    {
+        return Err(stored_invariant("nonterminal job has terminal detail"));
+    }
+    Ok(())
+}
+
 fn decode_revision(stored: StoredRevision) -> Result<Revision> {
     let id = RevisionId::from_bytes(id_bytes(stored.id, "revision")?);
     let sequence = u64::try_from(stored.sequence)
@@ -1954,6 +2231,7 @@ pub(crate) fn encode_metadata_target(target: &ObjectRef) -> Result<(i64, &[u8; 1
         ObjectRef::Representation(id) => Ok((2, id.as_bytes())),
         ObjectRef::Resource(id) => Ok((3, id.as_bytes())),
         ObjectRef::Activity(id) => Ok((4, id.as_bytes())),
+        ObjectRef::Job(id) => Ok((5, id.as_bytes())),
         _ => Err(Error::new(
             ErrorKind::Unsupported,
             "metadata target kind is not supported by this schema",
@@ -1971,6 +2249,7 @@ fn decode_metadata_target(kind: i64, id: Vec<u8>) -> Result<ObjectRef> {
         4 => Ok(ObjectRef::Activity(
             postproject_core::ActivityId::from_bytes(id),
         )),
+        5 => Ok(ObjectRef::Job(JobId::from_bytes(id))),
         _ => Err(Error::new(
             ErrorKind::Storage,
             format!("stored metadata target kind {kind} is invalid"),

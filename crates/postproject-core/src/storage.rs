@@ -3,10 +3,11 @@
 use crate::{
     Activity, ArtifactEvaluation, ArtifactEvaluationLimits, ArtifactReproducibilityReport, Asset,
     AssetId, Dependency, DependencySet, DependencyTarget, ExternalIdentifier, IdentifierScheme,
-    Locator, MediaRoot, MetadataAssertion, MetadataMatch, MetadataProperty, MetadataValue,
-    ObjectRef, OriginalMediaImport, Production, Representation, RepresentationFingerprint,
-    RepresentationId, RepresentationImport, Resource, ResourceFingerprint, ResourceId, Result,
-    Revision, RevisionContext, RevisionEvent, RevisionId, TransactionId, TransactionState,
+    Job, JobId, Locator, MediaRoot, MetadataAssertion, MetadataMatch, MetadataProperty,
+    MetadataValue, ObjectRef, OriginalMediaImport, Production, Representation,
+    RepresentationFingerprint, RepresentationId, RepresentationImport, Resource,
+    ResourceFingerprint, ResourceId, Result, Revision, RevisionContext, RevisionEvent, RevisionId,
+    TransactionId, TransactionState,
 };
 
 /// Read operations required from a production persistence backend.
@@ -185,6 +186,22 @@ pub trait ProductionRead {
         &self,
         representation_id: RepresentationId,
     ) -> Result<ArtifactReproducibilityReport>;
+
+    /// Loads all durable jobs in stable identity order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a storage-domain error when persisted job data cannot be read
+    /// or decoded safely.
+    fn jobs(&self) -> Result<Vec<Job>>;
+
+    /// Loads one durable job by identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns a not-found error when the job is absent, or a storage-domain
+    /// error when its persisted data cannot be decoded safely.
+    fn job(&self, job_id: JobId) -> Result<Job>;
 
     /// Returns the newest durable revision, or `None` for an empty journal.
     ///
@@ -399,6 +416,15 @@ pub trait ProductionStoreTransaction {
         representation_id: RepresentationId,
         fingerprint: &RepresentationFingerprint,
     ) -> Result<bool>;
+
+    /// Stages one requested job with its canonical inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns a domain error when the transaction is closed, the supplied job
+    /// is not requested, a referenced object is absent, the job already exists,
+    /// or persistence fails.
+    fn request_job(&mut self, job: &Job) -> Result<()>;
 
     /// Atomically makes every staged mutation durable.
     ///
