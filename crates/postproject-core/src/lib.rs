@@ -17,6 +17,7 @@ mod metadata;
 mod metadata_registry;
 mod model;
 mod provenance;
+mod query;
 mod resolution;
 mod resource;
 mod revision;
@@ -79,6 +80,10 @@ pub use provenance::{
     Activity, ActivityEdgeSnapshot, ActivityInput, ActivityKind, ActivityOutput, ActivityRole,
     AgentIdentity, MAX_ACTIVITY_EDGES, MAX_ACTIVITY_KIND_BYTES, MAX_ACTIVITY_ROLE_BYTES,
     MAX_PROVENANCE_NAME_BYTES, MAX_PROVENANCE_URI_BYTES, MAX_TOOL_VERSION_BYTES, ToolIdentity,
+};
+pub use query::{
+    DependencyQueryLimits, MAX_DEPENDENCY_QUERY_DEPTH, MAX_DEPENDENCY_QUERY_REPRESENTATIONS,
+    MAX_QUERY_CURSOR_BYTES, MAX_QUERY_PAGE_SIZE, QueryCursor, QueryPage, QueryPageRequest,
 };
 pub use resolution::{
     AvailabilityIssue, AvailabilityIssueKind, Confidence, EvidenceKind, RepresentationAvailability,
