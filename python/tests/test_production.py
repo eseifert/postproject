@@ -33,6 +33,8 @@ from postproject import (
     HostObjectBinding,
     ImageSequenceInput,
     InvalidArgumentError,
+    JobRequest,
+    JobState,
     LocatorAddedEvent,
     LocatorAvailability,
     LocatorRetiredEvent,
@@ -120,6 +122,38 @@ class ProductionTests(unittest.TestCase):
         ) as reopened:
             self.assertEqual(reopened.id, production_id)
             self.assertIn(asset_id, reopened.assets)
+
+    def test_job_requests_roundtrip_as_typed_values(self) -> None:
+        with Production.create(
+            self.production_path, library_path=LIBRARY_PATH
+        ) as production:
+            with production.transaction() as transaction:
+                asset_id = transaction.import_media(self.media_path)
+            source_id = production.representations[asset_id][0].id
+            with production.transaction() as transaction:
+                job_id = transaction.request_job(
+                    JobRequest(
+                        "org.postproject:generate-proxy",
+                        (source_id,),
+                        asset_id,
+                        RepresentationKind.PROXY,
+                    )
+                )
+
+            jobs = production.jobs
+            self.assertEqual(len(jobs), 1)
+            self.assertEqual(jobs[0].id, job_id)
+            self.assertEqual(jobs[0].kind, "org.postproject:generate-proxy")
+            self.assertEqual(jobs[0].inputs, (source_id,))
+            self.assertEqual(jobs[0].output_asset_id, asset_id)
+            self.assertEqual(
+                jobs[0].output_representation_kind, RepresentationKind.PROXY
+            )
+            self.assertIsNone(jobs[0].target_root)
+            self.assertEqual(jobs[0].state, JobState.REQUESTED)
+            self.assertIsNone(jobs[0].claim)
+            self.assertIsNone(jobs[0].completion)
+            self.assertIsNone(jobs[0].failure_diagnostic)
 
     def test_representations_are_typed_keyed_and_copied(self) -> None:
         with Production.create(

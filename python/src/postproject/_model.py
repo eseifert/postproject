@@ -86,6 +86,12 @@ class JobId(_TypedId):
     __slots__ = ()
 
 
+class JobClaimId(_TypedId):
+    """Capability identifying one active job claim."""
+
+    __slots__ = ()
+
+
 class RevisionId(_TypedId):
     """Stable identity of one committed revision."""
 
@@ -345,6 +351,61 @@ class RepresentationKind(Enum):
     PROXY = "proxy"
     OPTIMIZED = "optimized"
     DERIVED = "derived"
+
+
+class JobState(Enum):
+    """Lifecycle state of durable requested work."""
+
+    REQUESTED = "requested"
+    CLAIMED = "claimed"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True, slots=True)
+class JobClaim:
+    """Attribution and lease detail for one active claim."""
+
+    id: JobClaimId
+    tool: ToolIdentity
+    agent: AgentIdentity | None
+    expires_at_unix_micros: int
+
+
+@dataclass(frozen=True, slots=True)
+class JobCompletion:
+    """Activity and representation committed by a successful job."""
+
+    activity_id: ActivityId
+    representation_id: RepresentationId
+
+
+@dataclass(frozen=True, slots=True)
+class Job:
+    """One durable production-work request."""
+
+    id: JobId
+    kind: str
+    inputs: tuple[RepresentationId, ...]
+    output_asset_id: AssetId
+    output_representation_kind: RepresentationKind
+    target_root: str | None
+    state: JobState
+    claim: JobClaim | None
+    completion: JobCompletion | None
+    failure_diagnostic: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class JobRequest:
+    """New requested work to stage in a transaction."""
+
+    kind: str
+    inputs: tuple[RepresentationId, ...]
+    output_asset_id: AssetId
+    output_representation_kind: RepresentationKind
+    target_root: str | None = None
 
 
 class ContentStructureKind(Enum):

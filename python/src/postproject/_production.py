@@ -21,6 +21,7 @@ from ._abi import (
     AssetSet,
     Error,
     ExternalIdentifierSet,
+    JobSet,
     MediaRootSet,
     MetadataSet,
     ObjectRefSet,
@@ -43,6 +44,7 @@ from ._abi import (
 from ._abi import (
     FileResourceInput as NativeFileResourceInput,
 )
+from ._abi import Job as NativeJob
 from ._abi import (
     MediaRootMapping as NativeMediaRootMapping,
 )
@@ -94,13 +96,19 @@ from ._model import (
     HostObjectBinding,
     ImageSequenceDescriptor,
     ImageSequenceInput,
+    Job,
     JobCancelledEvent,
+    JobClaim,
     JobClaimedEvent,
+    JobClaimId,
     JobClaimReleasedEvent,
     JobClaimRenewedEvent,
+    JobCompletion,
     JobFailedEvent,
     JobId,
+    JobRequest,
     JobRequestedEvent,
+    JobState,
     JobSucceededEvent,
     Locator,
     LocatorAddedEvent,
@@ -404,6 +412,27 @@ class Production:
         return self._activity_set(
             self._native.lib.pp_production_activities, self._handle
         )
+
+    @property
+    def jobs(self) -> tuple[Job, ...]:
+        """Return every durable job in stable identity order."""
+
+        self._require_open()
+        handle = ctypes.POINTER(JobSet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_jobs(
+            self._handle, ctypes.byref(handle), ctypes.byref(error)
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native job query returned no result set")
+        try:
+            count = self._native.lib.pp_job_set_count(handle)
+            return tuple(
+                _job_at(self._native, handle, index) for index in range(int(count))
+            )
+        finally:
+            self._native.lib.pp_job_set_release(handle)
 
     @property
     def activities_producing(self) -> _ActivitiesByRepresentation:
@@ -1332,6 +1361,29 @@ class Transaction:
         finally:
             self._native.lib.pp_metadata_input_release(native_value)
 
+    def request_job(self, request: JobRequest) -> JobId:
+        """Stage one durable requested job."""
+
+        self._require_open()
+        input_type = Uuid * len(request.inputs)
+        inputs = input_type(*(_native_uuid(value.value) for value in request.inputs))
+        output_asset_id = _native_uuid(request.output_asset_id.value)
+        job_id = Uuid()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_transaction_request_job(
+            self._handle,
+            _utf8(request.kind, "job kind"),
+            inputs if request.inputs else None,
+            len(request.inputs),
+            ctypes.byref(output_asset_id),
+            _native_representation_kind(request.output_representation_kind),
+            _optional_text(request.target_root),
+            ctypes.byref(job_id),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        return JobId(_uuid(job_id))
+
     def create_activity(self, spec: ActivitySpec) -> ActivityId:
         """Stage one complete provenance activity."""
 
@@ -1816,6 +1868,81 @@ def _dependency_at(
             if value.has_resolved_representation
             else None
         ),
+    )
+
+
+def _job_at(native: NativeLibrary, jobs: _Pointer[JobSet], index: int) -> Job:
+    value = NativeJob()
+    error = ctypes.POINTER(Error)()
+    status = native.lib.pp_job_set_get(
+        jobs, index, ctypes.byref(value), ctypes.byref(error)
+    )
+    native.check(status, error)
+    inputs: list[RepresentationId] = []
+    for input_index in range(int(value.input_count)):
+        input_id = Uuid()
+        input_error = ctypes.POINTER(Error)()
+        input_status = native.lib.pp_job_set_get_input(
+            jobs,
+            index,
+            input_index,
+            ctypes.byref(input_id),
+            ctypes.byref(input_error),
+        )
+        native.check(input_status, input_error)
+        inputs.append(RepresentationId(_uuid(input_id)))
+
+    state = _job_state(int(value.state))
+    claim = None
+    if state is JobState.CLAIMED:
+        identifier = None
+        scheme = _decode_optional(value.claim_agent_identifier_scheme)
+        identifier_value = _decode_optional(value.claim_agent_identifier_value)
+        if (scheme is None) != (identifier_value is None):
+            raise RuntimeError(
+                "native job claim returned an incomplete agent identifier"
+            )
+        if scheme is not None and identifier_value is not None:
+            identifier = ExternalIdentifier(
+                scheme,
+                identifier_value,
+                _decode_optional(value.claim_agent_identifier_qualifier),
+            )
+        agent_name = _decode_optional(value.claim_agent_name)
+        agent = (
+            AgentIdentity(agent_name, identifier)
+            if agent_name is not None or identifier is not None
+            else None
+        )
+        claim = JobClaim(
+            JobClaimId(_uuid(value.claim_id)),
+            ToolIdentity(
+                _decode_required(value.claim_tool_name, "job claim tool name"),
+                _decode_optional(value.claim_tool_version),
+                _decode_optional(value.claim_tool_uri),
+            ),
+            agent,
+            int(value.claim_expires_at_unix_micros),
+        )
+    completion = None
+    if state is JobState.SUCCEEDED:
+        completion = JobCompletion(
+            ActivityId(_uuid(value.completion_activity_id)),
+            RepresentationId(_uuid(value.completion_representation_id)),
+        )
+    return Job(
+        id=JobId(_uuid(value.id)),
+        kind=_decode_required(value.kind, "job kind"),
+        inputs=tuple(inputs),
+        output_asset_id=AssetId(_uuid(value.output_asset_id)),
+        output_representation_kind=_representation_kind(
+            int(value.output_representation_kind)
+        ),
+        target_root=_decode_optional(value.target_root),
+        state=state,
+        claim=claim,
+        completion=completion,
+        failure_diagnostic=_decode_optional(value.failure_diagnostic),
     )
 
 
@@ -2949,6 +3076,19 @@ def _representation_kind(value: int) -> RepresentationKind:
     }.get(value)
     if result is None:
         raise RuntimeError("representation has an unknown kind")
+    return result
+
+
+def _job_state(value: int) -> JobState:
+    result = {
+        _abi.PP_JOB_REQUESTED: JobState.REQUESTED,
+        _abi.PP_JOB_CLAIMED: JobState.CLAIMED,
+        _abi.PP_JOB_SUCCEEDED: JobState.SUCCEEDED,
+        _abi.PP_JOB_FAILED: JobState.FAILED,
+        _abi.PP_JOB_CANCELLED: JobState.CANCELLED,
+    }.get(value)
+    if result is None:
+        raise RuntimeError("job has an unknown state")
     return result
 
 
