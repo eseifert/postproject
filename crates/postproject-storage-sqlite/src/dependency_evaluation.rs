@@ -2,8 +2,8 @@
 
 use postproject_core::{
     Activity, ActivityInput, ArtifactDependencyIssue, ArtifactDependencyPathSegment,
-    ArtifactKnowledgeReason, ArtifactKnowledgeState, AssetId, DependencyKind, DependencyTarget,
-    Error, ErrorKind, RepresentationId, ResourceId, Result,
+    ArtifactKnowledgeReason, ArtifactKnowledgeState, AssetId, Dependency, DependencyKind,
+    DependencySetStatus, DependencyTarget, Error, ErrorKind, RepresentationId, ResourceId, Result,
 };
 use rusqlite::params;
 
@@ -60,29 +60,98 @@ pub(crate) fn evaluate_input_dependencies(
             }],
         });
     }
-    let reasons = load_paths(production, input_id)?
-        .into_iter()
-        .map(|path| {
-            Ok(captured_issue(path.status)?.map(|issue| {
-                ArtifactKnowledgeReason::DependencyKnowledgeIncomplete {
+    let mut evaluation = DependencyEvaluation {
+        state: ArtifactKnowledgeState::Current,
+        reasons: Vec::new(),
+    };
+    for path in load_paths(production, input_id)? {
+        evaluate_path(production, activity, input, path, &mut evaluation)?;
+    }
+    Ok(evaluation)
+}
+
+fn evaluate_path(
+    production: &SqliteProduction,
+    activity: &Activity,
+    input: &ActivityInput,
+    path: CapturedPath,
+    evaluation: &mut DependencyEvaluation,
+) -> Result<()> {
+    if let Some(issue) = captured_issue(path.status)? {
+        promote_state(&mut evaluation.state, ArtifactKnowledgeState::Indeterminate);
+        evaluation
+            .reasons
+            .push(ArtifactKnowledgeReason::DependencyKnowledgeIncomplete {
+                activity_id: activity.id(),
+                input_representation_id: input.representation_id(),
+                subject_representation_id: path.subject_representation_id,
+                path: path.segments,
+                issue,
+            });
+        return Ok(());
+    }
+    for (index, segment) in path.segments.iter().enumerate() {
+        let Some(set) =
+            crate::load_dependency_set(&production.connection, segment.source_representation_id())?
+        else {
+            add_path_changed(activity, input, &path, evaluation);
+            return Ok(());
+        };
+        if set.status() == DependencySetStatus::NeedsExtraction {
+            promote_state(&mut evaluation.state, ArtifactKnowledgeState::Indeterminate);
+            evaluation
+                .reasons
+                .push(ArtifactKnowledgeReason::DependencyKnowledgeIncomplete {
                     activity_id: activity.id(),
                     input_representation_id: input.representation_id(),
-                    subject_representation_id: path.subject_representation_id,
-                    path: path.segments,
-                    issue,
-                }
-            }))
-        })
-        .filter_map(Result::transpose)
-        .collect::<Result<Vec<_>>>()?;
-    Ok(DependencyEvaluation {
-        state: if reasons.is_empty() {
-            ArtifactKnowledgeState::Current
-        } else {
-            ArtifactKnowledgeState::Indeterminate
-        },
-        reasons,
-    })
+                    subject_representation_id: segment.source_representation_id(),
+                    path: path.segments[..index].to_vec(),
+                    issue: ArtifactDependencyIssue::NeedsExtraction,
+                });
+            return Ok(());
+        }
+        let dependency_position =
+            usize::try_from(segment.dependency_position()).map_err(|error| {
+                Error::new(
+                    ErrorKind::Storage,
+                    format!("dependency position cannot be addressed: {error}"),
+                )
+            })?;
+        if !set
+            .dependencies()
+            .get(dependency_position)
+            .is_some_and(|dependency| segment_matches(segment, dependency))
+        {
+            add_path_changed(activity, input, &path, evaluation);
+            return Ok(());
+        }
+    }
+    Ok(())
+}
+
+fn segment_matches(segment: &ArtifactDependencyPathSegment, dependency: &Dependency) -> bool {
+    dependency.is_required()
+        && segment.source_resource_id() == dependency.source_resource_id()
+        && segment.kind() == dependency.kind()
+        && segment.target() == dependency.target()
+        && segment.resolved_representation_id() == dependency.resolved_representation_id()
+        && segment.authored_reference() == dependency.authored_reference()
+}
+
+fn add_path_changed(
+    activity: &Activity,
+    input: &ActivityInput,
+    path: &CapturedPath,
+    evaluation: &mut DependencyEvaluation,
+) {
+    promote_state(&mut evaluation.state, ArtifactKnowledgeState::Stale);
+    evaluation
+        .reasons
+        .push(ArtifactKnowledgeReason::DependencyPathChanged {
+            activity_id: activity.id(),
+            input_representation_id: input.representation_id(),
+            path: path.segments.clone(),
+        });
 }
 
 fn load_paths(production: &SqliteProduction, input_id: i64) -> Result<Vec<CapturedPath>> {
@@ -252,5 +321,17 @@ fn stored_domain_error(context: &'static str) -> impl FnOnce(Error) -> Error {
             ErrorKind::Storage,
             format!("stored {context} is invalid: {error}"),
         )
+    }
+}
+
+fn promote_state(current: &mut ArtifactKnowledgeState, candidate: ArtifactKnowledgeState) {
+    let priority = |state| match state {
+        ArtifactKnowledgeState::Current => 0,
+        ArtifactKnowledgeState::Stale => 2,
+        ArtifactKnowledgeState::Diverged => 3,
+        _ => 1,
+    };
+    if priority(candidate) > priority(*current) {
+        *current = candidate;
     }
 }

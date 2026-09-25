@@ -12,6 +12,65 @@ use postproject_storage_sqlite::SqliteProduction;
 use rusqlite::Connection;
 
 #[test]
+fn changed_authored_dependency_path_makes_artifact_stale() {
+    let directory = tempfile::tempdir().expect("create fixture directory");
+    let production_path = directory.path().join("changed-dependency-path.pproj");
+    let paths =
+        ["shot.usda", "character.usda", "render.mov"].map(|name| directory.path().join(name));
+    for (index, path) in paths.iter().enumerate() {
+        fs::write(path, format!("media-{index}")).expect("write media fixture");
+    }
+    let imports =
+        paths.map(|path| prepare_original_media(path, None, None).expect("prepare media fixture"));
+    let shot_id = imports[0].representation().id();
+    let render_id = imports[2].representation().id();
+    let dependency = Dependency::new(
+        None,
+        DependencyKind::new("org.openusd:reference").expect("kind"),
+        DependencyTarget::Representation(imports[1].representation().id()),
+        None,
+        true,
+        "../assets/Character.usda",
+    )
+    .expect("dependency");
+    let mut production = SqliteProduction::create(&production_path, None).expect("create");
+    let mut transaction = production.begin_transaction().expect("begin setup");
+    for import in &imports {
+        transaction.import_original(import).expect("stage import");
+    }
+    transaction
+        .record_dependency_set(shot_id, &[dependency])
+        .expect("record dependency");
+    transaction.commit().expect("commit setup");
+    drop(transaction);
+    create_activity(
+        &mut production,
+        shot_id,
+        render_id,
+        "org.postproject:render",
+    );
+    assert_eq!(
+        evaluate(&production, render_id).state(),
+        ArtifactKnowledgeState::Current
+    );
+
+    let mut transaction = production.begin_transaction().expect("begin replacement");
+    transaction
+        .record_dependency_set(shot_id, &[])
+        .expect("remove dependency");
+    transaction.commit().expect("commit replacement");
+    drop(transaction);
+    let evaluation = evaluate(&production, render_id);
+    assert_eq!(evaluation.state(), ArtifactKnowledgeState::Stale);
+    assert!(evaluation.reasons().iter().any(|reason| matches!(
+        reason,
+        ArtifactKnowledgeReason::DependencyPathChanged { path, .. }
+            if path.len() == 1
+                && path[0].authored_reference() == "../assets/Character.usda"
+    )));
+}
+
+#[test]
 fn unresolved_dependency_snapshot_is_indeterminate_with_its_authored_path() {
     let directory = tempfile::tempdir().expect("create fixture directory");
     let production_path = directory.path().join("unresolved-dependency.pproj");
