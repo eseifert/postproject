@@ -6,9 +6,11 @@
 // The work directory is prepared by prepare-workdir.cmake.
 #include <postproject/postproject.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -73,7 +75,7 @@ void add_title(postproject::Production &production,
       "iptc-vmhub-1.7-schema.json",
       "title", postproject::MetadataInput::languageString("Interview", "en-US"));
   transaction.commit();
-  // The wrapper does not read metadata yet; use pp_production_metadata().
+  // Read one target's assertions with the C function pp_production_metadata().
 }
 // [/metadata]
 
@@ -115,9 +117,22 @@ void confirm_unique_candidates(
   for (const auto &representation : resolutions) {
     for (const auto &resource : representation.resources) {
       // Several candidates need a person to choose; never pick one here.
-      if (resource.candidates.size() == 1) {
-        transaction.confirmLocator(resource.resource_id,
-                                   resource.candidates.front().uri);
+      if (resource.candidates.size() != 1) {
+        continue;
+      }
+      const auto &candidate = resource.candidates.front();
+      std::optional<std::string> root;
+      for (const auto &evidence : candidate.evidence) {
+        if (evidence.kind == postproject::EvidenceKind::media_root_relation) {
+          root = evidence.detail;
+        }
+      }
+      if (root.has_value()) {
+        // Record the logical root the candidate was found under.
+        transaction.confirmLocatorUnderRoot(resource.resource_id, candidate.uri,
+                                            *root);
+      } else {
+        transaction.confirmLocator(resource.resource_id, candidate.uri);
       }
     }
   }
@@ -252,6 +267,127 @@ void request_and_page_jobs(postproject::Production &production,
 }
 // [/job-query-pages]
 
+// [media-structure-pages]
+void print_recorded_locators(const postproject::Production &production) {
+  std::optional<std::string> cursor;
+  do {
+    const auto assets = production.assets(100, cursor);
+    for (const auto &asset : assets.items) {
+      // Follow each nested next_cursor the same way in large productions.
+      for (const auto &representation :
+           production.representations(asset.id, 100).items) {
+        for (const auto &resource_id :
+             production.resources(representation.id, 100).items) {
+          const auto locators = production.locators(resource_id, 100);
+          for (const auto &match : locators.items) {
+            std::cout << match.locator.uri
+                      << " (root: " << match.media_root.value_or("-") << ")\n";
+          }
+        }
+      }
+    }
+    cursor = assets.next_cursor;
+  } while (cursor.has_value());
+}
+// [/media-structure-pages]
+
+// [knowledge-only-media]
+std::vector<postproject::Uuid>
+list_media_knowledge(const postproject::Production &production) {
+  // Both queries read recorded knowledge; neither touches the filesystem.
+  const auto unresolved = production.unresolvedMedia(100);
+  std::cout << "representations without a recorded locator: "
+            << unresolved.items.size() << '\n';
+
+  std::vector<postproject::Uuid> under_rushes;
+  for (const auto &representation :
+       production.representationsUnderMediaRoot("rushes", 100).items) {
+    under_rushes.push_back(representation.id);
+  }
+  return under_rushes;
+}
+// [/knowledge-only-media]
+
+// [metadata-query-pages]
+std::vector<postproject::ObjectRef>
+find_interview_titles(const postproject::Production &production) {
+  const auto page = production.queryMetadata(
+      "https://iptc.org/std/videometadatahub/recommendation/"
+      "iptc-vmhub-1.7-schema.json",
+      "title", postproject::MetadataInput::languageString("Interview", "en-US"),
+      100);
+  std::cout << "exact title matches: " << page.items.size() << '\n';
+  std::vector<postproject::ObjectRef> targets;
+  for (const auto &assertion : page.items) {
+    targets.push_back(assertion.target);
+  }
+  return targets;
+}
+// [/metadata-query-pages]
+
+// [provenance-query-pages]
+void query_render_lineage(const postproject::Production &production,
+                          const postproject::Uuid &source_id,
+                          const postproject::Uuid &render_id) {
+  const auto producing = production.activitiesProducing(render_id, 100);
+  const auto consuming = production.activitiesConsuming(source_id, 100);
+  require(producing.items.size() == 1 && consuming.items.size() == 1 &&
+              producing.items.front().id == consuming.items.front().id,
+          "render activity");
+
+  const auto by_kind =
+      production.outputsByActivityKind("org.postproject:render", 100);
+  const auto by_tool = production.outputsByTool(
+      {"Example Renderer", "2.1", "https://example.com/renderer"}, 100);
+  require(by_kind.items == std::vector{render_id} &&
+              by_tool.items == std::vector{render_id},
+          "render outputs");
+
+  const auto ancestors = production.ancestors(render_id, 8, 1000, 100);
+  for (const auto &match : ancestors.items) {
+    std::cout << "ancestor at depth " << match.depth << '\n';
+  }
+  require(!ancestors.traversal_truncated, "complete ancestor traversal");
+
+  const auto descendants = production.descendants(source_id, 8, 1000, 100);
+  require(descendants.items.front().object.id == render_id,
+          "render descends from its source");
+}
+// [/provenance-query-pages]
+
+// [stale-artifact-pages]
+std::vector<postproject::Uuid>
+stale_descendants(const postproject::Production &production,
+                  const postproject::Uuid &source_id) {
+  std::vector<postproject::Uuid> stale;
+  std::optional<std::string> cursor;
+  do {
+    const auto page =
+        production.staleArtifacts(64, 1000, 100, cursor, source_id);
+    // A page bounds the candidates examined, so it may hold fewer stale
+    // results, or none, and still carry a continuation.
+    stale.insert(stale.end(), page.items.begin(), page.items.end());
+    cursor = page.next_cursor;
+  } while (cursor.has_value());
+  return stale;
+}
+// [/stale-artifact-pages]
+
+// [changed-objects]
+std::vector<postproject::ObjectRef>
+objects_changed_after(const postproject::Production &production,
+                      std::uint64_t sequence) {
+  std::vector<postproject::ObjectRef> changed;
+  std::optional<std::string> cursor;
+  do {
+    const auto page = production.objectsChangedSince(sequence, 100, cursor);
+    changed.insert(changed.end(), page.items.begin(), page.items.end());
+    cursor = page.next_cursor;
+  } while (cursor.has_value());
+  return changed;
+}
+// [/changed-objects]
+
 void handle_event(const postproject::RevisionEvent &event) {
   std::cout << "event " << event.position << ": alternative "
             << event.payload.index() << '\n';
@@ -318,6 +454,7 @@ int main(int argc, char **argv) {
             "unique candidate");
     confirm_unique_candidates(production, resolutions);
 
+    const auto before_render = production.latestRevision()->sequence;
     const auto sequence_id = add_render_sequence(
         production, asset_id, work + "/renders/shot010");
     record_render(production, original_id, sequence_id);
@@ -325,6 +462,23 @@ int main(int argc, char **argv) {
     record_and_query_dependencies(production, sequence_id, asset_id,
                                   original_id);
     request_and_page_jobs(production, original_id, asset_id);
+
+    print_recorded_locators(production);
+    require(list_media_knowledge(production) == std::vector{original_id},
+            "representation under the rushes root");
+    const postproject::ObjectRef asset{postproject::ObjectKind::asset,
+                                       asset_id};
+    require(find_interview_titles(production) == std::vector{asset},
+            "exact title match");
+    query_render_lineage(production, original_id, sequence_id);
+    require(stale_descendants(production, original_id).empty(),
+            "no stale renders");
+    const postproject::ObjectRef sequence{
+        postproject::ObjectKind::representation, sequence_id};
+    const auto changed = objects_changed_after(production, before_render);
+    require(std::find(changed.begin(), changed.end(), sequence) !=
+                changed.end(),
+            "changed render sequence");
 
     const auto cursor = process_changes(production, 0);
     require(cursor == production.latestRevision()->sequence, "feed cursor");

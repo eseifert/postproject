@@ -265,7 +265,22 @@ confirm_unique_candidates(pp_production_t *production,
                                                  &confidence, &evidence_count,
                                                  error);
       }
-      if (status == PP_OK && uri != NULL) {
+      /* Record the logical root the candidate was found under, if any. */
+      const char *root = NULL;
+      for (uint64_t e = 0; status == PP_OK && uri != NULL && e < evidence_count;
+           ++e) {
+        pp_evidence_kind_t kind;
+        const char *detail = NULL;
+        status = pp_resolution_set_get_candidate_evidence(
+            resolutions, r, s, 0, e, &kind, &detail, error);
+        if (status == PP_OK && kind == PP_EVIDENCE_MEDIA_ROOT_RELATION) {
+          root = detail;
+        }
+      }
+      if (status == PP_OK && uri != NULL && root != NULL) {
+        status = pp_transaction_confirm_locator_under_root(
+            transaction, &resource_id, uri, root, error);
+      } else if (status == PP_OK && uri != NULL) {
         status = pp_transaction_confirm_locator(transaction, &resource_id, uri,
                                                 error);
       }
@@ -546,6 +561,306 @@ static pp_error_code_t request_and_page_jobs(pp_production_t *production,
 }
 /* [/job-query-pages] */
 
+/* [media-structure-pages] */
+static pp_error_code_t
+print_resource_locators(const pp_production_t *production,
+                        const pp_uuid_t *resource_id,
+                        pp_error_t **error) {
+  pp_locator_query_set_t *locators = NULL;
+  pp_error_code_t status = pp_production_locators_page(
+      production, resource_id, UINT32_C(100), NULL, &locators, error);
+  for (uint64_t i = 0;
+       status == PP_OK && i < pp_locator_query_set_count(locators); ++i) {
+    pp_uuid_t locator_id;
+    pp_uuid_t owner_id;
+    const char *uri = NULL;
+    pp_locator_availability_t availability;
+    uint8_t has_last_seen = 0;
+    int64_t last_seen = 0;
+    const char *media_root = NULL;
+    status = pp_locator_query_set_get(locators, i, &locator_id, &owner_id, &uri,
+                                      &availability, &has_last_seen,
+                                      &last_seen, &media_root, error);
+    if (status == PP_OK) {
+      printf("%s (root: %s)\n", uri, media_root != NULL ? media_root : "-");
+    }
+  }
+  pp_locator_query_set_release(locators);
+  return status;
+}
+
+static pp_error_code_t print_asset_locators(const pp_production_t *production,
+                                            const pp_uuid_t *asset_id,
+                                            pp_error_t **error) {
+  /* Follow each nested cursor the same way in large productions. */
+  pp_representation_set_t *representations = NULL;
+  pp_error_code_t status = pp_production_representations_page(
+      production, asset_id, UINT32_C(100), NULL, &representations, error);
+  for (uint64_t r = 0;
+       status == PP_OK && r < pp_representation_set_count(representations);
+       ++r) {
+    pp_uuid_t representation_id;
+    pp_uuid_t owner;
+    pp_representation_kind_t kind;
+    pp_content_structure_kind_t structure;
+    uint64_t members, resources, fingerprints;
+    pp_object_query_set_t *resource_page = NULL;
+    status = pp_representation_set_get(representations, r, &representation_id,
+                                       &owner, &kind, &structure, &members,
+                                       &resources, &fingerprints, error);
+    if (status == PP_OK) {
+      status = pp_production_resources_page(production, &representation_id,
+                                            UINT32_C(100), NULL,
+                                            &resource_page, error);
+    }
+    for (uint64_t s = 0;
+         status == PP_OK && s < pp_object_query_set_count(resource_page); ++s) {
+      pp_object_ref_t resource;
+      uint32_t depth = 0;
+      status =
+          pp_object_query_set_get(resource_page, s, &resource, &depth, error);
+      if (status == PP_OK) {
+        status = print_resource_locators(production, &resource.id, error);
+      }
+    }
+    pp_object_query_set_release(resource_page);
+  }
+  pp_representation_set_release(representations);
+  return status;
+}
+
+static pp_error_code_t
+print_recorded_locators(const pp_production_t *production,
+                        pp_error_t **error) {
+  char cursor_storage[2049] = {0};
+  const char *cursor = NULL;
+  pp_error_code_t status = PP_OK;
+  while (status == PP_OK) {
+    pp_asset_set_t *assets = NULL;
+    status = pp_production_assets_page(production, UINT32_C(100), cursor,
+                                       &assets, error);
+    for (uint64_t i = 0; status == PP_OK && i < pp_asset_set_count(assets);
+         ++i) {
+      pp_uuid_t asset_id;
+      int64_t created_at = 0;
+      const char *name = NULL;
+      const char *import_source = NULL;
+      status = pp_asset_set_get(assets, i, &asset_id, &created_at, &name,
+                                &import_source, error);
+      if (status == PP_OK) {
+        status = print_asset_locators(production, &asset_id, error);
+      }
+    }
+    /* The cursor borrows the page; copy it before releasing the page. */
+    const char *next =
+        status == PP_OK ? pp_asset_set_next_cursor(assets) : NULL;
+    const int copied =
+        next != NULL
+            ? snprintf(cursor_storage, sizeof cursor_storage, "%s", next)
+            : 0;
+    pp_asset_set_release(assets);
+    if (status != PP_OK || copied == 0) {
+      break;
+    }
+    if (copied < 0 || (size_t)copied >= sizeof cursor_storage) {
+      status = PP_ERROR_INTERNAL;
+    }
+    cursor = cursor_storage;
+  }
+  return status;
+}
+/* [/media-structure-pages] */
+
+/* [knowledge-only-media] */
+static pp_error_code_t list_media_knowledge(const pp_production_t *production,
+                                            uint64_t *out_under_rushes,
+                                            pp_error_t **error) {
+  /* Both queries read recorded knowledge; neither touches the filesystem. */
+  pp_object_query_set_t *unresolved = NULL;
+  pp_representation_set_t *under_rushes = NULL;
+  pp_error_code_t status = pp_production_unresolved_media(
+      production, UINT32_C(100), NULL, &unresolved, error);
+  if (status == PP_OK) {
+    printf("representations without a recorded locator: %llu\n",
+           (unsigned long long)pp_object_query_set_count(unresolved));
+    status = pp_production_representations_under_media_root(
+        production, "rushes", UINT32_C(100), NULL, &under_rushes, error);
+  }
+  if (status == PP_OK) {
+    *out_under_rushes = pp_representation_set_count(under_rushes);
+  }
+
+  pp_representation_set_release(under_rushes);
+  pp_object_query_set_release(unresolved);
+  return status;
+}
+/* [/knowledge-only-media] */
+
+/* [metadata-query-pages] */
+static pp_error_code_t find_interview_titles(const pp_production_t *production,
+                                             uint64_t *out_count,
+                                             pp_error_t **error) {
+  pp_metadata_input_t *interview = NULL;
+  pp_metadata_set_t *page = NULL;
+  pp_error_code_t status =
+      pp_metadata_input_create_string("Interview", "en-US", &interview, error);
+  if (status == PP_OK) {
+    /* Pass NULL instead of an exact value to match every value. */
+    status = pp_production_query_metadata(
+        production,
+        "https://iptc.org/std/videometadatahub/recommendation/"
+        "iptc-vmhub-1.7-schema.json",
+        "title", interview, UINT32_C(100), NULL, &page, error);
+  }
+  if (status == PP_OK) {
+    *out_count = pp_metadata_set_count(page);
+    printf("exact title matches: %llu\n", (unsigned long long)*out_count);
+  }
+
+  pp_metadata_set_release(page);
+  pp_metadata_input_release(interview);
+  return status;
+}
+/* [/metadata-query-pages] */
+
+/* [provenance-query-pages] */
+static pp_error_code_t query_render_lineage(const pp_production_t *production,
+                                            const pp_uuid_t *source_id,
+                                            const pp_uuid_t *render_id,
+                                            pp_error_t **error) {
+  pp_activity_set_t *producing = NULL;
+  pp_activity_set_t *consuming = NULL;
+  pp_object_query_set_t *by_kind = NULL;
+  pp_object_query_set_t *by_tool = NULL;
+  pp_object_query_set_t *ancestors = NULL;
+  pp_error_code_t status = pp_production_activities_producing_page(
+      production, render_id, UINT32_C(100), NULL, &producing, error);
+  if (status == PP_OK) {
+    status = pp_production_activities_consuming_page(
+        production, source_id, UINT32_C(100), NULL, &consuming, error);
+  }
+  if (status == PP_OK) {
+    status = pp_production_outputs_by_activity_kind(
+        production, "org.postproject:render", UINT32_C(100), NULL, &by_kind,
+        error);
+  }
+  if (status == PP_OK) {
+    /* The tool identity matches exactly; NULL matches an absent field. */
+    status = pp_production_outputs_by_tool(
+        production, "Example Renderer", "2.1", "https://example.com/renderer",
+        UINT32_C(100), NULL, &by_tool, error);
+  }
+  if (status == PP_OK) {
+    status = pp_production_provenance_ancestors_page(
+        production, render_id, UINT32_C(8), UINT32_C(1000), UINT32_C(100), NULL,
+        &ancestors, error);
+  }
+  for (uint64_t i = 0;
+       status == PP_OK && i < pp_object_query_set_count(ancestors); ++i) {
+    pp_object_ref_t ancestor;
+    uint32_t depth = 0;
+    status = pp_object_query_set_get(ancestors, i, &ancestor, &depth, error);
+    if (status == PP_OK) {
+      printf("ancestor at depth %u\n", depth);
+    }
+  }
+  if (status == PP_OK &&
+      (pp_activity_set_count(producing) != UINT64_C(1) ||
+       pp_activity_set_count(consuming) != UINT64_C(1) ||
+       pp_object_query_set_count(by_kind) != UINT64_C(1) ||
+       pp_object_query_set_count(by_tool) != UINT64_C(1) ||
+       pp_object_query_set_traversal_truncated(ancestors) != 0)) {
+    status = PP_ERROR_INTERNAL;
+  }
+
+  pp_object_query_set_release(ancestors);
+  pp_object_query_set_release(by_tool);
+  pp_object_query_set_release(by_kind);
+  pp_activity_set_release(consuming);
+  pp_activity_set_release(producing);
+  return status;
+}
+/* [/provenance-query-pages] */
+
+/* [stale-artifact-pages] */
+static pp_error_code_t
+count_stale_descendants(const pp_production_t *production,
+                        const pp_uuid_t *source_id,
+                        uint64_t *out_count,
+                        pp_error_t **error) {
+  char cursor_storage[2049] = {0};
+  const char *cursor = NULL;
+  pp_error_code_t status = PP_OK;
+  *out_count = 0;
+  while (status == PP_OK) {
+    pp_object_query_set_t *page = NULL;
+    status = pp_production_stale_artifacts(production, source_id, UINT32_C(64),
+                                           UINT32_C(1000), UINT32_C(100),
+                                           cursor, &page, error);
+    /* A page bounds the candidates examined, so it may hold fewer stale
+     * results, or none, and still carry a continuation. */
+    *out_count += status == PP_OK ? pp_object_query_set_count(page) : 0;
+    const char *next =
+        status == PP_OK ? pp_object_query_set_next_cursor(page) : NULL;
+    const int copied =
+        next != NULL
+            ? snprintf(cursor_storage, sizeof cursor_storage, "%s", next)
+            : 0;
+    pp_object_query_set_release(page);
+    if (status != PP_OK || copied == 0) {
+      break;
+    }
+    if (copied < 0 || (size_t)copied >= sizeof cursor_storage) {
+      status = PP_ERROR_INTERNAL;
+    }
+    cursor = cursor_storage;
+  }
+  return status;
+}
+/* [/stale-artifact-pages] */
+
+/* [changed-objects] */
+static pp_error_code_t
+object_changed_after(const pp_production_t *production, uint64_t sequence,
+                     const pp_object_ref_t *object, uint8_t *out_changed,
+                     pp_error_t **error) {
+  char cursor_storage[2049] = {0};
+  const char *cursor = NULL;
+  pp_error_code_t status = PP_OK;
+  *out_changed = 0;
+  while (status == PP_OK) {
+    pp_object_query_set_t *page = NULL;
+    status = pp_production_objects_changed_since(
+        production, sequence, UINT32_C(100), cursor, &page, error);
+    for (uint64_t i = 0;
+         status == PP_OK && i < pp_object_query_set_count(page); ++i) {
+      pp_object_ref_t changed;
+      uint32_t depth = 0;
+      status = pp_object_query_set_get(page, i, &changed, &depth, error);
+      if (status == PP_OK && changed.kind == object->kind &&
+          memcmp(&changed.id, &object->id, sizeof changed.id) == 0) {
+        *out_changed = 1;
+      }
+    }
+    const char *next =
+        status == PP_OK ? pp_object_query_set_next_cursor(page) : NULL;
+    const int copied =
+        next != NULL
+            ? snprintf(cursor_storage, sizeof cursor_storage, "%s", next)
+            : 0;
+    pp_object_query_set_release(page);
+    if (status != PP_OK || copied == 0) {
+      break;
+    }
+    if (copied < 0 || (size_t)copied >= sizeof cursor_storage) {
+      status = PP_ERROR_INTERNAL;
+    }
+    cursor = cursor_storage;
+  }
+  return status;
+}
+/* [/changed-objects] */
+
 static void handle_event(const pp_revision_event_t *event) {
   printf("event %u: kind %u\n", event->position, event->kind);
 }
@@ -678,6 +993,9 @@ int main(int argc, char **argv) {
   pp_uuid_t original_id;
   pp_uuid_t sequence_id;
   uint64_t cursor = 0;
+  uint64_t before_render = 0;
+  uint64_t count = 0;
+  uint8_t changed = 0;
 
   pp_error_code_t status = create_production(production_path, media,
                                              &production, &asset_id, &error);
@@ -705,6 +1023,9 @@ int main(int argc, char **argv) {
     status = confirm_unique_candidates(production, resolutions, &error);
   }
   if (status == PP_OK) {
+    status = process_changes(production, &before_render, &error);
+  }
+  if (status == PP_OK) {
     status = add_render_sequence(production, &asset_id, renders, &sequence_id,
                                  &error);
   }
@@ -720,6 +1041,39 @@ int main(int argc, char **argv) {
   }
   if (status == PP_OK) {
     status = request_and_page_jobs(production, &original_id, &asset_id, &error);
+  }
+  if (status == PP_OK) {
+    status = print_recorded_locators(production, &error);
+  }
+  if (status == PP_OK) {
+    status = list_media_knowledge(production, &count, &error);
+  }
+  if (status == PP_OK && count != UINT64_C(1)) {
+    status = PP_ERROR_INTERNAL;
+  }
+  if (status == PP_OK) {
+    status = find_interview_titles(production, &count, &error);
+  }
+  if (status == PP_OK && count != UINT64_C(1)) {
+    status = PP_ERROR_INTERNAL;
+  }
+  if (status == PP_OK) {
+    status = query_render_lineage(production, &original_id, &sequence_id,
+                                  &error);
+  }
+  if (status == PP_OK) {
+    status = count_stale_descendants(production, &original_id, &count, &error);
+  }
+  if (status == PP_OK && count != UINT64_C(0)) {
+    status = PP_ERROR_INTERNAL;
+  }
+  if (status == PP_OK) {
+    const pp_object_ref_t sequence = {PP_OBJECT_REPRESENTATION, sequence_id};
+    status = object_changed_after(production, before_render, &sequence,
+                                  &changed, &error);
+  }
+  if (status == PP_OK && changed == 0) {
+    status = PP_ERROR_INTERNAL;
   }
   if (status == PP_OK) {
     status = process_changes(production, &cursor, &error);

@@ -69,8 +69,20 @@ resolver order. Root creation takes a portable name rather than a directory;
 local paths are supplied to `resolve()`. Root creation, enablement, removal,
 locator retirement, and explicit
 candidate confirmation are transactional through `add_media_root()`,
-`set_media_root_enabled()`, `remove_media_root()`, `retire_locator()`, and
-`confirm_locator()`. Transactions can add
+`set_media_root_enabled()`, `remove_media_root()`, `retire_locator()`,
+`confirm_locator()`, and `confirm_locator_under_root()`, which also records the
+logical root a candidate was found under. Transactions can add
 single-file, compact image-sequence, ordered-parts, and package representations
 to an existing asset. The generated low-level declaration table covers every
 function and struct in the current ABI.
+
+Production-sized reads are [bounded queries](bounded-queries.md) that take a
+keyword `limit` and an optional `cursor` and return a `QueryPage` with `items`,
+`next_cursor`, and `traversal_truncated`: `assets_page()`,
+`representations_page()`, `resources_page()`, `locators_page()`,
+`unresolved_media()`, `representations_under_media_root()`, `query_metadata()`,
+`activities_producing_page()`, `activities_consuming_page()`,
+`outputs_by_activity_kind()`, `outputs_by_tool()`,
+`provenance_ancestors_page()`, `provenance_descendants_page()`,
+`dependencies()`, `dependents()`, `stale_artifacts()`, `jobs()`, and
+`objects_changed_since()`.

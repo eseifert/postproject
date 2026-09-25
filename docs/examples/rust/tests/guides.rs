@@ -8,19 +8,21 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use postproject_core::{
-    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityRole,
-    ArtifactEvaluationLimits, AssetId, Dependency, DependencyKind, DependencyQueryLimits,
-    DependencyTarget, Error, ErrorKind, ExternalIdentifier, FrameRange, HostObjectBinding,
-    IdentifierScheme, ImageSequencePattern, Job, JobClaimId, JobId, JobKind, JobQuery,
-    JobStateKind, MediaRoot, MediaRootId, MetadataProperty, MetadataValue, ObjectRef,
-    OriginIdentity, ProductionId, PropertyId, QueryPageRequest, RationalRate, RepresentationId,
-    RepresentationKind, RepresentationResolution, RequestedJobOutput, Result, RevisionContext,
-    RevisionEvent, ToolIdentity, VocabularyId,
+    Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityOutputQuery,
+    ActivityRole, ArtifactEvaluationLimits, AssetId, Dependency, DependencyKind,
+    DependencyQueryLimits, DependencyTarget, Error, ErrorKind, EvidenceKind, ExternalIdentifier,
+    FrameRange, HostObjectBinding, IdentifierScheme, ImageSequencePattern, Job, JobClaimId, JobId,
+    JobKind, JobQuery, JobStateKind, MediaRoot, MediaRootId, MetadataMatch, MetadataProperty,
+    MetadataQuery, MetadataValue, ObjectRef, OriginIdentity, ProductionId, PropertyId,
+    ProvenanceQueryLimits, QueryPageRequest, RationalRate, Representation, RepresentationId,
+    RepresentationKind, RepresentationResolution, RequestedJobOutput, ResolutionEvidence, Result,
+    RevisionContext, RevisionEvent, StaleArtifactQuery, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     ExecutionOutcome, ExecutionRequest, Executor, FfmpegExecutor, GENERATE_PROXY_JOB_KIND,
     ImageSequenceSource, MediaResolver, MediaRootMapping, PROXY_720P_PROFILE,
-    prepare_confirmed_locator, prepare_image_sequence_representation, prepare_original_media,
+    prepare_confirmed_locator, prepare_confirmed_locator_under_root,
+    prepare_image_sequence_representation, prepare_original_media,
 };
 use postproject_storage_sqlite::SqliteProduction;
 
@@ -165,10 +167,24 @@ fn confirm_unique_candidates(
     for resolution in resolutions {
         for resource in resolution.resources() {
             // Several candidates need a person to choose; never pick one here.
-            if let [candidate] = resource.candidates() {
-                let locator = prepare_confirmed_locator(resource.resource_id(), candidate.uri())?;
-                transaction.add_locator(&locator)?;
-            }
+            let [candidate] = resource.candidates() else {
+                continue;
+            };
+            let root = candidate
+                .evidence()
+                .iter()
+                .find(|evidence| evidence.kind() == EvidenceKind::MediaRootRelation)
+                .and_then(ResolutionEvidence::detail);
+            // Record the logical root the candidate was found under.
+            let locator = match root {
+                Some(root) => prepare_confirmed_locator_under_root(
+                    resource.resource_id(),
+                    candidate.uri(),
+                    root,
+                )?,
+                None => prepare_confirmed_locator(resource.resource_id(), candidate.uri())?,
+            };
+            transaction.add_locator(&locator)?;
         }
     }
     transaction.commit()
@@ -339,6 +355,157 @@ fn request_and_page_jobs(
 }
 // [/job-query-pages]
 
+// [media-structure-pages]
+fn print_recorded_locators(production: &SqliteProduction) -> Result<()> {
+    // Follow each nested next_cursor the same way in large productions.
+    let first_page = || QueryPageRequest::new(100, None);
+    let mut cursor = None;
+    loop {
+        let assets = production.assets_page(&QueryPageRequest::new(100, cursor)?)?;
+        for asset in assets.items() {
+            for representation in production
+                .representations_page(asset.id(), &first_page()?)?
+                .items()
+            {
+                for resource in production
+                    .resources_page(representation.id(), &first_page()?)?
+                    .items()
+                {
+                    for locator in production
+                        .locators_page(resource.id(), &first_page()?)?
+                        .items()
+                    {
+                        let root = locator.media_root().unwrap_or("-");
+                        println!("{} (root: {root})", locator.uri());
+                    }
+                }
+            }
+        }
+        cursor = assets.next_cursor().cloned();
+        if cursor.is_none() {
+            return Ok(());
+        }
+    }
+}
+// [/media-structure-pages]
+
+// [knowledge-only-media]
+fn list_media_knowledge(production: &SqliteProduction) -> Result<Vec<RepresentationId>> {
+    // Both queries read recorded knowledge; neither touches the filesystem.
+    let request = QueryPageRequest::new(100, None)?;
+    for representation_id in production.unresolved_media(&request)?.items() {
+        println!("no recorded locator: {representation_id}");
+    }
+
+    let under_rushes = production.representations_under_media_root("rushes", &request)?;
+    Ok(under_rushes
+        .items()
+        .iter()
+        .map(Representation::id)
+        .collect())
+}
+// [/knowledge-only-media]
+
+// [metadata-query-pages]
+fn find_interview_titles(production: &SqliteProduction) -> Result<Vec<ObjectRef>> {
+    let title = MetadataProperty::new(
+        VocabularyId::new(
+            "https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json",
+        )?,
+        PropertyId::new("title")?,
+    );
+    let query = MetadataQuery::new(
+        title,
+        Some(MetadataValue::language_string("Interview", "en-US")?),
+    )?;
+    let page = production.metadata_query(&query, &QueryPageRequest::new(100, None)?)?;
+    for matched in page.items() {
+        println!("{:?}: {:?}", matched.target(), matched.assertion());
+    }
+    Ok(page.items().iter().map(MetadataMatch::target).collect())
+}
+// [/metadata-query-pages]
+
+// [provenance-query-pages]
+fn query_render_lineage(
+    production: &SqliteProduction,
+    source_id: RepresentationId,
+    render_id: RepresentationId,
+) -> Result<()> {
+    let request = QueryPageRequest::new(100, None)?;
+    let producing = production.activities_producing_page(render_id, &request)?;
+    let consuming = production.activities_consuming_page(source_id, &request)?;
+    assert_eq!(producing.items(), consuming.items());
+
+    let by_kind = production.activity_outputs(
+        &ActivityOutputQuery::Kind(ActivityKind::new("org.postproject:render")?),
+        &request,
+    )?;
+    let by_tool = production.activity_outputs(
+        &ActivityOutputQuery::Tool(ToolIdentity::new(
+            "Example Renderer",
+            Some("2.1".to_owned()),
+            Some("https://example.com/renderer".to_owned()),
+        )?),
+        &request,
+    )?;
+    assert_eq!(by_kind.items(), [render_id]);
+    assert_eq!(by_tool.items(), [render_id]);
+
+    let limits = ProvenanceQueryLimits::new(8, 1_000)?;
+    let ancestors = production.ancestors_page(render_id, limits, &request)?;
+    for item in ancestors.items() {
+        println!(
+            "ancestor {} at depth {}",
+            item.representation_id(),
+            item.depth()
+        );
+    }
+    assert!(!ancestors.traversal_truncated());
+
+    let descendants = production.descendants_page(source_id, limits, &request)?;
+    assert_eq!(descendants.items()[0].representation_id(), render_id);
+    Ok(())
+}
+// [/provenance-query-pages]
+
+// [stale-artifact-pages]
+fn stale_descendants(
+    production: &SqliteProduction,
+    source_id: RepresentationId,
+) -> Result<Vec<RepresentationId>> {
+    let query = StaleArtifactQuery::new(Some(source_id), ArtifactEvaluationLimits::new(64, 1_000)?);
+    let mut stale = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = production.stale_artifacts(query, &QueryPageRequest::new(100, cursor)?)?;
+        // A page bounds the candidates examined, so it may hold fewer stale
+        // results, or none, and still carry a continuation.
+        stale.extend_from_slice(page.items());
+        cursor = page.next_cursor().cloned();
+        if cursor.is_none() {
+            return Ok(stale);
+        }
+    }
+}
+// [/stale-artifact-pages]
+
+// [changed-objects]
+fn objects_changed_after(production: &SqliteProduction, sequence: u64) -> Result<Vec<ObjectRef>> {
+    let mut changed = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page =
+            production.objects_changed_since(sequence, &QueryPageRequest::new(100, cursor)?)?;
+        changed.extend_from_slice(page.items());
+        cursor = page.next_cursor().cloned();
+        if cursor.is_none() {
+            return Ok(changed);
+        }
+    }
+}
+// [/changed-objects]
+
 // [reference-executor]
 fn execute_proxy(ffmpeg: &Path, input: &Path, target_root: &Path) -> Result<PathBuf> {
     let request = ExecutionRequest::new(
@@ -460,11 +627,25 @@ fn guide_examples_run_in_order() -> Result<()> {
     assert_eq!(resolutions[0].resources()[0].candidates().len(), 1);
     confirm_unique_candidates(&mut production, &resolutions)?;
 
+    let before_render = production.latest_revision()?.expect("revision").sequence();
     let sequence_id = add_render_sequence(&mut production, asset_id, &renders)?;
     record_render(&mut production, original_id, sequence_id)?;
     inspect_artifact(&production, sequence_id)?;
     record_and_query_dependencies(&mut production, sequence_id, asset_id, original_id)?;
     request_and_page_jobs(&mut production, original_id, asset_id)?;
+
+    print_recorded_locators(&production)?;
+    assert_eq!(list_media_knowledge(&production)?, vec![original_id]);
+    assert_eq!(
+        find_interview_titles(&production)?,
+        vec![ObjectRef::Asset(asset_id)]
+    );
+    query_render_lineage(&production, original_id, sequence_id)?;
+    assert!(stale_descendants(&production, original_id)?.is_empty());
+    assert!(
+        objects_changed_after(&production, before_render)?
+            .contains(&ObjectRef::Representation(sequence_id))
+    );
 
     let proxy_root = work.path().join("proxies");
     fs::create_dir(&proxy_root).expect("proxy root");

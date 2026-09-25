@@ -37,6 +37,11 @@ Transitive evaluation has explicit depth and representation-count bounds. If a
 bound is reached, the result is truncated and indeterminate rather than
 silently treating the unexplored graph as current.
 
+To find stale artifacts across a production, or among the provenance
+descendants of one changed source, use the paginated
+[stale-artifact query](../integrators/bounded-queries.md) instead of evaluating
+every output individually.
+
 Activities created before edge snapshots were introduced retain absent
 snapshots after migration. Their outputs are indeterminate until regenerated;
 PostProject never fabricates historical evidence from current values.

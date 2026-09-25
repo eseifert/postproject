@@ -44,6 +44,12 @@ decides which candidate to confirm: a person picks one of several plausible
 candidates, or a policy accepts a single exact match. Confirmation adds a
 locator for the resource in a transaction; the stored identity is unchanged.
 
+A candidate found under a mapped root carries `media_root_relation` evidence
+that names the logical root. The example confirms such a candidate under that
+root, so the locator records the portable root name but never the local
+directory. The CLI `media resolve --confirm` does the same automatically.
+[Locator and media-root queries](bounded-queries.md) report that recorded root.
+
 ```{code-variants} confirm-locator
 ```
 

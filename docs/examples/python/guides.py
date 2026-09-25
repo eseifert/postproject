@@ -18,12 +18,14 @@ from postproject import (
     ActivitySpec,
     AssetId,
     Dependency,
+    EvidenceKind,
     ExternalIdentifier,
     ImageSequenceInput,
     JobRequest,
     JobState,
     MetadataLanguageString,
     MetadataProperty,
+    ObjectReference,
     OriginIdentity,
     Production,
     RepresentationId,
@@ -122,9 +124,23 @@ def confirm_unique_candidates(
         for representation in resolutions:
             for resource in representation.resources:
                 # Several candidates need a person to choose; never pick one here.
-                if len(resource.candidates) == 1:
-                    transaction.confirm_locator(
-                        resource.resource_id, resource.candidates[0].uri
+                if len(resource.candidates) != 1:
+                    continue
+                candidate = resource.candidates[0]
+                root = next(
+                    (
+                        evidence.detail
+                        for evidence in candidate.evidence
+                        if evidence.kind is EvidenceKind.MEDIA_ROOT_RELATION
+                    ),
+                    None,
+                )
+                if root is None:
+                    transaction.confirm_locator(resource.resource_id, candidate.uri)
+                else:
+                    # Record the logical root the candidate was found under.
+                    transaction.confirm_locator_under_root(
+                        resource.resource_id, candidate.uri, root
                     )
 
 
@@ -282,6 +298,135 @@ def request_and_page_jobs(
 # [/job-query-pages]
 
 
+# [media-structure-pages]
+def print_recorded_locators(production: Production) -> None:
+    cursor = None
+    while True:
+        assets = production.assets_page(limit=100, cursor=cursor)
+        for asset in assets.items:
+            # Follow each nested next_cursor the same way in large productions.
+            for representation in production.representations_page(
+                asset.id, limit=100
+            ).items:
+                for resource_id in production.resources_page(
+                    representation.id, limit=100
+                ).items:
+                    for match in production.locators_page(resource_id, limit=100).items:
+                        print(f"{match.locator.uri} (root: {match.media_root or '-'})")
+        cursor = assets.next_cursor
+        if cursor is None:
+            break
+
+
+# [/media-structure-pages]
+
+
+# [knowledge-only-media]
+def list_media_knowledge(production: Production) -> tuple[RepresentationId, ...]:
+    # Both queries read recorded knowledge; neither touches the filesystem.
+    unresolved = production.unresolved_media(limit=100)
+    for representation_id in unresolved.items:
+        print(f"no recorded locator: {representation_id}")
+
+    under_rushes = production.representations_under_media_root("rushes", limit=100)
+    return tuple(representation.id for representation in under_rushes.items)
+
+
+# [/knowledge-only-media]
+
+
+# [metadata-query-pages]
+def find_interview_titles(production: Production) -> tuple[ObjectReference, ...]:
+    title = MetadataProperty(
+        "https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json",
+        "title",
+    )
+    page = production.query_metadata(
+        title, limit=100, value=MetadataLanguageString("Interview", "en-US")
+    )
+    for assertion in page.items:
+        print(f"{assertion.target}: {assertion.value}")
+    return tuple(assertion.target for assertion in page.items)
+
+
+# [/metadata-query-pages]
+
+
+# [provenance-query-pages]
+def query_render_lineage(
+    production: Production,
+    source_id: RepresentationId,
+    render_id: RepresentationId,
+) -> None:
+    producing = production.activities_producing_page(render_id, limit=100)
+    consuming = production.activities_consuming_page(source_id, limit=100)
+    assert producing.items == consuming.items
+
+    by_kind = production.outputs_by_activity_kind("org.postproject:render", limit=100)
+    by_tool = production.outputs_by_tool(
+        ToolIdentity("Example Renderer", "2.1", "https://example.com/renderer"),
+        limit=100,
+    )
+    assert by_kind.items == by_tool.items == (render_id,)
+
+    ancestors = production.provenance_ancestors_page(
+        render_id, max_depth=8, max_representations=1000, limit=100
+    )
+    for match in ancestors.items:
+        print(f"ancestor {match.representation_id} at depth {match.depth}")
+    assert not ancestors.traversal_truncated
+
+    descendants = production.provenance_descendants_page(
+        source_id, max_depth=8, max_representations=1000, limit=100
+    )
+    assert descendants.items[0].representation_id == render_id
+
+
+# [/provenance-query-pages]
+
+
+# [stale-artifact-pages]
+def stale_descendants(
+    production: Production, source_id: RepresentationId
+) -> list[RepresentationId]:
+    stale: list[RepresentationId] = []
+    cursor = None
+    while True:
+        page = production.stale_artifacts(
+            max_depth=64,
+            max_representations=1000,
+            limit=100,
+            cursor=cursor,
+            source=source_id,
+        )
+        # A page bounds the candidates examined, so it may hold fewer stale
+        # results, or none, and still carry a continuation.
+        stale.extend(page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            return stale
+
+
+# [/stale-artifact-pages]
+
+
+# [changed-objects]
+def objects_changed_after(
+    production: Production, sequence: int
+) -> list[ObjectReference]:
+    changed: list[ObjectReference] = []
+    cursor = None
+    while True:
+        page = production.objects_changed_since(sequence, limit=100, cursor=cursor)
+        changed.extend(page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            return changed
+
+
+# [/changed-objects]
+
+
 def handle_event(event: RevisionEvent) -> None:
     print(f"event {event.position}: {type(event.payload).__name__}")
 
@@ -338,6 +483,8 @@ def main() -> None:
         assert len(resolutions[0].resources[0].candidates) == 1
         confirm_unique_candidates(production, resolutions)
 
+        before_render = production.latest_revision
+        assert before_render is not None
         sequence_id = add_render_sequence(
             production, asset_id, work / "renders" / "shot010"
         )
@@ -345,6 +492,13 @@ def main() -> None:
         inspect_artifact(production, sequence_id)
         record_and_query_dependencies(production, sequence_id, asset_id, original_id)
         request_and_page_jobs(production, original_id, asset_id)
+
+        print_recorded_locators(production)
+        assert list_media_knowledge(production) == (original_id,)
+        assert find_interview_titles(production) == (asset_id,)
+        query_render_lineage(production, original_id, sequence_id)
+        assert stale_descendants(production, original_id) == []
+        assert sequence_id in objects_changed_after(production, before_render.sequence)
 
         cursor = process_changes(production, 0)
         latest = production.latest_revision

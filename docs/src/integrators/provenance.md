@@ -34,8 +34,21 @@ The graph can be read in four directions:
 
 - activities *producing* a representation;
 - activities *consuming* a representation;
-- transitive *ancestors*, following inputs; and
-- transitive *descendants*, following outputs.
+- *ancestors*, following inputs; and
+- *descendants*, following outputs.
+
+Each direction has a [bounded, paginated query](bounded-queries.md)
+on every surface. Ancestor and descendant pages require a maximum depth and a
+visited-representation bound, report each representation's shortest depth, and
+state separately when a bound truncated the traversal. Outputs can also be
+listed by exact activity kind or tool identity.
+
+The example above uses the complete-list reads that C, C++, Python, and Rust
+keep for small graphs: they return every producing or consuming activity and
+the complete transitive ancestor or descendant set, so their cost grows with the
+graph. The CLI `activity producing`, `activity consuming`, `activity ancestors`,
+and `activity descendants` commands always return one bounded page; ancestors
+and descendants default to `--max-depth 64` and `--max-representations 1000`.
 
 All activities can also be listed in stable identity order. Edges inside an
 activity are canonicalized by representation ID and role, and traversal returns

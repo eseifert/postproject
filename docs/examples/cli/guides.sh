@@ -59,6 +59,8 @@ postproject media resolve production.pproj "$ASSET_ID" \
   --root-map rushes="$PWD/moved" --confirm "$CANDIDATE"
 # [/confirm-locator]
 
+BEFORE_RENDER=$(postproject --json revisions latest production.pproj | jq -r .sequence)
+
 # [image-sequence]
 cat > shot010.json <<'EOF'
 {
@@ -137,6 +139,93 @@ while :; do
   [[ -z "$CURSOR" ]] && break
 done
 # [/job-query-pages]
+
+# [media-structure-pages]
+CURSOR=
+while :; do
+  ARGS=(--json media list production.pproj --limit 100)
+  [[ -n "$CURSOR" ]] && ARGS+=(--cursor "$CURSOR")
+  PAGE=$(postproject "${ARGS[@]}")
+  for ASSET in $(jq -r '.items[].id' <<<"$PAGE"); do
+    # Follow each nested next_cursor the same way in large productions.
+    for REPRESENTATION in $(postproject --json representation list \
+      production.pproj "$ASSET" --limit 100 | jq -r '.items[].id'); do
+      for RESOURCE in $(postproject --json representation resources \
+        production.pproj "$REPRESENTATION" --limit 100 | jq -r '.items[].id'); do
+        postproject --json locator list production.pproj "$RESOURCE" --limit 100 |
+          jq -r '.items[] | "\(.uri) (root: \(.media_root // "-"))"'
+      done
+    done
+  done
+  CURSOR=$(jq -r '.next_cursor // empty' <<<"$PAGE")
+  [[ -z "$CURSOR" ]] && break
+done
+# [/media-structure-pages]
+
+# [knowledge-only-media]
+# Both queries read recorded knowledge; neither touches the filesystem.
+postproject media unresolved production.pproj --limit 100
+postproject --json media under-root production.pproj rushes --limit 100 |
+  jq -r '.items[].id'
+# [/knowledge-only-media]
+
+test "$(postproject --json media under-root production.pproj rushes |
+  jq -r '[.items[].id] | join(" ")')" = "$ORIGINAL_ID"
+
+# [metadata-query-pages]
+cat > interview.json <<'EOF'
+{"type": "lang_string", "value": "Interview", "language": "en-US"}
+EOF
+postproject --json metadata find production.pproj "$IPTC_VMHUB" title \
+  --value-file interview.json --limit 100 |
+  jq -r '.items[] | "\(.target_kind) \(.target_id)"'
+# [/metadata-query-pages]
+
+test "$(postproject --json metadata find production.pproj "$IPTC_VMHUB" title \
+  --value-file interview.json | jq -r '.items[0].target_id')" = "$ASSET_ID"
+
+# [provenance-query-pages]
+postproject activity producing production.pproj "$SEQUENCE_ID" --limit 100
+postproject activity consuming production.pproj "$ORIGINAL_ID" --limit 100
+postproject activity outputs production.pproj --kind org.postproject:render
+postproject activity outputs production.pproj --tool-name "Example Renderer" \
+  --tool-version 2.1 --tool-uri https://example.com/renderer
+postproject --json activity ancestors production.pproj "$SEQUENCE_ID" \
+  --max-depth 8 --max-representations 1000 --limit 100 |
+  jq '{items, traversal_truncated}'
+postproject activity descendants production.pproj "$ORIGINAL_ID" \
+  --max-depth 8 --max-representations 1000 --limit 100
+# [/provenance-query-pages]
+
+test "$(postproject --json activity outputs production.pproj \
+  --tool-name "Example Renderer" --tool-version 2.1 \
+  --tool-uri https://example.com/renderer |
+  jq -r '.items[0].representation_id')" = "$SEQUENCE_ID"
+
+# [stale-artifact-pages]
+CURSOR=
+while :; do
+  ARGS=(--json artifact stale production.pproj --source "$ORIGINAL_ID"
+    --max-depth 64 --max-representations 1000 --limit 100)
+  [[ -n "$CURSOR" ]] && ARGS+=(--cursor "$CURSOR")
+  PAGE=$(postproject "${ARGS[@]}")
+  # A page bounds the candidates examined, so it may hold fewer stale
+  # results, or none, and still carry a continuation.
+  jq -r '.items[].representation_id' <<<"$PAGE"
+  CURSOR=$(jq -r '.next_cursor // empty' <<<"$PAGE")
+  [[ -z "$CURSOR" ]] && break
+done
+# [/stale-artifact-pages]
+
+# [changed-objects]
+postproject --json revisions changed production.pproj \
+  --after "$BEFORE_RENDER" --limit 100 |
+  jq -r '.items[] | "\(.kind) \(.id)"'
+# [/changed-objects]
+
+postproject --json revisions changed production.pproj --after "$BEFORE_RENDER" |
+  jq -e --arg id "$SEQUENCE_ID" \
+    'any(.items[]; .kind == "representation" and .id == $id)' >/dev/null
 
 # [reference-executor]
 mkdir -p proxies

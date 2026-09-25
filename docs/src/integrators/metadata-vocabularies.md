@@ -15,7 +15,9 @@ Every surface can:
 - append a value, so a property can hold several ordered values;
 - remove every value of a property from a target;
 - read every assertion on a target; and
-- find every assertion that uses an exact vocabulary and property.
+- find every assertion that uses an exact vocabulary and property, as one
+  [bounded page](bounded-queries.md) at a time and optionally restricted to an
+  exact scalar value.
 
 The Rust storage API can additionally replace every ordered value of a property
 atomically. The example adds a language-tagged title to an asset and reads it
@@ -69,12 +71,18 @@ postproject --json metadata list \
 
 postproject --json metadata find production.pproj \
   https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json \
-  title
+  title --limit 100
 
 postproject metadata remove production.pproj asset "$ASSET_ID" \
   https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json \
   title
 ```
+
+`metadata find` returns one page: its JSON output is an object with `items`,
+`next_cursor`, and `traversal_truncated`, and `--cursor` continues from
+`next_cursor`. Pass `--value-file` with a file holding one tagged scalar value,
+such as `{"type": "lang_string", "value": "Interview", "language": "en-US"}`, to
+return only assertions with exactly that value.
 
 JSON output is explicitly tagged with value types. Decimal coefficients are
 strings so JSON consumers do not lose precision. Binary values use hexadecimal
@@ -123,8 +131,9 @@ keeps unknown and application-specific metadata fully round-trippable.
 
 The typed domain model, optional vocabulary registry, and SQLite persistence
 back every surface. C, Python, Rust, and the CLI read and write every value
-kind. The C++ wrapper writes every value kind but does not yet wrap metadata
-reads; C++ integrations call the C read functions directly. Activity metadata
+kind. The C++ wrapper writes every value kind and reads property queries with
+`queryMetadata`, but does not wrap reading every assertion on one target; C++
+integrations call `pp_production_metadata` for that. Activity metadata
 is writable after the activity is created in the same or an earlier
 transaction.
 
