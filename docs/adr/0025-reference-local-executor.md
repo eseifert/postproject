@@ -83,6 +83,19 @@ and unknown external metadata remains open-world and lossless.
   not become shell syntax.
 - **Give the executor private SQLite access.** Rejected because a reference
   worker must prove the public claim/renew/complete contract used by hosts.
+- **Wrap the executor in the C ABI, C++, and Python.** Rejected because hosts
+  are expected to act as workers with their own task systems through the
+  public job protocol, which every surface already exposes; the executor
+  exists to demonstrate that protocol end to end, and the CLI runner does so
+  for installed consumers. Exporting it would also cost more than it returns:
+  the executor blocks for the length of an `ffmpeg` run and calls a caller
+  heartbeat, which the C ABI could carry only as a function-pointer callback,
+  a construct it does not export, or as a new asynchronous handle with polling
+  and cancellation. And it would fix the closed profile table, the eligibility
+  rules, and the subprocess settings into the native compatibility surface,
+  where they would be subject to integration-subset rules (ADR 0020) rather
+  than remaining adapter details. Python and other tools can invoke the
+  installed `postproject job run` command instead.
 - **Store artifact state or executor profiles in the core model.** Rejected
   because artifact state remains derived and profiles are typed parameters of
   one adapter, not universal representation semantics.
