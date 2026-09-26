@@ -7,7 +7,6 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-
 _LEADING_CONSTEXPR = re.compile(r"^\s*constexpr\b")
 
 
