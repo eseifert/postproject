@@ -15,6 +15,10 @@
 #include <utility>
 #include <vector>
 
+template <class T> struct EventTag {
+  using type = T;
+};
+
 int main(int argc, char **argv) {
   if (argc != 2) {
     return 2;
@@ -671,6 +675,27 @@ int main(int argc, char **argv) {
         completion_producing[0].id != completion_activity_id ||
         !completion_producing[0].outputs[0].snapshot.has_value()) {
       return 36;
+    }
+    const auto journal = reopened.changesSince(0, 1000);
+    const auto journaled = [&](auto event_tag) {
+      using Event = typename decltype(event_tag)::type;
+      for (const auto &revision : journal) {
+        for (const auto &event : reopened.revisionEvents(revision.id)) {
+          if (std::holds_alternative<Event>(event.payload)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    };
+    if (!journaled(EventTag<postproject::JobRequestedEvent>{}) ||
+        !journaled(EventTag<postproject::JobClaimedEvent>{}) ||
+        !journaled(EventTag<postproject::JobClaimRenewedEvent>{}) ||
+        !journaled(EventTag<postproject::JobClaimReleasedEvent>{}) ||
+        !journaled(EventTag<postproject::JobFailedEvent>{}) ||
+        !journaled(EventTag<postproject::JobCancelledEvent>{}) ||
+        !journaled(EventTag<postproject::JobSucceededEvent>{})) {
+      return 57;
     }
 
     const auto consuming_page =

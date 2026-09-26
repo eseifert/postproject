@@ -33,8 +33,15 @@ from postproject import (
     HostObjectBinding,
     ImageSequenceInput,
     InvalidArgumentError,
+    JobCancelledEvent,
+    JobClaimedEvent,
+    JobClaimReleasedEvent,
+    JobClaimRenewedEvent,
+    JobFailedEvent,
     JobRequest,
+    JobRequestedEvent,
     JobState,
+    JobSucceededEvent,
     LocatorAddedEvent,
     LocatorAvailability,
     LocatorMatch,
@@ -269,6 +276,25 @@ class ProductionTests(unittest.TestCase):
             producing = production.activities_producing[completed_representation_id]
             self.assertEqual(len(producing), 1)
             self.assertIsNotNone(producing[0].outputs[0].snapshot)
+
+            job_event_types = {
+                type(event.payload)
+                for revision in production.changes_since(0, 1000)
+                for event in production.revision_events[revision.id]
+                if hasattr(event.payload, "job_id")
+            }
+            self.assertEqual(
+                job_event_types,
+                {
+                    JobRequestedEvent,
+                    JobClaimedEvent,
+                    JobClaimRenewedEvent,
+                    JobClaimReleasedEvent,
+                    JobFailedEvent,
+                    JobCancelledEvent,
+                    JobSucceededEvent,
+                },
+            )
 
             first_page = production.jobs(limit=1)
             self.assertIsNotNone(first_page.next_cursor)

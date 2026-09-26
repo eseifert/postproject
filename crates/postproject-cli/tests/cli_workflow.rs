@@ -198,6 +198,7 @@ fn exercise_job_completion(
         .find(|job| job["id"] == completed_job_id)
         .expect("completed job in third process");
     assert_eq!(observed, &completed);
+    assert_job_events_journaled(production);
     let producing = run_json(&["activity", "producing", production, output_id])["items"].clone();
     assert_eq!(producing.as_array().expect("activity array").len(), 1);
     assert_eq!(producing[0]["id"], completed["completion_activity_id"]);
@@ -1115,4 +1116,34 @@ fn latest_revision_events(production: &str) -> Value {
     let revision = run_json(&["revisions", "latest", production]);
     let revision_id = revision["id"].as_str().expect("revision ID");
     run_json(&["revisions", "events", production, revision_id])
+}
+
+fn assert_job_events_journaled(production: &str) {
+    let revisions = run_json(&["revisions", "since", production, "--limit", "1000"]);
+    let mut kinds = std::collections::BTreeSet::new();
+    for revision in revisions.as_array().expect("revision array") {
+        let revision_id = revision["id"].as_str().expect("revision ID");
+        for event in run_json(&["revisions", "events", production, revision_id])
+            .as_array()
+            .expect("event array")
+        {
+            let kind = event["kind"].as_str().expect("event kind");
+            if kind.starts_with("job_") {
+                assert!(event["job_id"].is_string(), "{kind} names its job");
+                kinds.insert(kind.to_owned());
+            }
+        }
+    }
+    assert_eq!(
+        kinds.into_iter().collect::<Vec<_>>(),
+        [
+            "job_cancelled",
+            "job_claim_released",
+            "job_claim_renewed",
+            "job_claimed",
+            "job_failed",
+            "job_requested",
+            "job_succeeded",
+        ]
+    );
 }
