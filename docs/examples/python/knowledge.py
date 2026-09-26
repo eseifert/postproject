@@ -1,0 +1,228 @@
+"""Run the Python external-identifier and typed-metadata listings.
+
+Each ``[name]`` ... ``[/name]`` region is included verbatim by the
+documentation build, so keep regions self-contained and readable. Usage::
+
+    POSTPROJECT_LIBRARY=/path/to/libpostproject.so python knowledge.py WORK_DIRECTORY
+
+The work directory is prepared by ``prepare-workdir.cmake``.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+from postproject import (
+    AssetId,
+    ExternalIdentifier,
+    MetadataAssertion,
+    MetadataBool,
+    MetadataBytes,
+    MetadataDecimal,
+    MetadataI64,
+    MetadataLanguageString,
+    MetadataList,
+    MetadataProperty,
+    MetadataRational,
+    MetadataReference,
+    MetadataString,
+    MetadataStruct,
+    MetadataStructField,
+    MetadataTimestamp,
+    MetadataU64,
+    MetadataUri,
+    MetadataValue,
+    ObjectReference,
+    Production,
+    RepresentationId,
+)
+
+EDITORIAL = "https://example.com/ns/editorial/1"
+
+
+# [remove-identifier]
+def replace_tape_identifier(
+    production: Production, asset_id: AssetId
+) -> tuple[ExternalIdentifier, ...]:
+    serial = ExternalIdentifier("com.example.camera.serial", "A-0007")
+    tape = ExternalIdentifier("com.example.tape", "T-0012", qualifier="reel")
+    with production.transaction() as transaction:
+        transaction.add_external_identifier(asset_id, serial)
+        transaction.add_external_identifier(asset_id, tape)
+
+    for identifier in production.external_identifiers[asset_id]:
+        print(
+            f"{identifier.scheme}: {identifier.value} ({identifier.qualifier or '-'})"
+        )
+    for target in production.objects_by_external_identifier[tape.scheme, tape.value]:
+        print(f"tape {tape.value} identifies {target}")
+
+    # Removal matches the exact scheme, value, and qualifier.
+    with production.transaction() as transaction:
+        transaction.remove_external_identifier(asset_id, tape)
+    return production.external_identifiers[asset_id]
+
+
+# [/remove-identifier]
+
+
+# [typed-metadata]
+def add_editorial_metadata(
+    production: Production, asset_id: AssetId, original_id: RepresentationId
+) -> None:
+    values: dict[str, MetadataValue] = {
+        "title": MetadataString("Interview"),
+        "headline": MetadataLanguageString("Gespräch am Morgen", "de"),
+        "reel-offset": MetadataI64(-48),
+        "take-count": MetadataU64(3),
+        "gain-db": MetadataDecimal(coefficient=-125, scale=1),  # -12.5
+        "approved": MetadataBool(True),
+        "shot-at": MetadataTimestamp(1_700_000_000_000_000),
+        "script": MetadataUri("https://example.com/scripts/ep1"),
+        "thumbnail": MetadataBytes(b"\x89PNG"),
+        "frame-rate": MetadataRational(24_000, 1_001),
+        "keywords": MetadataList(
+            (MetadataString("interview"), MetadataString("exterior"))
+        ),
+        "lens": MetadataStruct(
+            (
+                MetadataStructField("model", MetadataString("Example 35mm")),
+                MetadataStructField("focal-length-mm", MetadataU64(35)),
+            )
+        ),
+        "selected-take": MetadataReference(original_id),
+    }
+    with production.transaction() as transaction:
+        for name, value in values.items():
+            transaction.add_metadata(asset_id, MetadataProperty(EDITORIAL, name), value)
+
+
+def describe(value: MetadataValue) -> str:
+    match value:
+        case MetadataString(text) | MetadataUri(text):
+            return text
+        case MetadataLanguageString(text, language):
+            return f"{text} @{language}"
+        case MetadataI64(number) | MetadataU64(number):
+            return str(number)
+        case MetadataDecimal(coefficient, scale):
+            return f"{coefficient}e-{scale}"
+        case MetadataBool(flag):
+            return "yes" if flag else "no"
+        case MetadataTimestamp(unix_micros):
+            return f"{unix_micros} µs since the Unix epoch"
+        case MetadataBytes(data):
+            return data.hex()
+        case MetadataRational(numerator, denominator):
+            return f"{numerator}/{denominator}"
+        case MetadataList(items):
+            return "[" + ", ".join(describe(item) for item in items) + "]"
+        case MetadataStruct(fields):
+            return (
+                "{" + ", ".join(f"{f.name}: {describe(f.value)}" for f in fields) + "}"
+            )
+        case MetadataReference(target):
+            return f"-> {target}"
+
+
+def print_metadata(production: Production, target: ObjectReference) -> None:
+    for assertion in production.metadata[target]:
+        print(f"{assertion.property.property} = {describe(assertion.value)}")
+
+
+def find_approved(production: Production) -> list[ObjectReference]:
+    approved = MetadataProperty(EDITORIAL, "approved")
+    targets: list[ObjectReference] = []
+    cursor = None
+    while True:
+        # Pass the same property, value, and limit with each cursor.
+        page = production.query_metadata(
+            approved, limit=1, cursor=cursor, value=MetadataBool(True)
+        )
+        targets.extend(assertion.target for assertion in page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            return targets
+
+
+# [/typed-metadata]
+
+
+# [remove-metadata]
+def clear_keywords(production: Production, asset_id: AssetId) -> None:
+    keywords = MetadataProperty(EDITORIAL, "keywords")
+    # Removes every value of the property on this target in one change.
+    with production.transaction() as transaction:
+        transaction.remove_metadata_property(asset_id, keywords)
+
+    assert production.metadata_by_property[keywords] == ()
+
+
+# [/remove-metadata]
+
+
+def main() -> None:
+    if len(sys.argv) != 2:
+        sys.exit("usage: knowledge.py WORK_DIRECTORY")
+    work = Path(sys.argv[1])
+
+    with Production.create(work / "knowledge.pproj", "Knowledge") as production:
+        with production.transaction() as transaction:
+            asset_id = transaction.import_media(work / "rushes" / "A001.mov")
+        original_id = production.representations[asset_id][0].id
+
+        remaining = replace_tape_identifier(production, asset_id)
+        assert remaining == (ExternalIdentifier("com.example.camera.serial", "A-0007"),)
+        assert (
+            production.objects_by_external_identifier["com.example.tape", "T-0012"]
+            == ()
+        )
+        assert production.objects_by_external_identifier[
+            "com.example.camera.serial", "A-0007"
+        ] == (asset_id,)
+
+        add_editorial_metadata(production, asset_id, original_id)
+        print_metadata(production, asset_id)
+        stored = {
+            assertion.property.property: assertion.value
+            for assertion in production.metadata[asset_id]
+        }
+        assert len(stored) == 13
+        assert stored["gain-db"] == MetadataDecimal(-125, 1)
+        assert stored["frame-rate"] == MetadataRational(24_000, 1_001)
+        assert stored["selected-take"] == MetadataReference(original_id)
+        assert stored["lens"] == MetadataStruct(
+            (
+                MetadataStructField("model", MetadataString("Example 35mm")),
+                MetadataStructField("focal-length-mm", MetadataU64(35)),
+            )
+        )
+        assert describe(stored["keywords"]) == "[interview, exterior]"
+
+        approved = MetadataProperty(EDITORIAL, "approved")
+        with production.transaction() as transaction:
+            transaction.add_metadata(original_id, approved, MetadataBool(True))
+        first_page = production.query_metadata(
+            approved, limit=1, value=MetadataBool(True)
+        )
+        assert first_page.next_cursor is not None
+        assert sorted(map(str, find_approved(production))) == sorted(
+            [str(asset_id), str(original_id)]
+        )
+
+        keywords = MetadataProperty(EDITORIAL, "keywords")
+        assert len(production.metadata_by_property[keywords]) == 1
+        clear_keywords(production, asset_id)
+        assert all(
+            assertion.property != keywords
+            for assertion in production.metadata[asset_id]
+        )
+        assert (
+            MetadataAssertion(asset_id, approved, MetadataBool(True))
+            in (production.metadata[asset_id])
+        )
+
+
+if __name__ == "__main__":
+    main()
