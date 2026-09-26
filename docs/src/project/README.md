@@ -35,18 +35,31 @@ These are engineering references. Application integrators should prefer the inte
 
 ## Compatibility and releases
 
-- {doc}`../../abi-policy` explains the native compatibility contract.
-- {doc}`../../releasing` documents the release process.
-- Release acceptance reports record what was actually validated for a release.
+{doc}`releases` collects the native compatibility contract, the release process, and the acceptance report of every release.
 
 Historical reports should remain available because they are useful evidence, but they should be treated as history rather than mixed into the primary learning path.
 
 ## Architecture Decision Records
 
-ADRs explain significant design choices at the time they were made. They are valuable when changing an invariant or revisiting a boundary, but they are not normative onboarding documentation.
+{doc}`decisions` lists every ADR by area. ADRs explain significant design choices at the time they were made. They are valuable when changing an invariant or revisiting a boundary, but they are not normative onboarding documentation.
 
 Use the current concept/API documentation for present behavior, then consult the relevant ADR to understand the reasoning and tradeoffs behind it.
 
 ## Standards impact
 
 When a change touches an area that maps to an external standard, consult the standards policy and standards-impact records before extending the core model. The default preference is to keep external-standard-specific behavior at adapter boundaries unless the concept is genuinely part of PostProject's application-neutral production model.
+
+```{toctree}
+:hidden:
+
+../contributors/README
+/architecture
+/domain-model
+/media-resolution
+/persistence
+/testing
+/benchmarks
+/fuzzing
+releases
+decisions
+```

@@ -105,3 +105,12 @@ Read these before changing the relevant subsystem:
 - {doc}`standards-policy`
 
 For repository-wide engineering detail, continue with {doc}`../project/README`.
+
+```{toctree}
+:hidden:
+
+content-structure-invariants
+metadata-model
+provenance-model
+standards-policy
+```

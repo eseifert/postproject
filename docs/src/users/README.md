@@ -53,3 +53,11 @@ Inventory caches and machine-local discovery data are operational helpers. They 
 4. {doc}`metadata-and-provenance` — inspection, metadata, and history.
 
 If you are writing an application rather than using one, continue with {doc}`../integrators/README`.
+
+```{toctree}
+:hidden:
+
+portable-production-workflow
+image-sequences-and-spanned-media
+metadata-and-provenance
+```

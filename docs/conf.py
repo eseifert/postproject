@@ -24,7 +24,7 @@ extensions = [
 myst_enable_extensions = ["colon_fence", "deflist"]
 source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
 root_doc = "index"
-exclude_patterns = ["_build", "_ext", "examples", "src/SUMMARY.md", "src/index.md"]
+exclude_patterns = ["_build", "_ext", "examples"]
 
 # Tested programs whose marked regions populate the code-variants tabs.
 postproject_code_examples = {

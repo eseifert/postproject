@@ -19,7 +19,7 @@ Start with {doc}`installing-a-release`, then choose {doc}`c-quickstart`, {doc}`c
 
 ### 2. Create or open media identities
 
-Follow {doc}`first-production`. Store the returned PostProject identity in the host's own project/object model where appropriate.
+Follow {doc}`first-production`. Store the returned PostProject identity in the host's own project/object model where appropriate, ideally as a {doc}`host-object binding <host-object-bindings>`.
 
 Do not substitute a filesystem path for that identity. The entire portability model depends on those being different concepts.
 
@@ -31,20 +31,25 @@ The host should surface ambiguity rather than silently accepting the first candi
 
 ### 4. Support the media structures your application actually uses
 
-If the host handles VFX or camera media, continue with {doc}`compound-media` so sequences, spans, and packages remain one representation instead of becoming one logical asset per file.
+If the host handles VFX or camera media, continue with {doc}`compound-media` so sequences, spans, packages, and proxies remain one representation each instead of becoming one logical asset per file.
 
 ### 5. Add production knowledge incrementally
 
 Use the pieces that solve real host problems:
 
 - {doc}`external-identifiers` for identifiers owned by other systems;
-- {doc}`metadata-vocabularies` for structured metadata;
-- {doc}`provenance` for activity history;
-- {doc}`revision-feed` for reacting to changes;
-- {doc}`host-object-bindings` for durable links back to host objects;
-- {doc}`bounded-queries` for scalable traversal;
+- {doc}`metadata-vocabularies` for structured, typed metadata;
+- {doc}`provenance` for activity history and input snapshots;
 - {doc}`jobs-and-workers` when the host coordinates durable production work;
-- {doc}`reference-executor` as an example of the execution boundary, not as a requirement.
+- {doc}`reference-executor` as an example of the execution boundary, not as a requirement;
+- {doc}`bounded-queries` for scalable enumeration and traversal;
+- {doc}`revision-feed` for reacting to changes, including changes made by other processes.
+
+## Every guide shows every surface
+
+Each task guide shows the operation in C, C++, Python, Rust, and the CLI. Choose a language with the tabs or with the **Code** selector in the sidebar; the choice applies to every example on the site. Where a surface deliberately lacks an operation, the tab says so and names the alternative.
+
+The listings are extracts of example programs that CI compiles and runs against an installed package, so they cannot drift from the public interfaces. CI also checks that every public C function, C++ member function, and Python method appears in at least one of those programs. The complete quickstart programs are collected in {doc}`../../reference/examples`.
 
 ## Integration rules that matter early
 
@@ -75,3 +80,42 @@ This separation keeps the conceptual contract readable while allowing API refere
 PostProject is implemented in Rust, but an installed native consumer should not need Cargo or Rust tooling. The public native boundary is the C ABI, with C++ and Python layers built on top of it.
 
 If you are changing PostProject itself rather than integrating it, use {doc}`../contributors/README`.
+
+```{toctree}
+:hidden:
+:caption: Getting set up
+
+installing-a-release
+c-quickstart
+cpp-quickstart
+python
+first-production
+host-object-bindings
+```
+
+```{toctree}
+:hidden:
+:caption: Media
+
+media-resolution
+compound-media
+```
+
+```{toctree}
+:hidden:
+:caption: Production knowledge
+
+external-identifiers
+metadata-vocabularies
+provenance
+```
+
+```{toctree}
+:hidden:
+:caption: Work, scale, and change
+
+jobs-and-workers
+reference-executor
+bounded-queries
+revision-feed
+```
