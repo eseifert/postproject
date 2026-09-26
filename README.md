@@ -146,7 +146,7 @@ Use <https://docs.postproject.org> for the published documentation.
 
 ## Project status and compatibility
 
-At the time of this rewrite, `main` is in early `0.4.0-alpha.1` development. The named integration-preview subset remains compatible within the 0.3.x series; other APIs are experimental. Consumers should pin a release series or exact commit and check the ABI policy before depending on a particular interface.
+PostProject is in alpha development. The named integration-preview subset remains compatible within the 0.3.x series; other APIs are experimental. Consumers should pin a release series or exact commit and check the ABI policy before depending on a particular interface.
 
 The important distinction is intentional: **production data should be durable even while APIs are still being refined.** Compatibility promises are therefore documented explicitly rather than implied by version numbers alone.
 
