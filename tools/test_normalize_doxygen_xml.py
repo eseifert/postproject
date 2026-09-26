@@ -32,26 +32,45 @@ class DoxygenNormalizationTests(unittest.TestCase):
     def test_normalizes_constexpr_constructor(self) -> None:
         root = self._normalize(
             "<memberdef kind='function' constexpr='yes'>"
-            "<type>constexpr</type><definition>example::Value::Value</definition>"
+            "<type>constexpr</type>"
+            "<definition>constexpr example::Value::Value</definition>"
             "<name>Value</name></memberdef>"
         )
         self.assertEqual(root.findtext(".//type"), "")
+        self.assertEqual(root.findtext(".//definition"), "example::Value::Value")
 
     def test_normalizes_constexpr_constructor_with_whitespace(self) -> None:
         root = self._normalize(
             "<memberdef kind='function' constexpr='yes'>"
-            "<type> constexpr </type><definition>example::Value::Value</definition>"
+            "<type> constexpr </type>"
+            "<definition> constexpr example::Value::Value</definition>"
             "<name>Value</name></memberdef>"
         )
         self.assertEqual(root.findtext(".//type"), "")
+        self.assertEqual(root.findtext(".//definition"), "example::Value::Value")
 
     def test_preserves_return_type_after_constexpr(self) -> None:
         root = self._normalize(
             "<memberdef kind='function' constexpr='yes'>"
-            "<type>constexpr int</type><definition>example::Value::size</definition>"
+            "<type>constexpr int</type>"
+            "<definition>constexpr int example::Value::size</definition>"
             "<name>size</name></memberdef>"
         )
         self.assertEqual(root.findtext(".//type"), "int")
+        self.assertEqual(root.findtext(".//definition"), "int example::Value::size")
+
+    def test_normalizes_linked_type_text(self) -> None:
+        root = self._normalize(
+            "<memberdef kind='function' constexpr='yes'>"
+            "<type>constexpr <ref refid='type'>Value</ref></type>"
+            "<definition>constexpr Value example::factory</definition>"
+            "<name>factory</name></memberdef>"
+        )
+        type_node = root.find(".//type")
+        self.assertIsNotNone(type_node)
+        assert type_node is not None
+        self.assertEqual("".join(type_node.itertext()), "Value")
+        self.assertEqual(root.findtext(".//definition"), "Value example::factory")
 
     def test_leaves_non_constexpr_member_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

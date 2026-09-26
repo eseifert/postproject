@@ -11,6 +11,27 @@ from pathlib import Path
 _LEADING_CONSTEXPR = re.compile(r"^\s*constexpr\b\s*")
 
 
+def _strip_leading_constexpr(node: ET.Element) -> bool:
+    """Strip one leading constexpr token from a linked-text XML element."""
+    if node.text is not None:
+        normalized = _LEADING_CONSTEXPR.sub("", node.text, count=1)
+        if normalized != node.text:
+            node.text = normalized
+            return True
+
+    for child in node:
+        if child.tail is None:
+            continue
+        normalized = _LEADING_CONSTEXPR.sub("", child.tail, count=1)
+        if normalized != child.tail:
+            child.tail = normalized
+            return True
+        if child.tail.strip():
+            break
+
+    return False
+
+
 def normalize_file(path: Path) -> bool:
     """Remove redundant constexpr text already represented by Doxygen metadata."""
     tree = ET.parse(path)
@@ -18,13 +39,12 @@ def normalize_file(path: Path) -> bool:
 
     for member in tree.findall(".//memberdef[@kind='function'][@constexpr='yes']"):
         type_node = member.find("type")
-        if type_node is None or type_node.text is None:
-            continue
+        if type_node is not None:
+            changed = _strip_leading_constexpr(type_node) or changed
 
-        normalized = _LEADING_CONSTEXPR.sub("", type_node.text, count=1)
-        if normalized != type_node.text:
-            type_node.text = normalized
-            changed = True
+        definition_node = member.find("definition")
+        if definition_node is not None:
+            changed = _strip_leading_constexpr(definition_node) or changed
 
     if changed:
         tree.write(path, encoding="utf-8", xml_declaration=True)
