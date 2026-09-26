@@ -86,3 +86,10 @@ reports both and preserves the structured reasons or missing conditions:
 
 ```{code-variants} artifact-knowledge
 ```
+
+Staleness begins with an explicitly recorded change. After a new fingerprint
+observation of an input, the artifact evaluates as stale with reasons that name
+the changed input:
+
+```{code-variants} stale-after-change
+```

@@ -110,6 +110,12 @@ forward and reverse queries:
 ```{code-variants} dependency-queries
 ```
 
+A new fingerprint observation of the source marks its recorded set as needing
+extraction until a fresh complete set is recorded:
+
+```{code-variants} dependency-set
+```
+
 See [bounded queries and cursors](../integrators/bounded-queries.md) for cursor
 ownership, pagination, and weak-consistency guidance.
 

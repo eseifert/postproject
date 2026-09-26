@@ -51,3 +51,9 @@ choosing among ambiguous locations:
 
 ```{code-variants} resolve-asset
 ```
+
+Reading a representation returns its content structure, members, resources,
+fingerprints, and locators as separate facts:
+
+```{code-variants} representation-structure
+```

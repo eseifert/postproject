@@ -75,6 +75,12 @@ one-item pages to completion:
 ```{code-variants} job-query-pages
 ```
 
+A worker claims a job, stages the output and its activity, and completes the job
+so that all three become durable together:
+
+```{code-variants} complete-job
+```
+
 See [bounded queries and cursors](../integrators/bounded-queries.md) for
 continuation rules.
 

@@ -40,3 +40,9 @@ exact lookup:
 
 ```{code-variants} external-identifiers
 ```
+
+Removal names the exact scheme, value, and qualifier; other attachments on the
+same object stay in place:
+
+```{code-variants} remove-identifier
+```

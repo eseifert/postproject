@@ -58,3 +58,9 @@ and property-oriented views:
 
 ```{code-variants} metadata
 ```
+
+Every value kind round-trips with its type, including nested lists, structures,
+and object references:
+
+```{code-variants} typed-metadata
+```

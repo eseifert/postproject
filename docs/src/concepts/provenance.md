@@ -53,3 +53,10 @@ output sides:
 
 ```{code-variants} provenance
 ```
+
+Storage snapshots each input's and output's fingerprints when the activity is
+recorded; reading an activity returns those snapshots with its tool and agent
+attribution:
+
+```{code-variants} activity-snapshots
+```
