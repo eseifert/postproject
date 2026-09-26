@@ -9,6 +9,11 @@ Development version: `0.4.0-alpha.1`.
 
 ### Added
 
+- Added `postproject revisions filtered --kind <event_kind>`, which prints the
+  matching revisions and the `through_sequence` cursor, and `postproject
+  revisions wait`, which blocks for at most `--timeout-ms` (default and maximum
+  60000) until revisions after `--after` (default: the latest revision) exist
+  and prints the result as `revisions`, `timed_out`, `closed`, or `cancelled`.
 - Added change delivery to Python: `Production.changes_since_filtered` over
   event payload classes, `Production.revision_waiter()` with a GIL-releasing
   `wait()` and thread-safe `cancel()`, and a `RevisionObserver` that calls back

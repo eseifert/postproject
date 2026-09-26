@@ -28,8 +28,8 @@ use postproject_core::{
     Representation, RepresentationAvailability, RepresentationId, RepresentationKind,
     RepresentationResolution, RequestedJobOutput, ResolutionEvidence, Resource, ResourceId,
     ResourceResolution, ResourceResolutionState, ResourceRole, Revision, RevisionContext,
-    RevisionEvent, RevisionEventKind, RevisionId, StaleArtifactQuery, Timestamp, ToolIdentity,
-    VocabularyId,
+    RevisionEvent, RevisionEventFilter, RevisionEventKind, RevisionEventType, RevisionId,
+    RevisionWaitOutcome, StaleArtifactQuery, Timestamp, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     EXECUTOR_PARAMETER_VOCABULARY, EXECUTOR_PROFILE_PROPERTY, ExecutionOutcome, ExecutionRequest,
@@ -964,6 +964,38 @@ enum RevisionsCommand {
     Events(RevisionEventsArgs),
     /// Query distinct objects touched after a revision sequence.
     Changed(RevisionsChangedArgs),
+    /// List revisions after a cursor that contain one of the given event kinds.
+    Filtered(RevisionsFilteredArgs),
+    /// Wait for revisions after a cursor, including commits by other processes.
+    Wait(RevisionsWaitArgs),
+}
+
+#[derive(Debug, Args)]
+struct RevisionsFilteredArgs {
+    production: PathBuf,
+    /// Return matching revisions with a sequence greater than this cursor.
+    #[arg(long, default_value_t = 0)]
+    after: u64,
+    /// Event kind to match, such as `job_succeeded`; repeat for several.
+    #[arg(long = "kind", required = true, value_parser = parse_revision_event_type)]
+    kinds: Vec<RevisionEventType>,
+    /// Maximum number of revisions to return.
+    #[arg(long, default_value_t = 100)]
+    limit: u32,
+}
+
+#[derive(Debug, Args)]
+struct RevisionsWaitArgs {
+    production: PathBuf,
+    /// Wait for revisions after this sequence; defaults to the latest revision.
+    #[arg(long)]
+    after: Option<u64>,
+    /// Maximum number of revisions to return.
+    #[arg(long, default_value_t = 100)]
+    limit: u32,
+    /// Longest wait in milliseconds, at most 60000; zero checks once.
+    #[arg(long, default_value_t = 60_000)]
+    timeout_ms: u64,
 }
 
 #[derive(Debug, Args)]
@@ -1797,6 +1829,8 @@ fn execute(cli: Cli) -> Result<()> {
             RevisionsCommand::Since(args) => revisions_since(&args, cli.json),
             RevisionsCommand::Events(args) => revisions_events(&args, cli.json),
             RevisionsCommand::Changed(args) => revisions_changed(&args, cli.json),
+            RevisionsCommand::Filtered(args) => revisions_filtered(&args, cli.json),
+            RevisionsCommand::Wait(args) => revisions_wait(&args, cli.json),
         },
     }
 }
@@ -4440,6 +4474,91 @@ fn revisions_since(args: &RevisionsSinceArgs, json: bool) -> Result<()> {
         print_json(&views)
     } else {
         for revision in &views {
+            print_revision(revision);
+        }
+        Ok(())
+    }
+}
+
+fn parse_revision_event_type(value: &str) -> std::result::Result<RevisionEventType, String> {
+    RevisionEventType::from_str(value).map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Serialize)]
+struct FilteredRevisionPageView {
+    revisions: Vec<RevisionView>,
+    through_sequence: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct RevisionWaitView {
+    result: &'static str,
+    revisions: Vec<RevisionView>,
+}
+
+fn revisions_filtered(args: &RevisionsFilteredArgs, json: bool) -> Result<()> {
+    let filter = RevisionEventFilter::new(args.kinds.iter().copied())
+        .context("build revision event filter")?;
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let page = production
+        .changes_since_filtered(args.after, &filter, args.limit)
+        .context("load filtered revision page")?;
+    let view = FilteredRevisionPageView {
+        revisions: page.revisions().iter().map(revision_view).collect(),
+        through_sequence: page.through_sequence(),
+    };
+    if json {
+        print_json(&view)
+    } else {
+        for revision in &view.revisions {
+            print_revision(revision);
+        }
+        println!("through\t{}", view.through_sequence);
+        Ok(())
+    }
+}
+
+fn revisions_wait(args: &RevisionsWaitArgs, json: bool) -> Result<()> {
+    let production = SqliteProduction::open(&args.production).context("open production")?;
+    let after = match args.after {
+        Some(after) => after,
+        None => production
+            .latest_revision()
+            .context("load latest revision")?
+            .map_or(0, |revision| revision.sequence()),
+    };
+    let mut waiter = production
+        .revision_waiter()
+        .context("create revision waiter")?;
+    let outcome = waiter
+        .wait_for_revisions(after, args.limit, Duration::from_millis(args.timeout_ms))
+        .context("wait for revisions")?;
+    let view = match outcome {
+        RevisionWaitOutcome::Revisions(revisions) => RevisionWaitView {
+            result: "revisions",
+            revisions: revisions.iter().map(revision_view).collect(),
+        },
+        RevisionWaitOutcome::TimedOut => RevisionWaitView {
+            result: "timed_out",
+            revisions: Vec::new(),
+        },
+        RevisionWaitOutcome::Closed => RevisionWaitView {
+            result: "closed",
+            revisions: Vec::new(),
+        },
+        RevisionWaitOutcome::Cancelled => RevisionWaitView {
+            result: "cancelled",
+            revisions: Vec::new(),
+        },
+        _ => bail!("revision wait outcome is not supported by this CLI"),
+    };
+    if json {
+        print_json(&view)
+    } else if view.revisions.is_empty() {
+        println!("{}", view.result);
+        Ok(())
+    } else {
+        for revision in &view.revisions {
             print_revision(revision);
         }
         Ok(())
