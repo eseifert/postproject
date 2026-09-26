@@ -4,8 +4,9 @@
 in one synchronized group, so the sidebar code-language selector and any tab
 click switch every example on the site.
 
-With a region argument, each variant is read from the tested example program
-of its surface (``postproject_code_examples``), between the marker comments
+With a region argument, each variant is read from the tested example
+programs of its surface (``postproject_code_examples`` maps each surface to
+one or more glob patterns), between the marker comments
 ``[region]`` and ``[/region]``. The block content may add inline code blocks
 and must explain every surface without a region using ``no-variant``; an
 unexplained surface is a build warning, so CI notices a missing example.
@@ -109,6 +110,42 @@ def read_regions(path: Path) -> dict[str, str]:
     return regions
 
 
+class SurfaceRegions:
+    """Every region of one surface's example programs, keyed by name."""
+
+    def __init__(self, paths: list[Path], texts: dict[str, str]) -> None:
+        self.paths = paths
+        self.texts = texts
+
+
+def surface_regions(confdir: Path, patterns: str | list[str]) -> SurfaceRegions:
+    """Read the regions of every example program matching ``patterns``.
+
+    A region name must be unique across all programs of one surface.
+    """
+    if isinstance(patterns, str):
+        patterns = [patterns]
+    paths = sorted(
+        {
+            path
+            for pattern in patterns
+            for path in confdir.glob(pattern)
+            if path.is_file()
+        }
+    )
+    texts: dict[str, str] = {}
+    origins: dict[str, Path] = {}
+    for path in paths:
+        for name, text in read_regions(path).items():
+            if name in texts:
+                raise ValueError(
+                    f"{path}: region {name!r} is also defined in {origins[name]}"
+                )
+            texts[name] = text
+            origins[name] = path
+    return SurfaceRegions(paths, texts)
+
+
 class CodeVariantsDirective(SphinxDirective):
     """Groups per-surface examples into synchronized tabs."""
 
@@ -152,14 +189,15 @@ class CodeVariantsDirective(SphinxDirective):
 
     def add_region_variants(self, region: str, variants: dict[str, nodes.Element]):
         confdir = Path(self.env.app.confdir)
-        for surface, relative in self.config.postproject_code_examples.items():
-            path = confdir / relative
-            self.env.note_dependency(str(path))
+        for surface, patterns in self.config.postproject_code_examples.items():
             try:
-                text = read_regions(path).get(region)
+                regions = surface_regions(confdir, patterns)
             except (OSError, ValueError) as error:
                 self.warn(str(error))
                 continue
+            for path in regions.paths:
+                self.env.note_dependency(str(path))
+            text = regions.texts.get(region)
             if text is None:
                 continue
             block = nodes.literal_block(text, text, language=HIGHLIGHT[surface])

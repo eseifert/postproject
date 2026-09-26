@@ -28,11 +28,11 @@ exclude_patterns = ["_build", "_ext", "examples", "src/SUMMARY.md", "src/index.m
 
 # Tested programs whose marked regions populate the code-variants tabs.
 postproject_code_examples = {
-    "c": "examples/c/guides.c",
-    "cpp": "examples/cpp/guides.cpp",
-    "python": "examples/python/guides.py",
-    "rust": "examples/rust/tests/guides.rs",
-    "cli": "examples/cli/guides.sh",
+    "c": ["examples/c/*.c"],
+    "cpp": ["examples/cpp/*.cpp"],
+    "python": ["examples/python/*.py"],
+    "rust": ["examples/rust/tests/*.rs"],
+    "cli": ["examples/cli/*.sh"],
 }
 
 breathe_projects = {"PostProject": str(ROOT / "target" / "doxygen" / "xml")}
