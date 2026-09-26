@@ -1,5 +1,9 @@
 @PACKAGE_INIT@
 
+# The C++ wrapper's revision observer owns a std::thread.
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+
 set_and_check(
     PostProject_LIBRARY
     "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/@POSTPROJECT_LIBRARY_FILENAME@"
@@ -30,6 +34,7 @@ if(NOT TARGET PostProject::postproject)
         PROPERTIES
             INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@"
             INTERFACE_COMPILE_DEFINITIONS POSTPROJECT_SHARED
+            INTERFACE_LINK_LIBRARIES Threads::Threads
     )
 endif()
 

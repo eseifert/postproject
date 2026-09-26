@@ -4,12 +4,18 @@
 #include <postproject/postproject.h>
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <exception>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -452,6 +458,59 @@ struct RevisionEvent final {
   std::uint32_t position;
   RevisionEventPayload payload;
 };
+
+// Payload-free event kinds that select revisions for a filtered page.
+enum class RevisionEventKind : std::uint32_t {
+  asset_imported = PP_REVISION_ASSET_IMPORTED,
+  representation_added = PP_REVISION_REPRESENTATION_ADDED,
+  resource_added = PP_REVISION_RESOURCE_ADDED,
+  representation_resource_added = PP_REVISION_REPRESENTATION_RESOURCE_ADDED,
+  locator_added = PP_REVISION_LOCATOR_ADDED,
+  locator_retired = PP_REVISION_LOCATOR_RETIRED,
+  media_root_added = PP_REVISION_MEDIA_ROOT_ADDED,
+  media_root_enabled_changed = PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED,
+  media_root_removed = PP_REVISION_MEDIA_ROOT_REMOVED,
+  external_identifier_added = PP_REVISION_EXTERNAL_IDENTIFIER_ADDED,
+  external_identifier_removed = PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED,
+  metadata_added_or_replaced = PP_REVISION_METADATA_ADDED_OR_REPLACED,
+  metadata_removed = PP_REVISION_METADATA_REMOVED,
+  activity_created = PP_REVISION_ACTIVITY_CREATED,
+  activity_input_added = PP_REVISION_ACTIVITY_INPUT_ADDED,
+  activity_output_added = PP_REVISION_ACTIVITY_OUTPUT_ADDED,
+  resource_fingerprint_observed = PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED,
+  representation_fingerprint_observed = PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED,
+  dependency_set_recorded = PP_REVISION_DEPENDENCY_SET_RECORDED,
+  job_requested = PP_REVISION_JOB_REQUESTED,
+  job_claimed = PP_REVISION_JOB_CLAIMED,
+  job_claim_renewed = PP_REVISION_JOB_CLAIM_RENEWED,
+  job_claim_released = PP_REVISION_JOB_CLAIM_RELEASED,
+  job_succeeded = PP_REVISION_JOB_SUCCEEDED,
+  job_failed = PP_REVISION_JOB_FAILED,
+  job_cancelled = PP_REVISION_JOB_CANCELLED,
+};
+
+// Matching revisions plus the next cursor: every matching revision with a
+// sequence up to `through_sequence` is included.
+struct FilteredRevisionPage final {
+  std::vector<Revision> revisions;
+  std::uint64_t through_sequence;
+};
+
+enum class RevisionWaitResult : std::uint32_t {
+  revisions = PP_REVISION_WAIT_REVISIONS,
+  timed_out = PP_REVISION_WAIT_TIMED_OUT,
+  closed = PP_REVISION_WAIT_CLOSED,
+  cancelled = PP_REVISION_WAIT_CANCELLED,
+};
+
+struct RevisionWait final {
+  RevisionWaitResult result;
+  // Non-empty only for RevisionWaitResult::revisions.
+  std::vector<Revision> revisions;
+};
+
+inline constexpr std::chrono::milliseconds max_revision_wait{
+    PP_REVISION_WAIT_MAX_TIMEOUT_MILLIS};
 
 struct Asset final {
   Uuid id;
@@ -1457,6 +1516,16 @@ inline Revision revision(const pp_revision_set_t *revisions,
           std::move(origin), optional_string(message)};
 }
 
+inline std::vector<Revision> revisions(const pp_revision_set_t *revisions) {
+  std::vector<Revision> result;
+  const std::uint64_t count = pp_revision_set_count(revisions);
+  result.reserve(static_cast<std::size_t>(count));
+  for (std::uint64_t index = 0; index < count; ++index) {
+    result.push_back(revision(revisions, index));
+  }
+  return result;
+}
+
 inline std::string required_event_string(const char *value,
                                          std::string_view label) {
   if (value == nullptr) {
@@ -2000,6 +2069,61 @@ inline QueryPage<MetadataAssertion> metadata_page(MetadataSetHandle metadata) {
 } // namespace detail
 
 // Move-only and caller-serialized. Do not call one Transaction concurrently.
+// Blocks until revisions after a sequence exist. Owns its own connection, so a
+// wait never holds the production. Waits are caller-serialized; cancel() may
+// be called from any thread. Destroying the production closes the waiter.
+class RevisionWaiter final {
+public:
+  RevisionWaiter(const RevisionWaiter &) = delete;
+  RevisionWaiter &operator=(const RevisionWaiter &) = delete;
+
+  RevisionWaiter(RevisionWaiter &&other) noexcept
+      : waiter_(std::exchange(other.waiter_, nullptr)) {}
+
+  RevisionWaiter &operator=(RevisionWaiter &&other) noexcept {
+    if (this != &other) {
+      pp_revision_waiter_release(waiter_);
+      waiter_ = std::exchange(other.waiter_, nullptr);
+    }
+    return *this;
+  }
+
+  ~RevisionWaiter() { pp_revision_waiter_release(waiter_); }
+
+  // Returns up to `limit` revisions after `after_sequence`, or a timed-out,
+  // closed, or cancelled result. Closed and cancelled are terminal.
+  [[nodiscard]] RevisionWait
+  wait(std::uint64_t after_sequence, std::uint32_t limit = 100,
+       std::chrono::milliseconds timeout = max_revision_wait) {
+    if (timeout.count() < 0 || timeout > max_revision_wait) {
+      throw Error(ErrorCode::invalid_argument,
+                  "revision wait timeout must be 0-60000 ms");
+    }
+    pp_revision_wait_result_t result = 0;
+    pp_revision_set_t *raw_revisions = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_revision_waiter_wait(
+        waiter_, after_sequence, limit,
+        static_cast<std::uint32_t>(timeout.count()), &result, &raw_revisions,
+        &error);
+    detail::throw_if_error(status, error);
+    detail::RevisionSetHandle revisions(raw_revisions);
+    return RevisionWait{static_cast<RevisionWaitResult>(result),
+                        detail::revisions(revisions.get())};
+  }
+
+  // Ends the current wait; later waits return RevisionWaitResult::cancelled.
+  void cancel() noexcept { pp_revision_waiter_cancel(waiter_); }
+
+private:
+  friend class Production;
+
+  explicit RevisionWaiter(pp_revision_waiter_t *waiter) noexcept
+      : waiter_(waiter) {}
+
+  pp_revision_waiter_t *waiter_ = nullptr;
+};
+
 class Transaction final {
 public:
   void setRevisionContext(const RevisionContext &context) {
@@ -3593,13 +3717,40 @@ public:
         production_, sequence, limit, &raw_revisions, &error);
     detail::throw_if_error(status, error);
     detail::RevisionSetHandle revisions(raw_revisions);
-    std::vector<Revision> result;
-    const std::uint64_t count = pp_revision_set_count(revisions.get());
-    result.reserve(static_cast<std::size_t>(count));
-    for (std::uint64_t index = 0; index < count; ++index) {
-      result.push_back(detail::revision(revisions.get(), index));
+    return detail::revisions(revisions.get());
+  }
+
+  // Revisions after `sequence` with at least one event of `kinds`; continue
+  // from the returned through sequence.
+  [[nodiscard]] FilteredRevisionPage
+  changesSinceFiltered(std::uint64_t sequence,
+                       const std::vector<RevisionEventKind> &kinds,
+                       std::uint32_t limit = 100) const {
+    std::vector<pp_revision_event_kind_t> native_kinds;
+    native_kinds.reserve(kinds.size());
+    for (const RevisionEventKind kind : kinds) {
+      native_kinds.push_back(static_cast<pp_revision_event_kind_t>(kind));
     }
-    return result;
+    pp_revision_set_t *raw_revisions = nullptr;
+    std::uint64_t through_sequence = 0;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status = pp_production_changes_since_filtered(
+        production_, sequence, native_kinds.data(),
+        static_cast<std::uint64_t>(native_kinds.size()), limit,
+        &raw_revisions, &through_sequence, &error);
+    detail::throw_if_error(status, error);
+    detail::RevisionSetHandle revisions(raw_revisions);
+    return FilteredRevisionPage{detail::revisions(revisions.get()),
+                                through_sequence};
+  }
+
+  [[nodiscard]] RevisionWaiter revisionWaiter() const {
+    pp_revision_waiter_t *waiter = nullptr;
+    pp_error_t *error = nullptr;
+    const pp_error_code_t status =
+        pp_revision_waiter_create(production_, &waiter, &error);
+    detail::throw_if_error(status, error);
+    return RevisionWaiter(waiter);
   }
 
   // Distinct semantic objects touched by revisions after `sequence`.
@@ -3781,6 +3932,97 @@ private:
   }
 
   pp_production_t *production_ = nullptr;
+};
+
+// Calls `callback` for each new revision on a thread the observer owns. With
+// `kinds`, only revisions containing one of those event kinds are delivered.
+// Stop the observer (or destroy it) before destroying the production; do not
+// destroy it from its own callback. An exception from the callback or a query
+// ends observation and is available from error().
+class RevisionObserver final {
+public:
+  using Callback = std::function<void(const Revision &,
+                                      const std::vector<RevisionEvent> &)>;
+
+  RevisionObserver(const Production &production, std::uint64_t after_sequence,
+                   Callback callback, std::vector<RevisionEventKind> kinds = {})
+      : production_(production), waiter_(production.revisionWaiter()),
+        cursor_(after_sequence), callback_(std::move(callback)),
+        kinds_(std::move(kinds)) {
+    thread_ = std::thread([this] { run(); });
+  }
+
+  RevisionObserver(const RevisionObserver &) = delete;
+  RevisionObserver &operator=(const RevisionObserver &) = delete;
+  RevisionObserver(RevisionObserver &&) = delete;
+  RevisionObserver &operator=(RevisionObserver &&) = delete;
+
+  ~RevisionObserver() { stop(); }
+
+  // Cancels the wait and joins the observer thread. Safe to call repeatedly;
+  // from the callback it only cancels.
+  void stop() noexcept {
+    waiter_.cancel();
+    if (thread_.joinable() && thread_.get_id() != std::this_thread::get_id()) {
+      thread_.join();
+    }
+  }
+
+  // Sequence of the last fully delivered revision or filtered page.
+  [[nodiscard]] std::uint64_t cursor() const noexcept { return cursor_.load(); }
+
+  [[nodiscard]] std::exception_ptr error() const {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    return error_;
+  }
+
+private:
+  static constexpr std::uint32_t page_size = 100;
+
+  void run() noexcept {
+    try {
+      while (true) {
+        const RevisionWait wait = waiter_.wait(cursor_.load(), page_size);
+        if (wait.result == RevisionWaitResult::timed_out) {
+          continue;
+        }
+        if (wait.result != RevisionWaitResult::revisions) {
+          return;
+        }
+        if (kinds_.empty()) {
+          for (const Revision &revision : wait.revisions) {
+            callback_(revision, production_.revisionEvents(revision.id));
+            cursor_.store(revision.sequence);
+          }
+          continue;
+        }
+        while (true) {
+          const FilteredRevisionPage page =
+              production_.changesSinceFiltered(cursor_.load(), kinds_,
+                                               page_size);
+          for (const Revision &revision : page.revisions) {
+            callback_(revision, production_.revisionEvents(revision.id));
+          }
+          cursor_.store(page.through_sequence);
+          if (page.revisions.size() < page_size) {
+            break;
+          }
+        }
+      }
+    } catch (...) {
+      const std::lock_guard<std::mutex> lock(mutex_);
+      error_ = std::current_exception();
+    }
+  }
+
+  const Production &production_;
+  RevisionWaiter waiter_;
+  std::atomic<std::uint64_t> cursor_;
+  Callback callback_;
+  std::vector<RevisionEventKind> kinds_;
+  mutable std::mutex mutex_;
+  std::exception_ptr error_;
+  std::thread thread_;
 };
 
 [[nodiscard]] inline std::uint32_t abi_version() noexcept {

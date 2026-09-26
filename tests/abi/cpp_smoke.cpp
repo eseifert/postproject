@@ -1,11 +1,14 @@
 #include <postproject/postproject.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -789,6 +792,63 @@ int main(int argc, char **argv) {
         stale_downstream.next_cursor.has_value() ||
         stale_downstream.traversal_truncated) {
       return 51;
+    }
+
+    {
+      std::filesystem::remove(path + ".waits");
+      auto watched = postproject::Production::create(path + ".waits");
+      auto waiter = watched.revisionWaiter();
+      if (waiter.wait(0, 10, std::chrono::milliseconds(0)).result !=
+          postproject::RevisionWaitResult::timed_out) {
+        return 52;
+      }
+      std::mutex delivered_mutex;
+      std::condition_variable delivered_changed;
+      std::vector<std::uint64_t> delivered;
+      postproject::RevisionObserver observer(
+          watched, 0,
+          [&](const postproject::Revision &revision,
+              const std::vector<postproject::RevisionEvent> &events) {
+            if (events.empty() ||
+                !std::holds_alternative<postproject::MediaRootAddedEvent>(
+                    events[0].payload)) {
+              return;
+            }
+            const std::lock_guard<std::mutex> lock(delivered_mutex);
+            delivered.push_back(revision.sequence);
+            delivered_changed.notify_all();
+          },
+          {postproject::RevisionEventKind::media_root_added});
+      auto root_transaction = watched.beginTransaction();
+      static_cast<void>(root_transaction.addMediaRoot("watched"));
+      root_transaction.commit();
+      {
+        std::unique_lock<std::mutex> lock(delivered_mutex);
+        if (!delivered_changed.wait_for(lock, std::chrono::seconds(60),
+                                        [&] { return !delivered.empty(); }) ||
+            delivered != std::vector<std::uint64_t>{1}) {
+          return 53;
+        }
+      }
+      observer.stop();
+      if (observer.error() != nullptr || observer.cursor() != 1) {
+        return 54;
+      }
+      const auto filtered = watched.changesSinceFiltered(
+          0, {postproject::RevisionEventKind::media_root_added,
+              postproject::RevisionEventKind::job_failed});
+      const auto waited = waiter.wait(0, 10);
+      if (filtered.revisions.size() != 1 || filtered.through_sequence != 1 ||
+          waited.result != postproject::RevisionWaitResult::revisions ||
+          waited.revisions.size() != 1 ||
+          waited.revisions[0].id != filtered.revisions[0].id) {
+        return 55;
+      }
+      waiter.cancel();
+      if (waiter.wait(1, 10).result !=
+          postproject::RevisionWaitResult::cancelled) {
+        return 56;
+      }
     }
 
     try {

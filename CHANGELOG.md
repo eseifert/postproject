@@ -9,6 +9,11 @@ Development version: `0.4.0-alpha.1`.
 
 ### Added
 
+- Added change delivery to the C++17 wrapper: `changesSinceFiltered` with a
+  `RevisionEventKind` enum, a move-only `RevisionWaiter` with thread-safe
+  `cancel()`, and a `RevisionObserver` that delivers revisions and their events
+  to a callback on a thread it owns. The installed CMake package now links
+  `Threads::Threads` for the observer.
 - Added bounded revision waits to Rust storage.
   `SqliteProduction::revision_waiter` returns a waiter with its own read
   connection that blocks until the first revisions after a sequence exist, for
