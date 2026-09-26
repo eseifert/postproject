@@ -162,4 +162,5 @@ adr/0023-job-model-and-execution-boundary
 adr/0024-dependency-relationships
 adr/0025-reference-local-executor
 adr/0026-domain-query-cursors
+adr/0027-change-delivery
 ```
