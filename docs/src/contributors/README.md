@@ -93,6 +93,8 @@ Do not make readers infer the product model from function signatures or ADRs.
 
 Existing `{code-variants}` blocks are generated from compiled/tested example programs and should be preserved when rewriting prose around them.
 
+A new public operation needs an example on every surface that offers it. Add a region to the fitting topic program under `docs/examples/<surface>/`, show it with `{code-variants}`, and explain any surface that lacks the operation with `no-variant`. `tools/check_example_coverage.py` fails CI when a C function, C++ member function, or Python method has no example.
+
 ## Model-specific contributor references
 
 Read these before changing the relevant subsystem:

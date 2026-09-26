@@ -51,23 +51,24 @@ is uploaded as a CI artifact. The same job builds and runs the C and C++
 quickstarts from their installed locations and runs the installed Python
 quickstart against the packaged media fixture.
 
-Every code example in the guides is an extract of a program that CI runs. The
-`code-variants` Sphinx directive reads `[name]` ... `[/name]` comment regions
-from `docs/examples/{c,cpp,python,cli}` and from the
-`postproject-doc-examples` workspace test, and the strict documentation build
-fails when an example is neither present nor explicitly marked unavailable for
-a surface. The Rust program runs under `cargo test --workspace`. The native
-package job configures `docs/examples` against the installed prefix and runs one
-shared scenario per surface through CTest: create a production, import media,
-attach an identifier and metadata, move the media and confirm the relocated
-candidate, add an image sequence, record provenance, drain the revision feed,
-evaluate artifact knowledge, traverse dependencies, page filtered jobs, and
-round-trip a host binding. The CLI script needs `bash` and `jq` and is skipped
-on Windows.
+Every code example in the documentation is an extract of a program that CI
+runs. The `code-variants` Sphinx directive reads `[name]` ... `[/name]` comment
+regions from every program in `docs/examples/{c,cpp,python,cli}` and
+`docs/examples/rust/tests`; a region name is unique per surface, and the strict
+documentation build fails when an example is neither present nor explicitly
+marked unavailable for a surface. Each surface has one program per topic: the
+end-to-end `guides` scenario (create, identify, describe, relink, add a
+sequence, record provenance, query, and follow the revision feed) plus
+`lifecycle`, `media`, `knowledge`, `provenance`, and `jobs`. The Rust programs
+run under `cargo test --workspace`. The native package job configures
+`docs/examples` against the installed prefix and runs every C, C++, Python, and
+CLI program through CTest, each in a freshly prepared work directory. The CLI
+scripts need `bash` and `jq` and are skipped on Windows.
 
-Every callable concept page includes at least one synchronized example across
-C, C++, Python, Rust, and the CLI. The documentation build treats a missing
-surface as a warning, and CI promotes documentation warnings to errors.
+`tools/check_example_coverage.py` fails when a function declared in the C
+header, a public member function of a C++ wrapper class, or a public method of
+a Python handle class appears in no example program, so a new operation cannot
+ship without a tested demonstration.
 
 Published documentation identifies historical scope by package release, C ABI,
 or schema version. Planning labels remain confined to the untracked planning
