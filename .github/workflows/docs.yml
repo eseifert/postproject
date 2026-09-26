@@ -45,7 +45,7 @@ jobs:
         run: |
           mkdir -p target/doxygen
           doxygen Doxyfile
-          python tools/normalize_doxygen_xml.py target/doxygen/xml
+          python "$GITHUB_WORKSPACE/tools/normalize_doxygen_xml.py" target/doxygen/xml
           python tools/check_docs_coverage.py include/postproject/postproject.h target/doxygen/xml
           sphinx-build --fail-on-warning --keep-going -b html docs "$GITHUB_WORKSPACE/target/site/0.3.0-alpha.1"
       - uses: actions/checkout@v7
@@ -57,7 +57,7 @@ jobs:
         run: |
           mkdir -p target/doxygen
           doxygen Doxyfile
-          python tools/normalize_doxygen_xml.py target/doxygen/xml
+          python "$GITHUB_WORKSPACE/tools/normalize_doxygen_xml.py" target/doxygen/xml
           python tools/check_docs_coverage.py include/postproject/postproject.h target/doxygen/xml
           sphinx-build --fail-on-warning --keep-going -b html docs "$GITHUB_WORKSPACE/target/site/0.3.0-alpha.2"
           cmake -E copy_directory "$GITHUB_WORKSPACE/target/site/0.3.0-alpha.2" "$GITHUB_WORKSPACE/target/site/latest"
