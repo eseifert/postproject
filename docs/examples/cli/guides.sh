@@ -261,4 +261,23 @@ while :; do
 done
 # [/revision-feed]
 
+# [revision-filter]
+PAGE=$(postproject --json revisions filtered production.pproj --after 0 \
+  --kind representation_added --kind job_succeeded)
+jq -r '.revisions[].id' <<<"$PAGE"
+# Continue from the through sequence, which skips unrelated revisions.
+FILTERED_CURSOR=$(jq -r .through_sequence <<<"$PAGE")
+# [/revision-filter]
+
+# [revision-wait]
+# Blocks until a revision after --after exists, including commits by other
+# processes; prints "timed_out" after --timeout-ms without one.
+WAITED=$(postproject --json revisions wait production.pproj --after 0 \
+  --timeout-ms 5000)
+jq -r .result <<<"$WAITED"
+# [/revision-wait]
+
+test "$FILTERED_CURSOR" = "$CURSOR"
+test "$(jq -r .result <<<"$WAITED")" = revisions
+
 test "$CURSOR" = "$(postproject --json revisions latest production.pproj | jq -r .sequence)"

@@ -11,6 +11,8 @@ The work directory is prepared by ``prepare-workdir.cmake``.
 from __future__ import annotations
 
 import sys
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from postproject import (
@@ -23,15 +25,20 @@ from postproject import (
     ImageSequenceInput,
     JobRequest,
     JobState,
+    JobSucceededEvent,
     MetadataLanguageString,
     MetadataProperty,
     ObjectReference,
     OriginIdentity,
     Production,
+    RepresentationAddedEvent,
     RepresentationId,
     RepresentationKind,
     RepresentationResolution,
+    Revision,
     RevisionEvent,
+    RevisionId,
+    RevisionObserver,
     ToolIdentity,
 )
 
@@ -449,6 +456,44 @@ def process_changes(production: Production, cursor: int) -> int:
 # [/revision-feed]
 
 
+# [revision-filter]
+def new_media_revisions(
+    production: Production, cursor: int
+) -> tuple[list[RevisionId], int]:
+    page = production.changes_since_filtered(
+        cursor, [RepresentationAddedEvent, JobSucceededEvent]
+    )
+    # Continue from the through sequence, which skips unrelated revisions.
+    return [revision.id for revision in page.revisions], page.through_sequence
+
+
+# [/revision-filter]
+
+
+# [revision-wait]
+def wait_for_changes(production: Production, cursor: int) -> tuple[Revision, ...]:
+    with production.revision_waiter() as waiter:
+        # Another thread may call waiter.cancel() to stop the wait.
+        return waiter.wait(cursor, timeout=5).revisions  # empty unless revisions
+
+
+def watch_new_media(
+    production: Production,
+    cursor: int,
+    on_revision: Callable[[Revision, tuple[RevisionEvent, ...]], object],
+) -> RevisionObserver:
+    # on_revision runs on the observer's own thread; call stop() before closing.
+    return RevisionObserver(
+        production,
+        on_revision,
+        after_sequence=cursor,
+        kinds=[RepresentationAddedEvent],
+    )
+
+
+# [/revision-wait]
+
+
 # [host-binding]
 def bind_representation(
     production: Production, representation_id: RepresentationId
@@ -503,6 +548,14 @@ def main() -> None:
         cursor = process_changes(production, 0)
         latest = production.latest_revision
         assert latest is not None and cursor == latest.sequence
+        media_revisions, through = new_media_revisions(production, 0)
+        assert media_revisions and through == cursor
+        assert wait_for_changes(production, 0)
+        delivered = threading.Event()
+        observer = watch_new_media(production, 0, lambda *_: delivered.set())
+        assert delivered.wait(timeout=60)
+        observer.stop()
+        assert observer.error is None
         print(f"binding: {bind_representation(production, sequence_id)}")
 
 

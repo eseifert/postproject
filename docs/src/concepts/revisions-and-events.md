@@ -73,6 +73,19 @@ Consumers poll with three operations:
 - `changes_since(sequence, limit)` reads a bounded ascending page; and
 - `events_for_revision(revision_id)` reads that revision's ordered events.
 
+Two further operations build on the same cursor:
+
+- `changes_since_filtered(sequence, event types, limit)` returns only the
+  revisions that contain at least one event of the requested types, together
+  with a *through sequence*. Every matching revision up to that sequence is in
+  the page, so the through sequence is the next cursor and unrelated revisions
+  are skipped without being read.
+- A *revision waiter* blocks for a bounded time until a revision after a
+  sequence exists. It observes commits made through the same production at
+  once and commits by other processes sharing the production file within a
+  short polling interval. There is no daemon and no callback from the library;
+  the C++ and Python observers run the wait on a thread they own.
+
 After receiving an event, a consumer should re-query the relevant object when
 it needs current values. Events are an observation and cache-invalidation
 mechanism, not a replay log that replaces the production database.
@@ -82,8 +95,9 @@ mechanism, not a replay log that replaces the production database.
 The journal is not undo/redo. It does not store inverse operations.
 
 The journal is not itself multi-user collaboration. It has no distributed
-merge, base-revision conflict protocol, authenticated authorship, subscription
-transport, or remote ordering. Those capabilities can build on the durable
+merge, base-revision conflict protocol, authenticated authorship, network
+subscription transport, or remote ordering. Waiting is local to processes that
+can open the same production file. Those capabilities can build on the durable
 semantic cursor later without changing what existing revisions mean.
 
 ## Across public surfaces

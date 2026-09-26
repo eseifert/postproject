@@ -22,6 +22,51 @@ Persisting the cursor after each complete revision gives at-least-once
 processing after a consumer crash. Handlers should therefore tolerate seeing a
 revision again. A cursor is meaningful only for the production that produced it.
 
+## Following only some events
+
+An editor that refreshes its media bin does not need to page through metadata
+churn. Request the revisions that contain at least one event of the kinds you
+care about. The page also returns a *through sequence*: every matching revision
+up to it is included, so store it as the cursor even when the page is empty.
+That skips long runs of unrelated revisions without reading them.
+
+```{code-variants} revision-filter
+```
+
+A matching revision still carries all of its events; filter them when you load
+them.
+
+## Waiting for changes
+
+Instead of polling on a timer, create a revision waiter and wait for the first
+revisions after your cursor. A wait returns one of four results:
+
+- **revisions** — a non-empty page, as `changes_since` would return it;
+- **timed out** — nothing was committed within the timeout, at most 60 seconds;
+  a zero timeout checks once without blocking;
+- **closed** — the production the waiter was created from was closed; or
+- **cancelled** — the waiter was cancelled, possibly from another thread.
+
+Closed and cancelled are final for that waiter. The waiter sees commits made
+through the same production immediately, and commits by other processes or
+other handles on the same production file within about 100 ms. It uses its own
+connection, so a blocked wait never delays other calls on the production.
+
+```{code-variants} revision-wait
+```
+
+The C ABI exposes only the waiter and never calls back into your code. The C++
+wrapper and Python add a `RevisionObserver`, shown above, that waits on a thread
+it owns and calls your callback there with each revision and its events,
+optionally only for chosen event kinds. Stop the observer before closing the
+production, and marshal work to your UI thread yourself. Rust callers use the
+waiter directly and may hand its canceller to another thread. The CLI command
+`postproject revisions wait` performs one bounded wait and prints the result.
+
+A wait is a wake-up signal, not a replacement for the cursor: after it returns,
+process the revisions exactly as in the polling loop above and advance the
+cursor only after each revision is handled.
+
 ## Events
 
 Each event has a position within its revision and a typed payload, such as an

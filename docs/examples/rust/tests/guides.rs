@@ -6,6 +6,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::Duration;
 
 use postproject_core::{
     Activity, ActivityId, ActivityInput, ActivityKind, ActivityOutput, ActivityOutputQuery,
@@ -16,7 +17,8 @@ use postproject_core::{
     MetadataQuery, MetadataValue, ObjectRef, OriginIdentity, ProductionId, PropertyId,
     ProvenanceQueryLimits, QueryPageRequest, RationalRate, Representation, RepresentationId,
     RepresentationKind, RepresentationResolution, RequestedJobOutput, ResolutionEvidence, Result,
-    RevisionContext, RevisionEvent, StaleArtifactQuery, ToolIdentity, VocabularyId,
+    Revision, RevisionContext, RevisionEvent, RevisionEventFilter, RevisionEventType, RevisionId,
+    RevisionWaitOutcome, StaleArtifactQuery, ToolIdentity, VocabularyId,
 };
 use postproject_media::{
     ExecutionOutcome, ExecutionRequest, Executor, FfmpegExecutor, GENERATE_PROXY_JOB_KIND,
@@ -549,6 +551,34 @@ fn process_changes(production: &SqliteProduction, mut cursor: u64) -> Result<u64
 }
 // [/revision-feed]
 
+// [revision-filter]
+fn new_media_revisions(
+    production: &SqliteProduction,
+    cursor: u64,
+) -> Result<(Vec<RevisionId>, u64)> {
+    let filter = RevisionEventFilter::new([
+        RevisionEventType::RepresentationAdded,
+        RevisionEventType::JobSucceeded,
+    ])?;
+    let page = production.changes_since_filtered(cursor, &filter, 100)?;
+    let revisions = page.revisions().iter().map(Revision::id).collect();
+    // Continue from the through sequence, which skips unrelated revisions.
+    Ok((revisions, page.through_sequence()))
+}
+// [/revision-filter]
+
+// [revision-wait]
+fn wait_for_changes(production: &SqliteProduction, cursor: u64) -> Result<Vec<Revision>> {
+    let mut waiter = production.revision_waiter()?;
+    // waiter.canceller() may be handed to another thread to stop the wait.
+    match waiter.wait_for_revisions(cursor, 100, Duration::from_secs(5))? {
+        RevisionWaitOutcome::Revisions(revisions) => Ok(revisions),
+        // Timed out, the production was closed, or the waiter was cancelled.
+        _ => Ok(Vec::new()),
+    }
+}
+// [/revision-wait]
+
 // [host-binding]
 fn bind_representation(
     production_id: ProductionId,
@@ -663,6 +693,10 @@ fn guide_examples_run_in_order() -> Result<()> {
             .latest_revision()?
             .map(|revision| revision.sequence())
     );
+    let (media_revisions, through) = new_media_revisions(&production, 0)?;
+    assert!(!media_revisions.is_empty());
+    assert_eq!(through, cursor);
+    assert!(!wait_for_changes(&production, 0)?.is_empty());
 
     let binding = bind_representation(production.production().id(), sequence_id)?;
     assert!(binding.starts_with("https://postproject.org/ref/v1/"));

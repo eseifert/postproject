@@ -38,6 +38,14 @@ the staged output requested by the job. Do not commit the representation or
 activity in an earlier transaction: only `complete` gives the all-or-nothing
 guarantee.
 
+## Learn when work finishes
+
+A requester does not need to poll the job list. Every job transition is a
+semantic revision event, so wait on a [revision waiter](revision-feed.md) and
+fetch the revisions filtered to `JobSucceeded`, `JobFailed`, and `JobCancelled`
+events after your cursor. This observes a worker in another process — for
+example `postproject job run` — as soon as it commits.
+
 ## Public operations
 
 | Operation | Rust | C | C++ | Python | CLI |

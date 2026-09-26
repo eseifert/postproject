@@ -7,9 +7,12 @@
 #include <postproject/postproject.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -414,6 +417,44 @@ std::uint64_t process_changes(const postproject::Production &production,
 }
 // [/revision-feed]
 
+// [revision-filter]
+std::pair<std::vector<postproject::Uuid>, std::uint64_t>
+new_media_revisions(const postproject::Production &production,
+                    std::uint64_t cursor) {
+  const auto page = production.changesSinceFiltered(
+      cursor, {postproject::RevisionEventKind::representation_added,
+               postproject::RevisionEventKind::job_succeeded});
+  std::vector<postproject::Uuid> revisions;
+  for (const auto &revision : page.revisions) {
+    revisions.push_back(revision.id);
+  }
+  // Continue from the through sequence, which skips unrelated revisions.
+  return {revisions, page.through_sequence};
+}
+// [/revision-filter]
+
+// [revision-wait]
+std::vector<postproject::Revision>
+wait_for_changes(const postproject::Production &production,
+                 std::uint64_t cursor) {
+  auto waiter = production.revisionWaiter();
+  // Another thread may call waiter.cancel() to stop the wait.
+  auto wait = waiter.wait(cursor, 100, std::chrono::seconds(5));
+  return std::move(wait.revisions); // empty unless result is revisions
+}
+
+// The callback runs on the observer's own thread; destroy the observer
+// before the production.
+std::unique_ptr<postproject::RevisionObserver>
+watch_new_media(const postproject::Production &production,
+                std::uint64_t cursor,
+                postproject::RevisionObserver::Callback on_revision) {
+  return std::make_unique<postproject::RevisionObserver>(
+      production, cursor, std::move(on_revision),
+      std::vector{postproject::RevisionEventKind::representation_added});
+}
+// [/revision-wait]
+
 // [host-binding]
 std::string bind_representation(const postproject::Production &production,
                                 const postproject::Uuid &representation_id) {
@@ -482,6 +523,29 @@ int main(int argc, char **argv) {
 
     const auto cursor = process_changes(production, 0);
     require(cursor == production.latestRevision()->sequence, "feed cursor");
+    const auto [media_revisions, through] = new_media_revisions(production, 0);
+    require(!media_revisions.empty() && through == cursor, "filtered feed");
+    require(!wait_for_changes(production, 0).empty(), "revision wait");
+    {
+      std::mutex mutex;
+      std::condition_variable changed;
+      bool delivered = false;
+      auto observer = watch_new_media(
+          production, 0,
+          [&](const postproject::Revision &,
+              const std::vector<postproject::RevisionEvent> &) {
+            const std::lock_guard<std::mutex> lock(mutex);
+            delivered = true;
+            changed.notify_all();
+          });
+      std::unique_lock<std::mutex> lock(mutex);
+      require(changed.wait_for(lock, std::chrono::seconds(60),
+                               [&] { return delivered; }),
+              "observed revision");
+      lock.unlock();
+      observer->stop();
+      require(observer->error() == nullptr, "observer error");
+    }
     std::cout << "binding: " << bind_representation(production, sequence_id)
               << '\n';
   } catch (const std::exception &error) {

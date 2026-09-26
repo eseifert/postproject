@@ -913,6 +913,52 @@ static pp_error_code_t process_changes(const pp_production_t *production,
 }
 /* [/revision-feed] */
 
+/* [revision-filter] */
+static pp_error_code_t new_media_revisions(const pp_production_t *production,
+                                           uint64_t *cursor,
+                                           uint64_t *matched,
+                                           pp_error_t **error) {
+  const pp_revision_event_kind_t kinds[] = {PP_REVISION_REPRESENTATION_ADDED,
+                                            PP_REVISION_JOB_SUCCEEDED};
+  pp_revision_set_t *page = NULL;
+  uint64_t through = 0;
+  pp_error_code_t status = pp_production_changes_since_filtered(
+      production, *cursor, kinds, 2, 100, &page, &through, error);
+  if (status == PP_OK) {
+    *matched = pp_revision_set_count(page);
+    /* Continue from the through sequence, which skips unrelated revisions. */
+    *cursor = through;
+  }
+  pp_revision_set_release(page);
+  return status;
+}
+/* [/revision-filter] */
+
+/* [revision-wait] */
+static pp_error_code_t wait_for_changes(const pp_production_t *production,
+                                        uint64_t cursor, uint64_t *count,
+                                        pp_error_t **error) {
+  pp_revision_waiter_t *waiter = NULL;
+  pp_revision_set_t *revisions = NULL;
+  pp_revision_wait_result_t result = 0;
+  pp_error_code_t status = pp_revision_waiter_create(production, &waiter, error);
+  if (status == PP_OK) {
+    /* Another thread may call pp_revision_waiter_cancel() to stop the wait. */
+    status = pp_revision_waiter_wait(waiter, cursor, 100, 5000, &result,
+                                     &revisions, error);
+  }
+  if (status == PP_OK) {
+    /* Timed out, closed, and cancelled results return an empty set. */
+    *count = result == PP_REVISION_WAIT_REVISIONS
+                 ? pp_revision_set_count(revisions)
+                 : 0;
+  }
+  pp_revision_set_release(revisions);
+  pp_revision_waiter_release(waiter);
+  return status;
+}
+/* [/revision-wait] */
+
 /* [host-binding] */
 static pp_error_code_t bind_representation(const pp_uuid_t *production_id,
                                            const pp_uuid_t *representation_id,
@@ -1079,6 +1125,21 @@ int main(int argc, char **argv) {
     status = process_changes(production, &cursor, &error);
   }
   if (status == PP_OK && cursor == 0) {
+    status = PP_ERROR_INTERNAL;
+  }
+  uint64_t filtered_cursor = 0;
+  uint64_t matched = 0;
+  if (status == PP_OK) {
+    status = new_media_revisions(production, &filtered_cursor, &matched, &error);
+  }
+  if (status == PP_OK && (matched == 0 || filtered_cursor != cursor)) {
+    status = PP_ERROR_INTERNAL;
+  }
+  uint64_t waited = 0;
+  if (status == PP_OK) {
+    status = wait_for_changes(production, 0, &waited, &error);
+  }
+  if (status == PP_OK && waited == 0) {
     status = PP_ERROR_INTERNAL;
   }
   if (status == PP_OK) {
