@@ -203,6 +203,7 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/python/src
           POSTPROJECT_LIBRARY: ${{ github.workspace }}/target/release/${{ matrix.python_library }}
+          POSTPROJECT_CLI: ${{ github.workspace }}/target/release/${{ matrix.cli_executable }}
         run: python -m unittest discover -s python/tests -v
       - name: Install native package
         shell: bash

@@ -90,3 +90,13 @@ and objects changed since a revision. Unresolved-media and media-root queries
 read recorded knowledge only and never touch the filesystem; use `resolve()`
 for current file availability. A stale-artifact page may hold fewer results
 than its limit and still return a `next_cursor`.
+
+`changes_since_filtered(sequence, [JobSucceededEvent, ...])` returns only
+revisions containing one of the given event payload classes, plus a
+`through_sequence` to continue from. `revision_waiter()` returns a waiter whose
+`wait(after_sequence, timeout=...)` blocks, with the GIL released, for at most
+60 seconds until revisions after the sequence exist, including commits by other
+processes; `cancel()` may be called from any thread. `RevisionObserver`
+delivers new revisions and their events to a callback on a thread it owns;
+stop it before closing the production. Closing the production wakes every
+waiter with `RevisionWaitResult.CLOSED`.

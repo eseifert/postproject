@@ -51,6 +51,7 @@ from ._model import (
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
     FileResourceInput,
+    FilteredRevisionPage,
     Fingerprint,
     FingerprintSnapshot,
     HostObjectBinding,
@@ -128,11 +129,13 @@ from ._model import (
     RevisionEvent,
     RevisionEventPayload,
     RevisionId,
+    RevisionWait,
+    RevisionWaitResult,
     ToolIdentity,
     TransactionId,
 )
 from ._native import ABI_VERSION, NativeLibrary
-from ._production import Production, Transaction
+from ._production import Production, RevisionObserver, RevisionWaiter, Transaction
 
 __all__ = [
     "ABI_VERSION",
@@ -175,6 +178,7 @@ __all__ = [
     "ExternalIdentifierAddedEvent",
     "ExternalIdentifierRemovedEvent",
     "FileResourceInput",
+    "FilteredRevisionPage",
     "Fingerprint",
     "FingerprintError",
     "FingerprintSnapshot",
@@ -261,6 +265,10 @@ __all__ = [
     "RevisionEvent",
     "RevisionEventPayload",
     "RevisionId",
+    "RevisionObserver",
+    "RevisionWait",
+    "RevisionWaitResult",
+    "RevisionWaiter",
     "StorageError",
     "ToolIdentity",
     "Transaction",

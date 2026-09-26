@@ -9,6 +9,11 @@ Development version: `0.4.0-alpha.1`.
 
 ### Added
 
+- Added change delivery to Python: `Production.changes_since_filtered` over
+  event payload classes, `Production.revision_waiter()` with a GIL-releasing
+  `wait()` and thread-safe `cancel()`, and a `RevisionObserver` that calls back
+  on a thread it owns. A test observes a proxy completed by a CLI `job run` in
+  another process.
 - Added change delivery to the C++17 wrapper: `changesSinceFiltered` with a
   `RevisionEventKind` enum, a move-only `RevisionWaiter` with thread-safe
   `cancel()`, and a `RevisionObserver` that delivers revisions and their events

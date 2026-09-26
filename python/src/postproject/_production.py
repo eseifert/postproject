@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import threading
 import weakref
 from _ctypes import _Pointer
 from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -66,6 +67,9 @@ from ._abi import (
     RevisionEvent as NativeRevisionEvent,
 )
 from ._abi import (
+    RevisionWaiter as NativeRevisionWaiter,
+)
+from ._abi import (
     Transaction as NativeTransaction,
 )
 from ._artifact import read_evaluation, read_reproducibility
@@ -97,6 +101,7 @@ from ._model import (
     ExternalIdentifierAddedEvent,
     ExternalIdentifierRemovedEvent,
     FileResourceInput,
+    FilteredRevisionPage,
     Fingerprint,
     FingerprintSnapshot,
     HostObjectBinding,
@@ -172,7 +177,10 @@ from ._model import (
     Revision,
     RevisionContext,
     RevisionEvent,
+    RevisionEventPayload,
     RevisionId,
+    RevisionWait,
+    RevisionWaitResult,
     ToolIdentity,
     TransactionId,
 )
@@ -1284,6 +1292,62 @@ class Production:
             limit,
         )
 
+    def changes_since_filtered(
+        self,
+        sequence: int,
+        kinds: Iterable[type[RevisionEventPayload]],
+        limit: int = 100,
+    ) -> FilteredRevisionPage:
+        """Return revisions after ``sequence`` with an event of one of ``kinds``.
+
+        ``kinds`` are event payload classes such as ``JobSucceededEvent``.
+        Continue from the returned ``through_sequence``, which skips unrelated
+        revisions without reading them.
+        """
+
+        self._require_open()
+        codes = [_revision_event_kind(kind) for kind in kinds]
+        native_kinds = (ctypes.c_uint32 * len(codes))(*codes)
+        handle = ctypes.POINTER(RevisionSet)()
+        through_sequence = ctypes.c_uint64()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_production_changes_since_filtered(
+            self._handle,
+            sequence,
+            native_kinds,
+            len(codes),
+            limit,
+            ctypes.byref(handle),
+            ctypes.byref(through_sequence),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native filtered revision query returned no result set")
+        try:
+            revisions = _revisions_in(self._native, handle)
+        finally:
+            self._native.lib.pp_revision_set_release(handle)
+        return FilteredRevisionPage(revisions, int(through_sequence.value))
+
+    def revision_waiter(self) -> RevisionWaiter:
+        """Create a waiter that blocks until new revisions are committed.
+
+        The waiter observes commits from this production immediately and
+        from other processes by polling. Closing the production closes it.
+        """
+
+        self._require_open()
+        handle = ctypes.POINTER(NativeRevisionWaiter)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_revision_waiter_create(
+            self._handle, ctypes.byref(handle), ctypes.byref(error)
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native revision waiter creation returned no handle")
+        return RevisionWaiter(self._native, handle)
+
     def _revision_events(self, revision_id: RevisionId) -> tuple[RevisionEvent, ...]:
         """Return the ordered semantic events for one revision."""
 
@@ -1526,6 +1590,196 @@ class Production:
             )
         finally:
             self._native.lib.pp_object_query_set_release(handle)
+
+
+_MAX_REVISION_WAIT_SECONDS = _abi.PP_REVISION_WAIT_MAX_TIMEOUT_MILLIS / 1000
+_WAIT_RESULTS = {
+    _abi.PP_REVISION_WAIT_REVISIONS: RevisionWaitResult.REVISIONS,
+    _abi.PP_REVISION_WAIT_TIMED_OUT: RevisionWaitResult.TIMED_OUT,
+    _abi.PP_REVISION_WAIT_CLOSED: RevisionWaitResult.CLOSED,
+    _abi.PP_REVISION_WAIT_CANCELLED: RevisionWaitResult.CANCELLED,
+}
+
+
+class RevisionWaiter:
+    """Blocks until revisions after a sequence are committed.
+
+    The waiter owns its own connection to the production file, so a wait never
+    blocks other calls on the production. Waits must not overlap one another or
+    ``close()``; ``cancel()`` may be called from any thread at any time.
+    """
+
+    def __init__(
+        self, native: NativeLibrary, handle: _Pointer[NativeRevisionWaiter]
+    ) -> None:
+        self._native = native
+        self._handle = handle
+        self._finalizer = weakref.finalize(
+            self, native.lib.pp_revision_waiter_release, handle
+        )
+
+    def wait(
+        self,
+        after_sequence: int,
+        *,
+        limit: int = 100,
+        timeout: float = _MAX_REVISION_WAIT_SECONDS,
+    ) -> RevisionWait:
+        """Wait up to ``timeout`` seconds (at most 60) for revisions.
+
+        A zero timeout checks once. The GIL is released while waiting.
+        """
+
+        if not self._finalizer.alive:
+            raise RuntimeError("revision waiter is closed")
+        if not 0 <= timeout <= _MAX_REVISION_WAIT_SECONDS:
+            raise ValueError("revision wait timeout must be 0-60 seconds")
+        result = ctypes.c_uint32()
+        handle = ctypes.POINTER(RevisionSet)()
+        error = ctypes.POINTER(Error)()
+        status = self._native.lib.pp_revision_waiter_wait(
+            self._handle,
+            after_sequence,
+            limit,
+            round(timeout * 1000),
+            ctypes.byref(result),
+            ctypes.byref(handle),
+            ctypes.byref(error),
+        )
+        self._native.check(status, error)
+        if not handle:
+            raise RuntimeError("native revision wait returned no result set")
+        try:
+            revisions = _revisions_in(self._native, handle)
+        finally:
+            self._native.lib.pp_revision_set_release(handle)
+        try:
+            outcome = _WAIT_RESULTS[result.value]
+        except KeyError as error:
+            raise RuntimeError(
+                f"unknown revision wait result {result.value}"
+            ) from error
+        return RevisionWait(outcome, revisions)
+
+    def cancel(self) -> None:
+        """End the current wait; later waits return ``CANCELLED``."""
+
+        if self._finalizer.alive:
+            self._native.lib.pp_revision_waiter_cancel(self._handle)
+
+    def close(self) -> None:
+        """Release the native waiter. Repeated calls are harmless."""
+
+        self._finalizer()
+        self._handle = ctypes.POINTER(NativeRevisionWaiter)()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.close()
+
+
+class RevisionObserver:
+    """Delivers new revisions to ``callback`` on a thread the observer owns.
+
+    ``callback(revision, events)`` runs on the observer thread for each
+    revision after ``after_sequence``; with ``kinds``, only for revisions that
+    contain an event of one of those payload classes. Stop the observer before
+    closing the production. An exception from the callback or a query ends
+    observation and is kept in ``error``.
+    """
+
+    _PAGE_SIZE = 100
+
+    def __init__(
+        self,
+        production: Production,
+        callback: Callable[[Revision, tuple[RevisionEvent, ...]], object],
+        *,
+        after_sequence: int = 0,
+        kinds: Iterable[type[RevisionEventPayload]] | None = None,
+    ) -> None:
+        self._production = production
+        self._callback = callback
+        self._kinds = None if kinds is None else tuple(kinds)
+        if self._kinds is not None:
+            for kind in self._kinds:
+                _revision_event_kind(kind)
+        self._cursor = after_sequence
+        self._error: BaseException | None = None
+        self._waiter = production.revision_waiter()
+        self._thread = threading.Thread(
+            target=self._run, name="postproject-revision-observer", daemon=True
+        )
+        self._thread.start()
+
+    @property
+    def cursor(self) -> int:
+        """Sequence of the last fully delivered revision or filtered page."""
+
+        return self._cursor
+
+    @property
+    def error(self) -> BaseException | None:
+        """The exception that ended observation, if any."""
+
+        return self._error
+
+    def stop(self) -> None:
+        """Cancel the wait and join the observer thread.
+
+        Called from the callback, it only cancels.
+        """
+
+        self._waiter.cancel()
+        if threading.current_thread() is not self._thread:
+            self._thread.join()
+            self._waiter.close()
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.stop()
+
+    def _run(self) -> None:
+        try:
+            while True:
+                wait = self._waiter.wait(self._cursor, limit=self._PAGE_SIZE)
+                if wait.result is RevisionWaitResult.TIMED_OUT:
+                    continue
+                if wait.result is not RevisionWaitResult.REVISIONS:
+                    return
+                if self._kinds is None:
+                    for revision in wait.revisions:
+                        self._deliver(revision)
+                        self._cursor = revision.sequence
+                    continue
+                while True:
+                    page = self._production.changes_since_filtered(
+                        self._cursor, self._kinds, self._PAGE_SIZE
+                    )
+                    for revision in page.revisions:
+                        self._deliver(revision)
+                    self._cursor = page.through_sequence
+                    if len(page.revisions) < self._PAGE_SIZE:
+                        break
+        except BaseException as error:
+            self._error = error
+
+    def _deliver(self, revision: Revision) -> None:
+        self._callback(revision, self._production.revision_events[revision.id])
 
 
 class Transaction:
@@ -3706,6 +3960,54 @@ def _revision_at(
         int(committed_at.value),
         origin,
         _decode_optional(message.value),
+    )
+
+
+_REVISION_EVENT_KINDS: dict[type, int] = {
+    AssetImportedEvent: _abi.PP_REVISION_ASSET_IMPORTED,
+    RepresentationAddedEvent: _abi.PP_REVISION_REPRESENTATION_ADDED,
+    ResourceAddedEvent: _abi.PP_REVISION_RESOURCE_ADDED,
+    RepresentationResourceAddedEvent: _abi.PP_REVISION_REPRESENTATION_RESOURCE_ADDED,
+    LocatorAddedEvent: _abi.PP_REVISION_LOCATOR_ADDED,
+    LocatorRetiredEvent: _abi.PP_REVISION_LOCATOR_RETIRED,
+    MediaRootAddedEvent: _abi.PP_REVISION_MEDIA_ROOT_ADDED,
+    MediaRootEnabledChangedEvent: _abi.PP_REVISION_MEDIA_ROOT_ENABLED_CHANGED,
+    MediaRootRemovedEvent: _abi.PP_REVISION_MEDIA_ROOT_REMOVED,
+    ExternalIdentifierAddedEvent: _abi.PP_REVISION_EXTERNAL_IDENTIFIER_ADDED,
+    ExternalIdentifierRemovedEvent: _abi.PP_REVISION_EXTERNAL_IDENTIFIER_REMOVED,
+    MetadataAddedOrReplacedEvent: _abi.PP_REVISION_METADATA_ADDED_OR_REPLACED,
+    MetadataRemovedEvent: _abi.PP_REVISION_METADATA_REMOVED,
+    ActivityCreatedEvent: _abi.PP_REVISION_ACTIVITY_CREATED,
+    ActivityInputAddedEvent: _abi.PP_REVISION_ACTIVITY_INPUT_ADDED,
+    ActivityOutputAddedEvent: _abi.PP_REVISION_ACTIVITY_OUTPUT_ADDED,
+    ResourceFingerprintObservedEvent: _abi.PP_REVISION_RESOURCE_FINGERPRINT_OBSERVED,
+    RepresentationFingerprintObservedEvent: (
+        _abi.PP_REVISION_REPRESENTATION_FINGERPRINT_OBSERVED
+    ),
+    DependencySetRecordedEvent: _abi.PP_REVISION_DEPENDENCY_SET_RECORDED,
+    JobRequestedEvent: _abi.PP_REVISION_JOB_REQUESTED,
+    JobClaimedEvent: _abi.PP_REVISION_JOB_CLAIMED,
+    JobClaimRenewedEvent: _abi.PP_REVISION_JOB_CLAIM_RENEWED,
+    JobClaimReleasedEvent: _abi.PP_REVISION_JOB_CLAIM_RELEASED,
+    JobSucceededEvent: _abi.PP_REVISION_JOB_SUCCEEDED,
+    JobFailedEvent: _abi.PP_REVISION_JOB_FAILED,
+    JobCancelledEvent: _abi.PP_REVISION_JOB_CANCELLED,
+}
+
+
+def _revision_event_kind(kind: type) -> int:
+    try:
+        return _REVISION_EVENT_KINDS[kind]
+    except (KeyError, TypeError) as error:
+        raise ValueError(f"not a revision event payload class: {kind!r}") from error
+
+
+def _revisions_in(
+    native: NativeLibrary, handle: _Pointer[RevisionSet]
+) -> tuple[Revision, ...]:
+    return tuple(
+        _revision_at(native, handle, index)
+        for index in range(int(native.lib.pp_revision_set_count(handle)))
     )
 
 

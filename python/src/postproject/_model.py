@@ -959,3 +959,36 @@ class Revision:
     committed_at_unix_micros: int
     origin: OriginIdentity | None
     message: str | None
+
+
+class RevisionWaitResult(Enum):
+    """Why a revision wait returned."""
+
+    REVISIONS = "revisions"
+    TIMED_OUT = "timed_out"
+    CLOSED = "closed"
+    CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True, slots=True)
+class RevisionWait:
+    """Outcome of one bounded revision wait.
+
+    ``revisions`` is non-empty only for ``RevisionWaitResult.REVISIONS``.
+    Closed and cancelled results are terminal for the waiter.
+    """
+
+    result: RevisionWaitResult
+    revisions: tuple[Revision, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FilteredRevisionPage:
+    """Matching revisions and the cursor for the next filtered page.
+
+    Every matching revision with a sequence up to ``through_sequence`` is in
+    ``revisions``.
+    """
+
+    revisions: tuple[Revision, ...]
+    through_sequence: int
