@@ -88,6 +88,10 @@ Development version: `0.4.0-alpha.1`.
 
 ### Changed
 
+- Bumped the pre-release C ABI to version 26 with event-kind-filtered revision
+  pages and revision waiters: `pp_revision_waiter_create`,
+  `pp_revision_waiter_wait`, a thread-safe `pp_revision_waiter_cancel`, and
+  `pp_revision_waiter_release`. Releasing a production closes its waiters.
 - Bumped the pre-release C ABI to version 25 with bounded domain-query pages,
   scalar metadata predicates, activity-output filters, explicit provenance
   bounds, stale-artifact and changed-object queries, and root-aware locator

@@ -101,6 +101,7 @@ pp_production_assets
 pp_production_assets_page
 pp_production_begin_transaction
 pp_production_changes_since
+pp_production_changes_since_filtered
 pp_production_create
 pp_production_dependencies
 pp_production_dependency_set
@@ -163,6 +164,10 @@ pp_revision_event_set_release
 pp_revision_set_count
 pp_revision_set_get
 pp_revision_set_release
+pp_revision_waiter_cancel
+pp_revision_waiter_create
+pp_revision_waiter_release
+pp_revision_waiter_wait
 pp_transaction_add_external_identifier
 pp_transaction_add_image_sequence_representation
 pp_transaction_add_media_root

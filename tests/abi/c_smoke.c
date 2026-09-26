@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     return 64;
   }
   (void)remove(argv[1]);
-  if (pp_abi_version() != UINT32_C(25)) {
+  if (pp_abi_version() != UINT32_C(26)) {
     return 1;
   }
   pp_error_code_t status =
@@ -1741,8 +1741,100 @@ int main(int argc, char **argv) {
     return 102;
   }
   pp_job_set_release(jobs);
+
+  const pp_revision_event_kind_t imported_kinds[] = {
+      PP_REVISION_ASSET_IMPORTED, PP_REVISION_ASSET_IMPORTED};
+  uint64_t through_sequence = 0;
+  revisions = NULL;
+  if (pp_production_changes_since_filtered(production, 0, imported_kinds, 2,
+                                           UINT32_C(1), &revisions,
+                                           &through_sequence,
+                                           &error) != PP_OK ||
+      revisions == NULL || pp_revision_set_count(revisions) != UINT64_C(1) ||
+      through_sequence != UINT64_C(1)) {
+    pp_revision_set_release(revisions);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 103;
+  }
+  pp_revision_set_release(revisions);
+  revisions = NULL;
+  const pp_revision_event_kind_t unknown_kind = UINT32_C(999);
+  status = pp_production_changes_since_filtered(production, 0, &unknown_kind,
+                                                1, UINT32_C(1), &revisions,
+                                                &through_sequence, &error);
+  if (status != PP_ERROR_INVALID_ARGUMENT || revisions != NULL) {
+    pp_revision_set_release(revisions);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 104;
+  }
+  pp_error_release(error);
+  error = NULL;
+
+  pp_revision_waiter_t *waiter = NULL;
+  pp_revision_wait_result_t wait_result = 0;
+  if (pp_revision_waiter_create(production, &waiter, &error) != PP_OK ||
+      waiter == NULL ||
+      pp_revision_waiter_wait(waiter, 0, UINT32_C(2), 0, &wait_result,
+                              &revisions, &error) != PP_OK ||
+      wait_result != PP_REVISION_WAIT_REVISIONS || revisions == NULL ||
+      pp_revision_set_count(revisions) != UINT64_C(2)) {
+    pp_revision_set_release(revisions);
+    pp_revision_waiter_release(waiter);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 105;
+  }
+  pp_revision_set_release(revisions);
+  revisions = NULL;
+  if (pp_revision_waiter_wait(waiter, UINT64_MAX, UINT32_C(1), 0,
+                              &wait_result, &revisions, &error) != PP_OK ||
+      wait_result != PP_REVISION_WAIT_TIMED_OUT || revisions == NULL ||
+      pp_revision_set_count(revisions) != 0) {
+    pp_revision_set_release(revisions);
+    pp_revision_waiter_release(waiter);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 106;
+  }
+  pp_revision_set_release(revisions);
+  revisions = NULL;
+  pp_revision_waiter_cancel(waiter);
+  if (pp_revision_waiter_wait(waiter, UINT64_MAX, UINT32_C(1),
+                              PP_REVISION_WAIT_MAX_TIMEOUT_MILLIS,
+                              &wait_result, &revisions, &error) != PP_OK ||
+      wait_result != PP_REVISION_WAIT_CANCELLED) {
+    pp_revision_set_release(revisions);
+    pp_revision_waiter_release(waiter);
+    pp_production_release(production);
+    pp_error_release(error);
+    return 107;
+  }
+  pp_revision_set_release(revisions);
+  revisions = NULL;
+  pp_revision_waiter_release(waiter);
+  waiter = NULL;
+  if (pp_revision_waiter_create(production, &waiter, &error) != PP_OK) {
+    pp_production_release(production);
+    pp_error_release(error);
+    return 108;
+  }
   pp_production_release(production);
   production = NULL;
+  if (pp_revision_waiter_wait(waiter, UINT64_MAX, UINT32_C(1),
+                              PP_REVISION_WAIT_MAX_TIMEOUT_MILLIS,
+                              &wait_result, &revisions, &error) != PP_OK ||
+      wait_result != PP_REVISION_WAIT_CLOSED) {
+    pp_revision_set_release(revisions);
+    pp_revision_waiter_release(waiter);
+    pp_error_release(error);
+    return 109;
+  }
+  pp_revision_set_release(revisions);
+  pp_revision_waiter_release(waiter);
+  pp_revision_waiter_cancel(NULL);
+  pp_revision_waiter_release(NULL);
 
   status = pp_production_open(NULL, &production, &error);
   if (status != PP_ERROR_INVALID_ARGUMENT || error == NULL ||

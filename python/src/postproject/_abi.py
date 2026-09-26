@@ -93,6 +93,10 @@ class RevisionEventSet(ctypes.Structure):
     pass
 
 
+class RevisionWaiter(ctypes.Structure):
+    pass
+
+
 class Error(ctypes.Structure):
     pass
 
@@ -151,6 +155,7 @@ JobState = ctypes.c_uint32
 ContentStructureKind = ctypes.c_uint32
 LocatorAvailability = ctypes.c_uint32
 RevisionEventKind = ctypes.c_uint32
+RevisionWaitResult = ctypes.c_uint32
 ArtifactKnowledgeState = ctypes.c_uint32
 ArtifactEdgeKind = ctypes.c_uint32
 ArtifactReasonKind = ctypes.c_uint32
@@ -214,6 +219,11 @@ PP_REVISION_JOB_CLAIM_RELEASED = 23
 PP_REVISION_JOB_SUCCEEDED = 24
 PP_REVISION_JOB_FAILED = 25
 PP_REVISION_JOB_CANCELLED = 26
+PP_REVISION_WAIT_REVISIONS = 1
+PP_REVISION_WAIT_TIMED_OUT = 2
+PP_REVISION_WAIT_CLOSED = 3
+PP_REVISION_WAIT_CANCELLED = 4
+PP_REVISION_WAIT_MAX_TIMEOUT_MILLIS = 60000
 PP_ARTIFACT_CURRENT = 1
 PP_ARTIFACT_STALE = 2
 PP_ARTIFACT_INDETERMINATE = 3
@@ -550,6 +560,7 @@ EXPORTED_SYMBOLS = (
     "pp_production_assets_page",
     "pp_production_begin_transaction",
     "pp_production_changes_since",
+    "pp_production_changes_since_filtered",
     "pp_production_create",
     "pp_production_dependencies",
     "pp_production_dependency_set",
@@ -612,6 +623,10 @@ EXPORTED_SYMBOLS = (
     "pp_revision_set_count",
     "pp_revision_set_get",
     "pp_revision_set_release",
+    "pp_revision_waiter_cancel",
+    "pp_revision_waiter_create",
+    "pp_revision_waiter_release",
+    "pp_revision_waiter_wait",
     "pp_transaction_add_external_identifier",
     "pp_transaction_add_image_sequence_representation",
     "pp_transaction_add_media_root",
@@ -948,6 +963,16 @@ def configure_api(lib: ctypes.CDLL) -> None:
     lib.pp_revision_event_set_get.restype = ErrorCode
     lib.pp_revision_event_set_release.argtypes = [ctypes.POINTER(RevisionEventSet)]
     lib.pp_revision_event_set_release.restype = None
+    lib.pp_production_changes_since_filtered.argtypes = [ctypes.POINTER(Production), ctypes.c_uint64, ctypes.POINTER(RevisionEventKind), ctypes.c_uint64, ctypes.c_uint32, ctypes.POINTER(ctypes.POINTER(RevisionSet)), ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_production_changes_since_filtered.restype = ErrorCode
+    lib.pp_revision_waiter_create.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(ctypes.POINTER(RevisionWaiter)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_revision_waiter_create.restype = ErrorCode
+    lib.pp_revision_waiter_wait.argtypes = [ctypes.POINTER(RevisionWaiter), ctypes.c_uint64, ctypes.c_uint32, ctypes.c_uint32, ctypes.POINTER(RevisionWaitResult), ctypes.POINTER(ctypes.POINTER(RevisionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
+    lib.pp_revision_waiter_wait.restype = ErrorCode
+    lib.pp_revision_waiter_cancel.argtypes = [ctypes.POINTER(RevisionWaiter)]
+    lib.pp_revision_waiter_cancel.restype = None
+    lib.pp_revision_waiter_release.argtypes = [ctypes.POINTER(RevisionWaiter)]
+    lib.pp_revision_waiter_release.restype = None
     lib.pp_production_resolve_asset.argtypes = [ctypes.POINTER(Production), ctypes.POINTER(Uuid), ctypes.POINTER(MediaRootMapping), ctypes.c_uint64, ctypes.POINTER(ctypes.POINTER(ResolutionSet)), ctypes.POINTER(ctypes.POINTER(Error))]
     lib.pp_production_resolve_asset.restype = ErrorCode
     lib.pp_resolution_set_representation_count.argtypes = [ctypes.POINTER(ResolutionSet)]

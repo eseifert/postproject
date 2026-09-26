@@ -12,6 +12,7 @@ mod metadata_input;
 mod provenance;
 mod representations;
 mod revision_events;
+mod revision_waits;
 mod revisions;
 
 use std::{
@@ -64,6 +65,7 @@ pub use provenance::PpActivitySet;
 use provenance::{AbiActivityEdge, AbiActivityEdgeSnapshot, AbiFingerprintSnapshot};
 pub use representations::PpRepresentationSet;
 pub use revision_events::PpRevisionEventSet;
+pub use revision_waits::PpRevisionWaiter;
 pub use revisions::PpRevisionSet;
 
 const PP_OK: u32 = 0;
@@ -150,7 +152,7 @@ const PP_REVISION_JOB_FAILED: u32 = 25;
 const PP_REVISION_JOB_CANCELLED: u32 = 26;
 
 /// Current pre-1.0 ABI version.
-pub const ABI_VERSION: u32 = 25;
+pub const ABI_VERSION: u32 = 26;
 
 /// Fixed-layout UUID-compatible public identifier.
 #[repr(C)]
@@ -253,6 +255,12 @@ pub struct PpRevisionEvent {
 /// Opaque production handle owned by the C caller.
 pub struct PpProduction {
     state: Arc<ProductionState>,
+}
+
+impl Drop for PpProduction {
+    fn drop(&mut self) {
+        revision_waits::close_production_waiters(self);
+    }
 }
 
 struct ProductionState {

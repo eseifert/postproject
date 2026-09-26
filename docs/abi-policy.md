@@ -1,6 +1,6 @@
 # ABI policy
 
-ABI version 25 is pre-release and may change during the 0.x series, with every
+ABI version 26 is pre-release and may change during the 0.x series, with every
 change recorded in the changelog and ABI tests. `pp_abi_version()` reports the
 implemented version. Exported symbol names are unversioned until the first stable
 release, but removals or signature changes require an explicit ABI-version bump.
@@ -10,7 +10,7 @@ release, but removals or signature changes require an explicit ABI-version bump.
 Productions, transactions, asset sets, media-root sets, representation sets,
 resolution sets, activity sets, external-identifier sets, object-reference sets,
 object-query sets, locator-query sets, dependency-query sets, job sets, metadata
-inputs, and errors are opaque handles. A
+inputs, revision waiters, and errors are opaque handles. A
 successful creation/open call transfers one production ownership reference to the
 caller, which releases it exactly once with `pp_production_release`. Failed calls
 optionally transfer an error object, released exactly once with
@@ -49,6 +49,14 @@ handle may be released while another thread uses it. Transactions stage mutation
 without holding the production lock; commit serializes with operations using the
 same production state. Opening the production again provides a separate handle for
 reads during that interval, subject to SQLite's own file-locking behavior.
+
+A revision waiter is created from a production but owns its own read connection
+and never uses the production handle again, so a blocked wait holds no
+production lock. Waiters are caller-serialized, except that
+`pp_revision_waiter_cancel` may be called from any thread while another thread
+waits; a concurrent second wait on one waiter returns `PP_ERROR_CONFLICT`.
+Releasing the production closes its waiters, whose current and later waits
+return `PP_REVISION_WAIT_CLOSED`. The ABI never calls back into foreign code.
 
 ## Header compatibility
 
@@ -163,6 +171,13 @@ objects. It also adds exact activity-kind and tool-output filters, unresolved an
 media-root queries, and logical-root evidence when confirming a locator. Opaque
 page cursors borrow their result handles; provenance and stale-artifact pages
 report traversal truncation separately from ordinary pagination.
+
+ABI version 26 adds change delivery. `pp_production_changes_since_filtered`
+returns revisions containing at least one event of the requested kinds, with a
+through sequence that is the next cursor. Revision waiters block for at most
+60 seconds until revisions after a sequence exist, observing commits from the
+same production immediately and from other processes by polling, and report
+timed-out, closed, and cancelled outcomes explicitly.
 
 ## External identifiers
 

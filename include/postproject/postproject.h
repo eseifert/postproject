@@ -41,12 +41,16 @@ typedef struct pp_artifact_evaluation pp_artifact_evaluation_t;
 typedef struct pp_artifact_reproducibility pp_artifact_reproducibility_t;
 typedef struct pp_revision_set pp_revision_set_t;
 typedef struct pp_revision_event_set pp_revision_event_set_t;
+typedef struct pp_revision_waiter pp_revision_waiter_t;
 typedef struct pp_error pp_error_t;
 
 /* Production handles may be moved between threads and called concurrently;
  * calls on one handle serialize internally. Transaction handles require
  * caller-side serialization. No handle may be released while another thread
- * is using it. Result-set and error handles are caller-serialized. */
+ * is using it. Result-set and error handles are caller-serialized. Revision
+ * waiters are caller-serialized except pp_revision_waiter_cancel(), which any
+ * thread may call while another thread waits. A blocked wait never holds its
+ * production, so other threads keep using and may release the production. */
 
 typedef struct pp_uuid {
   uint8_t bytes[16];
@@ -117,6 +121,16 @@ typedef uint32_t pp_revision_event_kind_t;
 #define PP_REVISION_JOB_SUCCEEDED UINT32_C(24)
 #define PP_REVISION_JOB_FAILED UINT32_C(25)
 #define PP_REVISION_JOB_CANCELLED UINT32_C(26)
+
+typedef uint32_t pp_revision_wait_result_t;
+
+#define PP_REVISION_WAIT_REVISIONS UINT32_C(1)
+#define PP_REVISION_WAIT_TIMED_OUT UINT32_C(2)
+#define PP_REVISION_WAIT_CLOSED UINT32_C(3)
+#define PP_REVISION_WAIT_CANCELLED UINT32_C(4)
+
+/* Longest timeout accepted by pp_revision_waiter_wait(). */
+#define PP_REVISION_WAIT_MAX_TIMEOUT_MILLIS UINT32_C(60000)
 
 typedef uint32_t pp_artifact_knowledge_state_t;
 
@@ -884,6 +898,40 @@ PP_API pp_error_code_t pp_revision_event_set_get(
     const pp_revision_event_set_t *events, uint64_t index,
     pp_revision_event_t *out_event, pp_error_t **out_error);
 PP_API void pp_revision_event_set_release(pp_revision_event_set_t *events);
+/* Returns revisions after sequence that contain at least one event of the
+ * kinds array (1 to 64 PP_REVISION_* values; duplicates are ignored).
+ * *out_through_sequence is the next cursor: every matching revision up to it
+ * is in the set. A full page ends at its last revision; a short page ends at
+ * the newest revision, or at sequence if that is newer. */
+PP_API pp_error_code_t pp_production_changes_since_filtered(
+    const pp_production_t *production, uint64_t sequence,
+    const pp_revision_event_kind_t *kinds, uint64_t kind_count,
+    uint32_t limit, pp_revision_set_t **out_revisions,
+    uint64_t *out_through_sequence, pp_error_t **out_error);
+/* A revision waiter owns its own read connection to the production file.
+ * Commits through the same production wake it immediately; commits from other
+ * processes or handles are detected by polling within about 100 ms. Releasing
+ * the production closes every waiter created from it; release each waiter
+ * separately with pp_revision_waiter_release(). */
+PP_API pp_error_code_t pp_revision_waiter_create(
+    const pp_production_t *production, pp_revision_waiter_t **out_waiter,
+    pp_error_t **out_error);
+/* Blocks until a revision after after_sequence exists, then returns up to
+ * limit (1 to 1,000) of them with PP_REVISION_WAIT_REVISIONS. Otherwise
+ * returns PP_REVISION_WAIT_TIMED_OUT after timeout_millis (0 checks once;
+ * at most PP_REVISION_WAIT_MAX_TIMEOUT_MILLIS), or PP_REVISION_WAIT_CLOSED or
+ * PP_REVISION_WAIT_CANCELLED, which are terminal for the waiter. On success
+ * *out_revisions is always a caller-owned set, empty unless revisions were
+ * returned. A concurrent second wait on one waiter returns PP_ERROR_CONFLICT. */
+PP_API pp_error_code_t pp_revision_waiter_wait(
+    pp_revision_waiter_t *waiter, uint64_t after_sequence, uint32_t limit,
+    uint32_t timeout_millis, pp_revision_wait_result_t *out_result,
+    pp_revision_set_t **out_revisions, pp_error_t **out_error);
+/* Ends the current wait and makes later waits return
+ * PP_REVISION_WAIT_CANCELLED. Callable from any thread; null is a no-op. */
+PP_API void pp_revision_waiter_cancel(pp_revision_waiter_t *waiter);
+/* No thread may be waiting on the waiter during release. */
+PP_API void pp_revision_waiter_release(pp_revision_waiter_t *waiter);
 /* Resolution is read-only. Borrowed candidate URI and evidence-detail strings
  * remain valid until pp_resolution_set_release(). */
 PP_API pp_error_code_t pp_production_resolve_asset(

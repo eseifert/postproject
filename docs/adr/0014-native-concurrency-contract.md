@@ -68,6 +68,13 @@ because synchronizing the handle does not prevent opening a production several t
 reverse would not hold: publishing a caller-pooled contract first would be difficult to
 withdraw.
 
+ADR 0027 adds revision waiters. A waiter owns its own SQLite connection and holds
+no production lock while it blocks, so waiting never serializes other calls on
+the production. Waiters are caller-serialized like transactions, with one
+exception: cancelling may happen from any thread while another thread waits, so
+an observer can be stopped. Releasing a production closes its waiters instead of
+leaving threads blocked. No library thread ever calls foreign code.
+
 The C header, `docs/abi-policy.md`, the C++ wrapper, and the Python binding must state the
 same contract. Documenting it in one of them is how a binding quietly acquires a different
 one.
