@@ -20,7 +20,7 @@ SPEC.loader.exec_module(NORMALIZER)
 
 
 class DoxygenNormalizationTests(unittest.TestCase):
-    """Ensure redundant constexpr text is removed without changing return types."""
+    """Ensure Breathe sees constexpr only once while preserving Doxygen text."""
 
     def _normalize(self, member_xml: str) -> ET.Element:
         with tempfile.TemporaryDirectory() as directory:
@@ -36,8 +36,14 @@ class DoxygenNormalizationTests(unittest.TestCase):
             "<definition>constexpr example::Value::Value</definition>"
             "<name>Value</name></memberdef>"
         )
-        self.assertEqual(root.findtext(".//type"), "")
-        self.assertEqual(root.findtext(".//definition"), "example::Value::Value")
+        member = root.find(".//memberdef")
+        self.assertIsNotNone(member)
+        assert member is not None
+        self.assertEqual(member.get("constexpr"), "no")
+        self.assertEqual(root.findtext(".//type"), "constexpr")
+        self.assertEqual(
+            root.findtext(".//definition"), "constexpr example::Value::Value"
+        )
 
     def test_normalizes_constexpr_constructor_with_whitespace(self) -> None:
         root = self._normalize(
@@ -46,8 +52,11 @@ class DoxygenNormalizationTests(unittest.TestCase):
             "<definition> constexpr example::Value::Value</definition>"
             "<name>Value</name></memberdef>"
         )
-        self.assertEqual(root.findtext(".//type"), "")
-        self.assertEqual(root.findtext(".//definition"), "example::Value::Value")
+        member = root.find(".//memberdef")
+        self.assertIsNotNone(member)
+        assert member is not None
+        self.assertEqual(member.get("constexpr"), "no")
+        self.assertEqual(root.findtext(".//type"), " constexpr ")
 
     def test_preserves_return_type_after_constexpr(self) -> None:
         root = self._normalize(
@@ -56,21 +65,27 @@ class DoxygenNormalizationTests(unittest.TestCase):
             "<definition>constexpr int example::Value::size</definition>"
             "<name>size</name></memberdef>"
         )
-        self.assertEqual(root.findtext(".//type"), "int")
-        self.assertEqual(root.findtext(".//definition"), "int example::Value::size")
+        member = root.find(".//memberdef")
+        self.assertIsNotNone(member)
+        assert member is not None
+        self.assertEqual(member.get("constexpr"), "no")
+        self.assertEqual(root.findtext(".//type"), "constexpr int")
 
     def test_normalizes_linked_type_text(self) -> None:
         root = self._normalize(
             "<memberdef kind='function' constexpr='yes'>"
-            "<type>constexpr <ref refid='type'>Value</ref></type>"
+            "<type><ref refid='keyword'>constexpr</ref> Value</type>"
             "<definition>constexpr Value example::factory</definition>"
             "<name>factory</name></memberdef>"
         )
+        member = root.find(".//memberdef")
+        self.assertIsNotNone(member)
+        assert member is not None
+        self.assertEqual(member.get("constexpr"), "no")
         type_node = root.find(".//type")
         self.assertIsNotNone(type_node)
         assert type_node is not None
-        self.assertEqual("".join(type_node.itertext()), "Value")
-        self.assertEqual(root.findtext(".//definition"), "Value example::factory")
+        self.assertEqual("".join(type_node.itertext()), "constexpr Value")
 
     def test_leaves_non_constexpr_member_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -78,6 +93,18 @@ class DoxygenNormalizationTests(unittest.TestCase):
             original = (
                 "<doxygen><memberdef kind='function' constexpr='no'>"
                 "<type>constexpr_like</type><definition>example::Value::size</definition>"
+                "<name>size</name></memberdef></doxygen>"
+            )
+            path.write_text(original, encoding="utf-8")
+            self.assertFalse(NORMALIZER.normalize_file(path))
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+    def test_leaves_constexpr_metadata_when_type_does_not_repeat_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "class.xml"
+            original = (
+                "<doxygen><memberdef kind='function' constexpr='yes'>"
+                "<type>int</type><definition>int example::Value::size</definition>"
                 "<name>size</name></memberdef></doxygen>"
             )
             path.write_text(original, encoding="utf-8")
