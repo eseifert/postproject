@@ -1,13 +1,10 @@
 # Portable production workflow
 
-This walkthrough joins the 0.3 release features into one operator story. Use
-the `postproject` executable from a [native release archive](../integrators/installing-a-release.md);
-none of these steps invokes Cargo.
+This walkthrough shows the central PostProject idea with the CLI: create a production, add media, move that media somewhere else, and resolve the same production identities in the new environment.
 
-## Import real and compound media
+The commands below are preserved from the existing documentation.
 
-Create the production, register a logical search root, and import a movie with
-optional technical inspection:
+## 1. Create a production and a logical media root
 
 ```sh
 postproject init documentary.pproj --name "Documentary"
@@ -15,15 +12,13 @@ postproject root add documentary.pproj originals --label "Camera originals"
 postproject media add documentary.pproj /media/A001.mov --name "A001" --inspect
 ```
 
-`--inspect` invokes `ffprobe` as a bounded subprocess and records normalized
-technical values through the metadata vocabulary. Missing or rejected
-inspection is reported but does not cancel the import.
+The `.pproj` file stores production knowledge. The root named `originals` is a logical storage concept; it is deliberately different from one machine's absolute path.
 
-A directory identifying one numbered group becomes one image-sequence
-representation. Its rate stays explicit. A directory containing the checked
-AVCHD shape (`PRIVATE/AVCHD/BDMV`) becomes one package whose stream files are
-required essence and whose clip information, playlists, and navigation files
-retain their roles:
+Adding the media creates durable production objects for the logical asset and its stored representation. `--inspect` can add technical observations when the relevant inspector is available.
+
+## 2. Import real and compound media
+
+A representation does not have to be one file. For example, an image sequence can be imported as one meaningful representation:
 
 ```sh
 postproject media add documentary.pproj /media/plates/shot010 \
@@ -31,28 +26,26 @@ postproject media add documentary.pproj /media/plates/shot010 \
 postproject media add documentary.pproj /media/CARD_001 --name "Card 001"
 ```
 
-The import result prints each asset ID. Keep those IDs for resolution calls or
-retrieve them later with `postproject media list documentary.pproj`.
+This matters because a sequence or camera package should remain one production concept even when it is made of many filesystem entries.
 
-## Move the storage
+## 3. Move the storage
 
-Copy `documentary.pproj` and the media to another machine. The production keeps
-the logical root name, while the new mount is supplied per call:
+Suppose the production moves to another workstation or the originals are mounted somewhere else. Do not create replacement asset identities just because paths changed.
+
+Map the logical root for the current environment and resolve the existing asset:
 
 ```sh
 postproject media resolve documentary.pproj MOV_ASSET_ID \
   --root-map originals=/mnt/documentary
 ```
 
-An unmapped root is reported as `unmapped`; an unreadable mapping is
-`unavailable`. Other usable roots are still searched. If a relocated candidate
-is unique, pass its returned URI through `--confirm` to record the new locator.
-PostProject never confirms one of several plausible candidates automatically.
+The root mapping is machine-specific. The production's identity model is not.
 
-## Detect damage and inspect the inventory
+If resolution produces one supported result, the host can continue with that resource. If several candidates remain plausible, ambiguity should be shown to the user or handled explicitly by the host rather than guessed away.
 
-Delete one frame from the copied EXR sequence, then request the expensive
-verification tier and a non-mutating inventory:
+## 4. Detect damage and inspect the inventory
+
+Resolution and verification are separate concerns. Verification lets you ask whether the resource found at a location still matches the evidence recorded for it.
 
 ```sh
 postproject media resolve documentary.pproj SEQUENCE_ASSET_ID \
@@ -62,17 +55,25 @@ postproject media inventory documentary.pproj \
   --cache /var/tmp/documentary-inventory.json --json
 ```
 
-The sequence resolves as `partial` and names the absent frame. Verification
-also detects a file replaced in place by recomputing stored fingerprints.
-Inventory reports known online, partial, missing, new, changed, duplicate, and
-ambiguous media without mutating the production. Its sidecar cache is
-machine-local and disposable; removing it changes scan cost, not results.
+An inventory is useful for discovering resources in a particular environment. It should be treated as machine-local operational data, not as the permanent identity of the production.
 
-## Resolve an editorial reference
+For compound media, availability can be richer than a simple yes/no. A representation may be online, partial, offline, ambiguous, or in an error state depending on the availability of its required resources.
 
-The maintained [OpenAssetIO Manager](https://github.com/postproject-org/postproject-openassetio-manager)
-accepts the same versioned representation bindings exposed by PostProject. The
-[OTIO demonstration](https://github.com/postproject-org/postproject-otio-demo) stores
-one in an ordinary `ExternalReference` and lets the upstream OpenAssetIO media
-linker resolve it to locatable content. Rational clip time remains owned by
-OTIO, and an image sequence remains one PostProject representation.
+## 5. What remains stable
+
+After the move, the important production meaning should still be the same:
+
+```text
+asset identity
+  └── representation identity
+      └── resource identity
+          └── new or confirmed locator
+```
+
+That stable chain is what lets application project files store a PostProject identity instead of treating an absolute path as the only truth.
+
+## 6. Where to go next
+
+- For image sequences, spans, and package media, read {doc}`image-sequences-and-spanned-media`.
+- For inspection and production history, read {doc}`metadata-and-provenance`.
+- For application integration and confirmation of resolution candidates, read {doc}`../integrators/media-resolution`.

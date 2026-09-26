@@ -1,53 +1,78 @@
 # PostProject
 
-PostProject is application-neutral infrastructure for durable media identity,
-compound representations, storage resources and locators, metadata, provenance,
-and production-local change tracking in professional post-production software.
+**PostProject is a shared media-knowledge layer for post-production software.**
 
-> **Status:** early `0.4.0-alpha.1` development. The named integration-preview
-> subset stays compatible within the 0.3.x series; other APIs remain
-> experimental. Consumers should pin a release series or exact commit.
+Editing, compositing, sound, ingest, review, and delivery tools often know about the same media but describe it separately. PostProject gives those tools a common local production database for the facts that should survive application boundaries: what a piece of media is, which representations belong to it, where those representations can be found, what metadata is known about them, and how derived media was produced.
 
-PostProject is standards-aware infrastructure, not a new media ontology. It
-preserves external identifiers and vocabulary terms and is designed to map to
-industry exchange models without claiming normative compliance.
+PostProject does **not** replace an editor, compositor, timeline format, decoder, or asset-management UI. Applications keep their own project data and workflows. PostProject supplies shared production knowledge underneath them.
 
-Current capabilities include stable logical asset IDs, single-resource and
-compound representations, compact image-sequence descriptors, multiple
-resource locators, typed fingerprints, structured metadata, activity-based
-provenance, deterministic relinking with explicit ambiguity, media-root and
-locator lifecycle management, and a durable semantic revision feed. SQLite
-persistence, the public C ABI, the C++17 RAII wrapper, the Python 3.11 binding,
-and the demonstrator CLI expose those capabilities.
+- Project overview: <https://postproject.org>
+- Documentation: <https://docs.postproject.org>
+- Source and releases: this repository
 
-PostProject deliberately does not provide a timeline editor, decoder/encoder,
-job runner, collaboration server, MAM service, or automatic registry/network
-lookup.
-
-## Architecture
+## The idea in one picture
 
 ```text
-CLI / C ABI / C++ wrapper
-          |
-SQLite storage + filesystem media services
-          |
-backend-neutral PostProject domain model
+Editing app ─────┐
+Compositing app ─┼──── PostProject production (.pproj)
+Sound app ───────┤             │
+Pipeline tools ──┘             ├── stable media identity
+                               ├── representations and resources
+                               ├── portable locations
+                               ├── metadata and external identifiers
+                               ├── provenance and dependencies
+                               └── revision history
 ```
 
-Rust is an implementation detail. Native applications consume the installed C
-ABI, with the C++ wrapper layered only over that ABI.
+A PostProject **asset** is the logical thing people and applications mean when they say “this clip,” “this still,” or “this piece of media.” A file path is only one place where one representation of that asset happens to be reachable.
 
-## Build and test
+That distinction lets applications keep referring to the same media when files move, when a proxy is created, when a sequence contains thousands of frames, or when another application continues the work.
 
-Rust 1.85 or newer is required.
+## What PostProject helps applications share
 
-```sh
-cargo build --workspace
-cargo test --workspace --all-features
-```
+PostProject currently provides building blocks for:
 
-The demonstrator CLI exercises the same storage and media services as the
-library:
+- **Stable identity.** Refer to media independently of a particular path or application project file.
+- **Representations.** Keep originals, proxies, optimized media, derived results, image sequences, recording spans, and package-like media connected to the same logical asset.
+- **Portable locations.** Describe storage through logical roots and locators so productions can move between machines without rewriting their meaning.
+- **Deterministic relinking.** Use fingerprints and explicit evidence to find moved media without silently choosing between ambiguous candidates.
+- **Metadata.** Store typed, repeatable assertions while preserving vocabulary namespaces and external identifiers.
+- **Provenance.** Record activities, inputs, outputs, tools, and parameters so applications can explain where media came from.
+- **Artifact knowledge.** Describe dependencies, freshness, and reproducibility of managed outputs without turning PostProject into the executor itself.
+- **Change tracking.** Consume semantic revisions so another application can react to production changes without polling every table.
+
+For the conceptual model, start with the [documentation](https://docs.postproject.org) rather than the generated API reference.
+
+## What PostProject deliberately does not own
+
+PostProject is infrastructure, not an all-in-one production application. In particular, it does not try to become:
+
+- an editing or compositing model;
+- a timeline interchange format;
+- a decoder or encoder framework;
+- a render farm or scheduler;
+- a cloud collaboration service;
+- a universal metadata ontology;
+- a replacement for OpenTimelineIO or OpenAssetIO.
+
+Those systems can integrate with PostProject when they need shared media identity and production knowledge.
+
+## Public integration surfaces
+
+Rust is the implementation language, but downstream applications do not need to embed Rust or Cargo.
+
+The supported integration surfaces are:
+
+- **C ABI** for the stable native boundary;
+- **C++17** wrapper API;
+- **Python** bindings built over the C ABI;
+- **CLI** for inspection, scripting, testing, and operational workflows.
+
+The Rust crates remain useful for contributors and Rust-native experimentation, but native consumers should treat the C ABI as the portability boundary.
+
+## Try the workflow from the command line
+
+The CLI is the quickest way to understand the model without writing an integration. The following examples are intentionally kept from the existing documentation.
 
 ```sh
 cargo run -p postproject-cli -- init production.pproj --name "Documentary"
@@ -61,13 +86,11 @@ cargo run -p postproject-cli -- media inventory production.pproj --root-map rush
 cargo run -p postproject-cli -- --json revisions since production.pproj --after 0
 ```
 
-Pass `--json` before or after a subcommand for structured output. An ambiguous
-resolution is never selected silently; applications must present candidates and
-confirm one explicitly.
+For a guided explanation of what each step means, see the **Portable production workflow** in the documentation site.
 
-## Native integration
+## Integrate a native application
 
-Build and stage the native package:
+Release packages are intended to be consumable without Cargo. When developing the package locally, the existing build flow is:
 
 ```sh
 cargo build --release --locked -p postproject-ffi
@@ -78,11 +101,7 @@ cmake -S . -B target/package \
 cmake --install target/package
 ```
 
-The package exports `PostProject::postproject` for CMake and `postproject` for
-`pkg-config`. Installed consumers do not invoke Cargo. Use `.dylib` on macOS;
-on Windows, supply the import library and matching `postproject.dll`.
-
-Minimal C usage:
+A minimal C consumer opens a production through the public ABI and releases every owned handle:
 
 ```c
 #include <postproject/postproject.h>
@@ -96,24 +115,24 @@ if (pp_production_open("production.pproj", &production, &error) != PP_OK) {
 pp_production_release(production);
 ```
 
-Standalone installed-package examples live in [`examples/c`](examples/c) and
-[`examples/cpp`](examples/cpp).
+The installed package exports `PostProject::postproject` for CMake and `postproject` for `pkg-config`. Platform packages use the normal native library form for the system (`.dylib` on macOS; the matching import library and `postproject.dll` on Windows).
 
-## Documentation
+The integrator documentation covers installation, C/C++/Python quickstarts, ownership rules, transactions, media resolution, metadata, provenance, revision consumption, and jobs.
 
-- [Published documentation](https://docs.postproject.org/)
-- [User guide](docs/src/users/README.md)
-- [Integrator guide](docs/src/integrators/README.md)
-- [Contributor guide](docs/src/contributors/README.md)
-- [Standards boundaries](docs/src/concepts/standards-boundaries.md)
-- [Roadmap](docs/roadmap.md)
-- [Stewardship](STEWARDSHIP.md)
-- [Release 0.1 acceptance report](docs/release-0.1-report.md)
-- [Release 0.2 acceptance report](docs/release-0.2-report.md)
-- [Release 0.3 acceptance report](docs/release-0.3-report.md)
+## Build and test the repository
 
-Build the unified reference with Python 3.12 or newer after installing
-`docs/requirements.txt` and Doxygen:
+Rust 1.85 or newer is required for the current source tree. For contributors, the normal workspace build and test commands are:
+
+```sh
+cargo build --workspace
+cargo test --workspace --all-features
+```
+
+The repository is split into domain, media/filesystem, SQLite persistence, FFI, CLI, language bindings, examples, fuzzing, and documentation components. The contributor guide explains which layer owns which responsibility and which changes require coordinated updates.
+
+## Build the documentation site
+
+The documentation site combines hand-written guides with generated native API reference. Python 3.12 or newer, the packages in `docs/requirements.txt`, and Doxygen are required for the current documentation build:
 
 ```sh
 mkdir -p target/doxygen
@@ -123,8 +142,16 @@ python tools/check_docs_coverage.py include/postproject/postproject.h target/dox
 sphinx-build --fail-on-warning -b html docs target/postproject
 ```
 
-## License
+Use <https://docs.postproject.org> for the published documentation.
 
-Licensed under either the MIT License ([`LICENSE-MIT`](LICENSE-MIT)) or the
-Apache License, Version 2.0 ([`LICENSE-APACHE`](LICENSE-APACHE)), at your
-option: `MIT OR Apache-2.0`.
+## Project status and compatibility
+
+At the time of this rewrite, `main` is in early `0.4.0-alpha.1` development. The named integration-preview subset remains compatible within the 0.3.x series; other APIs are experimental. Consumers should pin a release series or exact commit and check the ABI policy before depending on a particular interface.
+
+The important distinction is intentional: **production data should be durable even while APIs are still being refined.** Compatibility promises are therefore documented explicitly rather than implied by version numbers alone.
+
+## Where to go next
+
+If you are evaluating PostProject, read **Start here** in the docs. If you are adding it to an application, use the **Integrator guide**. If you are changing PostProject itself, use the **Contributor guide** and engineering references.
+
+PostProject is dual-licensed under the MIT License or Apache License 2.0, at your option (`MIT OR Apache-2.0`). Contribution and security policies are described in the repository files.

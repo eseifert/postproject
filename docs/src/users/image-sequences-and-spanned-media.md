@@ -1,50 +1,57 @@
 # Image sequences and spanned media
 
-Some media is useful only as a set of files. A folder of numbered EXR frames is
-one shot, and a long camera recording may be split across several files. An
-application using PostProject can keep each set as one representation instead
-of making every file look like unrelated media.
+Post-production media is often larger than a single file. An EXR sequence may contain thousands of frames; camera media may be split across several physical files or stored as a directory package. PostProject models those as **compound representations**, so applications do not need to pretend every file is an independent asset.
 
-For an image sequence, PostProject remembers the filename pattern, first and
-last frame, frame spacing, number padding, playback rate, and any gaps already
-known at import. It does not need to create a separate database object for
-every frame.
+The command examples below are preserved from the existing documentation.
 
-Availability describes whether the complete representation can be used:
+## Image sequences
 
-- **Online** means every required member is currently present.
-- **Partial** means some required members are present and others are missing.
-- **Offline** means no required content can currently be reached.
-- **Ambiguous** means several plausible replacements need a person to choose.
-- **Error** means the check could not finish safely, with an explanation.
-
-For a sequence, a partial result includes the missing frame numbers. The
-application decides whether to stop, hold another frame, show black, or use a
-different policy; PostProject reports the facts and does not silently choose a
-playback workaround.
-
-Spanned recordings preserve the order of their parts. Package-like media can
-also include named members such as essence, metadata, indexes, sidecars, or
-thumbnails. A missing required member affects availability. A missing optional
-member is still reported but does not make otherwise usable media partial.
-
-Moving the folder or files changes their storage locators, not the identity of
-the asset or representation. Stored content evidence can help an application
-find the moved media. If several candidates are equally credible, the
-application should show them and ask for an explicit confirmation.
-
-The CLI recognizes numbered EXR, DPX, TIFF, and TIF groups, numbered MOV, MXF,
-MP4, and MTS spans, same-stem XML/XMP/JSON sidecars, and the checked AVCHD card
-layout. Sequence rates cannot be inferred safely from filenames, so they remain
-explicit:
+A numbered image sequence can be added as one representation with sequence timing information:
 
 ```sh
 postproject media add production.pproj renders/shot010 --sequence-rate 24000/1001
+```
+
+The representation carries the compact structure of the sequence. Consumers can reason about the whole sequence while still knowing which frames/resources are required.
+
+This is important for relocation: the host wants to find *the representation*, not independently relink thousands of unrelated assets.
+
+## Camera cards and package-like media
+
+A directory containing structured camera media can be recognized as one meaningful media package instead of being flattened into a loose file list:
+
+```sh
 postproject media add production.pproj /Volumes/CARD
+```
+
+The exact structure recognized depends on the available media adapter and the format. PostProject stores the resulting representation/resource structure; it does not replace the format-specific reader or decoder.
+
+## Companion files
+
+Some media has sidecars or companion files that should be recognized together with the main item. Recognition can be requested explicitly:
+
+```sh
 postproject media add production.pproj clip.mov --recognize-companions
 ```
 
-When a directory contains several unrelated numbered groups, recognition
-returns ambiguity instead of choosing one. Move a known sequence beneath a
-mapped media root and normal resolution searches for its directory as one
-resource; confirmation persists the new directory locator.
+Recognition is about describing storage structure. It does not imply that every neighboring file belongs to the media, and it should remain deterministic enough for an application to explain what was recognized.
+
+## Availability is a property of the whole representation
+
+For compound media, “the path exists” is not a sufficient availability test. A sequence may be missing frames; an ordered recording may be missing one span; a package may be incomplete.
+
+PostProject therefore aggregates resource-level results into representation availability such as:
+
+- **online** — required content is reachable;
+- **partial** — some required content is missing;
+- **offline** — the representation cannot currently be reached;
+- **ambiguous** — resolution found more than one plausible answer;
+- **error** — availability could not be determined cleanly.
+
+A host application can use the accompanying issues/evidence to explain why the aggregate state was produced.
+
+## Keep the application-level concept intact
+
+The guiding rule is simple: **model media the way applications need to refer to it, not merely the way the filesystem happens to split it.**
+
+For exact content-structure kinds and APIs, continue with {doc}`../integrators/compound-media` and {doc}`../concepts/assets-representations-locators`.

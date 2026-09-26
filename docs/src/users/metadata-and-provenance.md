@@ -1,37 +1,64 @@
 # Metadata and provenance
 
-Metadata is descriptive information that an application stores alongside your
-production and media. It can include titles, descriptions, keywords, rights
-information, camera notes, language-specific text, or fields defined by another
-production application.
+PostProject stores both descriptive knowledge and production history, but it keeps them distinct.
 
-The same item can legitimately have several values. A clip might have several
-keywords or titles in different languages. PostProject keeps those values
-separate and does not silently pick one.
+- **Metadata** answers questions such as “what do we know about this asset or representation?”
+- **Provenance** answers questions such as “what activity used these inputs and produced these outputs?”
 
-Some metadata belongs to the logical asset, while other metadata describes one
-particular representation such as a camera original or proxy. PostProject keeps
-that distinction so an application does not accidentally present
-representation-specific facts as facts about every copy.
+The existing command example is preserved below.
 
-The CLI can optionally inspect imported files with an installed `ffprobe` and
-store container, stream, codec, dimensions, rates, channel layout, bit depth,
-pixel format, duration, timecode, and other embedded tags as typed metadata:
+## Technical inspection
+
+When an inspector is available, media can be imported with technical inspection enabled:
 
 ```sh
 postproject media add production.pproj camera.mov --inspect
 ```
 
-Inspection is optional. If `ffprobe` is missing or rejects the file, import
-still succeeds and the command reports `unavailable` or `failed` rather than
-inventing technical values.
+Inspection can contribute technical metadata without turning the inspector into the source of identity. The asset and representation remain production objects; inspected properties are knowledge attached to them.
 
-Provenance answers a different question: how was a result produced? An activity
-connects input representations, an operation, and its output representations.
-It can also record the responsible tool, version, agent, timing, and processing
-parameters. Descriptive metadata and production provenance can complement each
-other, but neither is proof that content is authentic. Cryptographic trust
-systems such as C2PA remain a separate layer.
+## Metadata is vocabulary-aware
 
-All current metadata remains inside the local production file. PostProject does
-not upload it, contact vocabulary services, or look up identifier registries.
+PostProject does not require every application to adopt one universal metadata dictionary. Instead, a metadata assertion identifies the vocabulary namespace and property it belongs to, and stores a typed value.
+
+This allows applications to preserve well-known standard terms where appropriate while still using application- or production-specific namespaces when needed.
+
+Unknown terms are not automatically invalid. The important properties are that the namespace is explicit, the value shape is preserved, and consumers do not silently reinterpret one vocabulary as another.
+
+## External identifiers remain external
+
+A PostProject object can also carry identifiers from outside the PostProject identity system. Their scheme and value should be preserved exactly.
+
+A UMID, EIDR identifier, camera identifier, or host-application object ID is therefore not converted into a PostProject UUID and not treated as interchangeable with one.
+
+## Provenance is activity-based
+
+Production history is represented with activities and explicit inputs/outputs:
+
+```text
+source representation ─┐
+                       ├── activity ──> output representation
+other input ───────────┘
+```
+
+An activity can identify the tool and parameters involved where that information is available. This is more useful than trying to infer history from filenames such as `final_v7_REAL.mov`.
+
+## Provenance is knowledge, not a claim of universal truth
+
+A production records what its applications know. Missing history remains missing; PostProject should not invent an activity merely because two files look related.
+
+Similarly, a processing activity does not automatically mean that two assets are editorial variants, revisions, or alternatives. Those relationships need their own explicit semantics when the model supports them.
+
+## Derived artifacts and reproducibility
+
+For managed outputs, provenance can be combined with fingerprint observations and dependency knowledge to answer richer questions:
+
+- Do we know which activity produced this output?
+- Are the expected inputs still the same?
+- Has an upstream dependency changed?
+- Is the output current, stale, indeterminate, or diverged?
+- Is there enough information to reproduce it?
+
+Those evaluations describe production knowledge. They do not themselves run FFmpeg, Blender, a render farm, or another media-processing system.
+
+For exact integration operations, continue with {doc}`../integrators/metadata-vocabularies` and {doc}`../integrators/provenance`.

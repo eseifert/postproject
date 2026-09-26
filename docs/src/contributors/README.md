@@ -1,19 +1,105 @@
 # Contributor guide
 
-The domain crate is storage- and framework-neutral. SQLite implements
-domain-shaped contracts, filesystem inspection lives in the media crate, and
-the CLI and public C ABI are adapters. Rust layouts and backend handles never
-cross the ABI.
+This guide explains how to change PostProject without accidentally moving responsibilities between layers or changing persistent meaning in only one public surface.
 
-A change to schema, public API, ABI, or domain meaning must include:
+If you are integrating PostProject into another application, use {doc}`../integrators/README` instead. This page is about changing PostProject itself.
 
-1. an updated or new architecture decision record;
-2. a standards-impact check;
-3. domain and audience-appropriate documentation;
-4. persistence changes and fixtures where relevant;
-5. coordinated Rust, C, C++, Python, and example updates for affected surfaces;
-6. invariant-focused tests and fuzzing where relevant;
-7. a changelog entry.
+## Before changing code
 
-Use explicit SQL rather than an ORM, preserve unknown external data, keep
-transactions atomic, and make corruption return errors rather than panics.
+First decide what kind of change you are making:
+
+- **Domain semantics** — changes what a production object means.
+- **Persistence** — changes how durable knowledge is stored or migrated.
+- **Media/filesystem behavior** — changes inspection, recognition, discovery, or resolution.
+- **Public API/ABI** — changes what C, C++, Python, CLI, or installed consumers can observe.
+- **Documentation/examples** — changes how behavior is taught or demonstrated.
+
+A feature that crosses these categories usually needs coordinated updates rather than a patch in one crate.
+
+## Layer responsibilities
+
+The project is intentionally layered:
+
+```text
+application-facing adapters
+C ABI / C++ / Python / CLI
+            │
+            ▼
+       domain model
+            │
+      ┌─────┴─────┐
+      ▼           ▼
+ persistence   media/filesystem services
+```
+
+The domain layer should remain framework-neutral. SQLite implements persistence contracts rather than defining the domain. Filesystem/media services discover and inspect external state; they do not become the source of logical identity. Public adapters translate those semantics without leaking Rust layouts or backend handles across the ABI.
+
+## Changes that require wider review
+
+Treat changes to any of the following as architectural rather than local implementation detail:
+
+- durable object identity;
+- asset/representation/resource/content-structure meaning;
+- metadata or provenance semantics;
+- dependency or artifact-state semantics;
+- revision event meaning;
+- schema and migrations;
+- public C ABI or ownership rules;
+- compatibility guarantees;
+- standards boundaries.
+
+For those changes, update the relevant ADR or add a new one when the decision is materially new. Also update standards-impact documentation when an external mapping or boundary is affected.
+
+## Keep public surfaces aligned
+
+A semantic feature is not complete when it exists in only one language binding unless that limitation is intentional and documented.
+
+Where applicable, coordinate:
+
+- domain operations;
+- SQLite persistence and migration fixtures;
+- C ABI;
+- C++ wrapper;
+- Python binding;
+- CLI behavior;
+- compiled/tested examples;
+- concept and integrator documentation;
+- tests, fuzz targets, and changelog/release notes.
+
+The C ABI is the native interoperability boundary. Do not expose Rust memory layouts, Rust enums, or storage-backend handles through it.
+
+## Tests are part of the contract
+
+Prefer tests that validate behavior at the boundary where a regression would matter:
+
+- domain tests for semantic invariants;
+- persistence tests for round trips and migrations;
+- integration tests for installed C/C++/Python consumers;
+- fixture tests for compound media and relinking;
+- fuzzing for parsers and public input boundaries where appropriate;
+- release acceptance tests for the supported package surface.
+
+When changing durable data, add or update migration fixtures instead of testing only freshly created databases.
+
+## Documentation rule: teach before you reference
+
+New user-facing behavior should normally have three levels of documentation:
+
+1. a short explanation of the problem and expected behavior;
+2. an integrator workflow or tested example;
+3. exact API reference.
+
+Do not make readers infer the product model from function signatures or ADRs.
+
+Existing `{code-variants}` blocks are generated from compiled/tested example programs and should be preserved when rewriting prose around them.
+
+## Model-specific contributor references
+
+Read these before changing the relevant subsystem:
+
+- {doc}`content-structure-invariants`
+- {doc}`metadata-model`
+- {doc}`provenance-model`
+- {doc}`standards-policy`
+
+For repository-wide engineering detail, continue with {doc}`../project/README`.
