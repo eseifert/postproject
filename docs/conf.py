@@ -22,6 +22,8 @@ extensions = [
     "postproject_code",
 ]
 myst_enable_extensions = ["colon_fence", "deflist"]
+# Section headings up to level three get stable anchors for cross-page links.
+myst_heading_anchors = 3
 source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
 root_doc = "index"
 exclude_patterns = ["_build", "_ext", "examples"]

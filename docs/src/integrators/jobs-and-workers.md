@@ -7,36 +7,71 @@ managing resources, and applying retry policy.
 ## Request work
 
 Create the job and any parameter metadata in one transaction. The request names
-its input representations and the desired output asset and representation kind.
-Parameters use the normal typed metadata model with the job as their target.
+its input representations and the desired output asset and representation kind,
+optionally with a logical target root for the output. Parameters use the normal
+typed metadata model with the job as their target:
+
+```{code-variants} request-job
+```
 
 Listing jobs returns a bounded page in stable identity order. State and
 open-world kind are optional exact filters. Pass the opaque `next_cursor` back
 with the same filters and page size to continue; pages are weakly consistent
-across commits. Use the semantic revision feed to discover that a job changed,
-then reload it for complete state.
+across commits:
 
-## Implement a worker
+```{code-variants} job-query-pages
+```
 
-A worker follows the same protocol on every public surface:
+## Claim, renew, and release
 
-1. Claim a requested job with tool attribution, optional agent attribution,
-   caller-supplied current time, and a lease expiry.
-2. Retain the returned claim token privately.
-3. Renew the claim before expiry when work takes longer than one lease.
-4. On success, stage the output representation and activity, then complete the
-   job in that same transaction.
-5. On a tool error, fail the job with a bounded diagnostic. To abandon work
-   without recording failure, release the claim.
+A worker claims a requested job with tool attribution, optional agent
+attribution, the caller-supplied current time, and a lease expiry. The claim
+returns a token. Keep it private: renew, release, complete, and fail all
+require it, so two processes with the same identity cannot finish each other's
+claims. The token is a production-scoped capability, not an authentication
+credential.
+
+Renew the claim before the lease expires when work takes longer than one lease.
+Release it to give the job back without recording a failure:
+
+```{code-variants} claim-job
+```
 
 Two processes cannot hold a valid claim on the same job. An expired lease is
 claimable again when a later claimant supplies a current time at or beyond the
-expiry. Every token-checked transition rejects a stale or unrelated token.
+expiry. Every token-checked transition rejects a stale or unrelated token. Time
+is always supplied by the caller; storage never reads the clock for leases.
+
+## Complete a job
+
+On success, stage the output representation and the activity that produced it,
+then complete the job in that same transaction. The output, the activity with
+its input snapshots, and the job's transition to succeeded become durable
+together or not at all:
+
+```{code-variants} complete-job
+```
 
 Completion validates that the activity consumes the job inputs and produces
 the staged output requested by the job. Do not commit the representation or
 activity in an earlier transaction: only `complete` gives the all-or-nothing
-guarantee.
+guarantee. Library callers can stage any representation structure — single
+resource, image sequence, ordered parts, or package — before completing; the
+CLI completion adapter creates a single-file output.
+
+## Fail or cancel a job
+
+On a tool error, fail the job with a bounded diagnostic. A failed job never
+leaves a representation or activity behind:
+
+```{code-variants} fail-job
+```
+
+Cancelling is administrative and needs no claim token. It is permitted while
+the job is requested or claimed:
+
+```{code-variants} cancel-job
+```
 
 ## Learn when work finishes
 
@@ -67,10 +102,6 @@ copy result values and cursors into their native immutable types. The CLI
 accepts `job list --state`, `--kind`, `--limit`, and `--cursor`; JSON output is
 a page object with `items` and `next_cursor`.
 
-The CLI completion adapter creates a single-file output. Library callers can
-stage any supported representation structure—single resource, image sequence,
-ordered parts, or package—before calling the same completion operation.
-
 The opt-in [reference local executor](reference-executor.md) builds on this
 protocol for proxy and thumbnail jobs. Its subprocess adapter is available in
 Rust and its complete runner is available as `job run`; C, C++, and Python
@@ -88,11 +119,7 @@ proposed job, copy its parameter assertions to the job target, and commit. This
 separation lets a host review, prioritize, modify, or discard proposed work and
 prevents a read from creating background work.
 
-The command-line equivalent is read-only:
-
-```console
-postproject --json job plan production.pproj \
-  --artifact 0195f1d8-6aa5-7f00-8000-000000000001
+```{code-variants} plan-regeneration
 ```
 
 See [jobs and production work](../concepts/jobs.md) for the domain model and

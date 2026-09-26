@@ -9,6 +9,12 @@ Development version: `0.4.0-alpha.1`.
 
 ### Added
 
+- Added tested documentation examples for every public operation. Every C
+  function, C++ member function, and Python method, every CLI command, and the
+  Rust storage and media services now appear in a program that CI runs, shown
+  as synchronized C, C++, Python, Rust, and CLI tabs in the guides. New guides
+  cover fingerprints, verification, and inventory; dependencies; and artifacts
+  and staleness. `tools/check_example_coverage.py` keeps the coverage complete.
 - Added `postproject revisions filtered --kind <event_kind>`, which prints the
   matching revisions and the `through_sequence` cursor, and `postproject
   revisions wait`, which blocks for at most `--timeout-ms` (default and maximum

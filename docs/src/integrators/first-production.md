@@ -24,6 +24,54 @@ Choose the language with the tabs or with the **Code** selector in the sidebar;
 the choice applies to every example on the site and is remembered in this
 browser.
 
+## Reopen a production
+
+A production file outlives the process that created it. Reopening applies any
+pending schema migration first, then returns the same production identity. The
+example reopens the file, checks that a stored asset still exists, lists every
+asset, and reads the newest revision, which is where a [revision
+feed](revision-feed.md) consumer starts:
+
+```{code-variants} open-production
+```
+
+Whole-set asset listing suits small productions and tests. Hosts that may open
+large productions page through assets instead; see [bounded
+queries](bounded-queries.md).
+
+## Commit and roll back explicitly
+
+A transaction groups one semantic change. Everything staged in it becomes
+durable together on commit, as one revision, or not at all. Rolling back — or
+releasing an open transaction — discards the staged work and creates no
+revision. Only one transaction may be open per production at a time.
+
+```{code-variants} transaction-lifecycle
+:::{no-variant} cli
+Every CLI command runs as exactly one transaction: it commits when the command
+succeeds and leaves the production unchanged when it fails. There is no
+multi-command transaction.
+:::
+```
+
+Set the revision context before commit. It records the integrating tool and a
+short message on the resulting revision; it does not authenticate anyone.
+
+## Handle errors
+
+Every surface reports the same stable error categories — invalid argument, not
+found, already exists, I/O, storage, migration, conflict, ambiguous resolution,
+fingerprint, unsupported, and internal — in its own idiom. Branch on the
+category, never on message text, which is diagnostic and may change:
+
+```{code-variants} error-handling
+```
+
+When a staging call fails inside a transaction, roll the transaction back
+unless the integration deliberately continues with the rest of the change.
+`conflict` also reports lifecycle misuse, such as a second open transaction or
+a call on a closed transaction.
+
 ## Handles, errors, and lifetimes
 
 The language surfaces differ only in how they express ownership and failure:

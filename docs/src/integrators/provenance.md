@@ -28,6 +28,21 @@ transaction's view. A duplicate activity is rejected as already existing, an
 absent representation as not found, and an edge that would create a generation
 cycle as a conflict.
 
+## Read activities and their snapshots
+
+When an activity is recorded, storage snapshots what each input and output
+*was*: its fingerprint in every domain it had, and the revision sequence at
+that moment. The snapshots are taken inside the recording transaction, never
+supplied by the caller, and they are what later lets PostProject decide whether
+an output is [stale](artifacts-and-staleness.md). An input without a
+fingerprint is recorded as such.
+
+The example records an activity with both a tool and an agent, lists every
+activity, and reads its edges, attribution, and snapshots:
+
+```{code-variants} activity-snapshots
+```
+
 ## Queries
 
 The graph can be read in four directions:

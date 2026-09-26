@@ -16,7 +16,17 @@ mounted systems.
 ```
 
 Roots have an optional label and a priority; lower priorities are searched
-first. A root can later be disabled, re-enabled, or removed.
+first.
+
+## Disable, enable, and remove roots
+
+A disabled root stays in the production but is skipped during resolution,
+which is useful while a volume is known to be offline. Removing a root deletes
+the name; locators already confirmed under it keep their recorded root name as
+history. Each change is a revision like any other:
+
+```{code-variants} media-root-lifecycle
+```
 
 ## Resolve an asset
 
@@ -55,3 +65,28 @@ directory. The CLI `media resolve --confirm` does the same automatically.
 
 Never confirm one of several candidates automatically. Present them, with
 their confidence and evidence, and let the user choose.
+
+## Read availability issues
+
+A representation can be partially available: a sequence with missing frames, a
+package with a missing optional sidecar, a span with one unreadable part. Each
+issue names the resource and whether it is required; missing sequence frames
+are reported as sorted frame numbers. Every resource result also carries the
+evidence behind its state, so a host can explain *why* it is offline or
+ambiguous:
+
+```{code-variants} resolution-issues
+```
+
+## Retire a superseded locator
+
+Confirming a new location adds a locator; it does not delete the old one. When
+an old access route is known to be useless — a decommissioned volume, a renamed
+share — retire it explicitly. The resource and its identity are unaffected:
+
+```{code-variants} retire-locator
+```
+
+Retiring a resource's only locator makes its representation show up in the
+knowledge-only [unresolved-media query](bounded-queries.md) until a new
+location is confirmed.

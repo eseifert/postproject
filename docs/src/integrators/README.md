@@ -19,7 +19,7 @@ Start with {doc}`installing-a-release`, then choose {doc}`c-quickstart`, {doc}`c
 
 ### 2. Create or open media identities
 
-Follow {doc}`first-production`. Store the returned PostProject identity in the host's own project/object model where appropriate, ideally as a {doc}`host-object binding <host-object-bindings>`.
+Follow {doc}`first-production`. It also shows how to reopen a production, commit or roll back a transaction explicitly, and handle errors on each surface. Store the returned PostProject identity in the host's own project/object model where appropriate, ideally as a {doc}`host-object binding <host-object-bindings>`.
 
 Do not substitute a filesystem path for that identity. The entire portability model depends on those being different concepts.
 
@@ -27,7 +27,7 @@ Do not substitute a filesystem path for that identity. The entire portability mo
 
 Implement {doc}`media-resolution` before building elaborate metadata features. A useful integration should survive media moving to a different mount or workstation.
 
-The host should surface ambiguity rather than silently accepting the first candidate.
+The host should surface ambiguity rather than silently accepting the first candidate. {doc}`fingerprints-and-verification` covers what to do when content itself changes: recording a new fingerprint, verifying content during resolution, and scanning storage for media the production does not know yet.
 
 ### 4. Support the media structures your application actually uses
 
@@ -40,6 +40,8 @@ Use the pieces that solve real host problems:
 - {doc}`external-identifiers` for identifiers owned by other systems;
 - {doc}`metadata-vocabularies` for structured, typed metadata;
 - {doc}`provenance` for activity history and input snapshots;
+- {doc}`dependencies` for files that reference other production objects;
+- {doc}`artifacts-and-staleness` for knowing whether a generated artifact is still current;
 - {doc}`jobs-and-workers` when the host coordinates durable production work;
 - {doc}`reference-executor` as an example of the execution boundary, not as a requirement;
 - {doc}`bounded-queries` for scalable enumeration and traversal;
@@ -98,6 +100,7 @@ host-object-bindings
 :caption: Media
 
 media-resolution
+fingerprints-and-verification
 compound-media
 ```
 
@@ -108,6 +111,8 @@ compound-media
 external-identifiers
 metadata-vocabularies
 provenance
+dependencies
+artifacts-and-staleness
 ```
 
 ```{toctree}

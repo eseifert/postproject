@@ -35,85 +35,61 @@ Values are typed rather than stringly encoded: plain and language-tagged text,
 signed and unsigned 64-bit integers, exact decimals and rationals, booleans,
 timestamps, URIs, opaque bytes, typed object references, and recursively nested
 ordered lists and named-field structures. Every surface preserves every value
-kind on read. In C, recursive input handles copy their children, so callers can
-release intermediate list and structure values immediately after construction.
+kind on read.
 
-## CLI input and inspection
+The example writes one value of every kind under an application-owned
+vocabulary, reads them back by dispatching on the value type, and pages through
+a property query:
 
-The demonstrator can add text or any recursively typed value, list values, find
-a property, and remove all values of a property. A typed value uses the same
-tagged JSON shape emitted by `--json` output. For example, `contact.json` may
-contain:
-
-```json
-{
-  "type": "struct",
-  "fields": [
-    {"name": "name", "value": {"type": "string", "value": "Camera department"}},
-    {"name": "confidence", "value": {"type": "decimal", "coefficient": "995", "scale": 3}}
-  ]
-}
+```{code-variants} typed-metadata
 ```
 
-Write it and inspect it with:
+In C, recursive input handles copy their children, so callers can release
+intermediate list and structure values immediately after construction. The CLI
+reads a typed value from a JSON file in the same tagged shape that `--json`
+output emits. Decimal coefficients are strings so JSON consumers do not lose
+precision, binary values use hexadecimal text, and lists and structure fields
+are recursive and ordered.
 
-```sh
-postproject metadata add production.pproj asset "$ASSET_ID" \
-  https://example.com/vocabulary contact contact.json
+## Remove a property
 
-postproject metadata add-text production.pproj asset "$ASSET_ID" \
-  https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json \
-  title "Interview" \
-  --language en-US
+Removal deletes every value of one property from one target in a transaction;
+other properties and other targets are untouched. It is journaled as its own
+revision event:
 
-postproject --json metadata list \
-  production.pproj asset "$ASSET_ID"
-
-postproject --json metadata find production.pproj \
-  https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json \
-  title --limit 100
-
-postproject metadata remove production.pproj asset "$ASSET_ID" \
-  https://iptc.org/std/videometadatahub/recommendation/iptc-vmhub-1.7-schema.json \
-  title
+```{code-variants} remove-metadata
+:::{no-variant} cpp
+The C++ wrapper does not wrap property removal. Call
+`pp_transaction_remove_metadata_property` on the native transaction, or remove
+the property from another surface.
+:::
 ```
 
-`metadata find` returns one page: its JSON output is an object with `items`,
-`next_cursor`, and `traversal_truncated`, and `--cursor` continues from
-`next_cursor`. Pass `--value-file` with a file holding one tagged scalar value,
-such as `{"type": "lang_string", "value": "Interview", "language": "en-US"}`, to
-return only assertions with exactly that value.
+## Query by property and value
 
-JSON output is explicitly tagged with value types. Decimal coefficients are
-strings so JSON consumers do not lose precision. Binary values use hexadecimal
-text. Lists and structured fields are recursive and ordered.
+`find` and the paged property query return every assertion that uses an exact
+vocabulary and property. An optional exact scalar value narrows the page; see
+[bounded queries](bounded-queries.md#query-metadata-by-property) for
+the paging contract.
 
 ## Technical inspection
 
-The Rust media crate defines a `MediaInspector` adapter boundary and a bounded
-`FfprobeInspector` subprocess implementation. Successful results are ordinary
-typed assertions under
-`https://postproject.org/ns/technical-media/1` with property `inspection`; no
-FFmpeg type or dependency enters `postproject-core`. Raw embedded tag keys and
-values are represented as ordered key/value structures so unfamiliar tags do
-not need to become schema fields.
-
-The CLI reaches this adapter with `media add --inspect` and attaches successful
-assertions to the imported representation in the same transaction. The direct
-inspection operation is not currently exposed through C, C++, or Python; those
-surfaces can read the resulting assertion through their existing metadata
-traversal APIs.
+The optional `ffprobe` adapter stores its results as ordinary typed assertions
+under `https://postproject.org/ns/technical-media/1` with property
+`inspection`; see [fingerprints, verification, and
+inventory](fingerprints-and-verification.md#record-technical-inspection). No
+FFmpeg type or dependency enters `postproject-core`, and raw embedded tag keys
+and values are kept as ordered key/value structures so unfamiliar tags do not
+need to become schema fields. Every surface reads the resulting assertion
+through its normal metadata reads.
 
 `media resolve --verify` reuses a single stored inspection as partial identity
 evidence when scoring relocated file candidates. The candidate remains
-ambiguous if another credible match exists. Use `--ffprobe PATH` to select the
-inspector executable; an unavailable or failed inspector leaves the other
-resolver evidence unchanged.
-
-Subprocess output is limited to 8 MiB per stream, execution defaults to a
-30-second deadline, JSON and numeric values are parsed without floating point,
-and stderr diagnostics are truncated. Missing `ffprobe`, non-zero exit, timeout,
-oversized output, and malformed JSON are distinguishable outcomes.
+ambiguous if another credible match exists. Subprocess output is limited to
+8 MiB per stream, execution defaults to a 30-second deadline, JSON and numeric
+values are parsed without floating point, and stderr diagnostics are truncated.
+Missing `ffprobe`, non-zero exit, timeout, oversized output, and malformed JSON
+are distinguishable outcomes.
 
 ## Optional Rust registry
 

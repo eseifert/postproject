@@ -14,10 +14,20 @@ value:
 ```
 
 Attachment is a transactional mutation like any other: it stays pending until
-commit and appears in the [revision feed](revision-feed.md). Removing an
-identifier requires the same exact scheme, value, and qualifier.
+commit and appears in the [revision feed](revision-feed.md).
 
-Lookup is exact. A scheme is not a namespace prefix, values are compared
+## Remove an identifier
+
+An object can carry several identifiers, from the same scheme or from different
+ones. Removing an identifier requires the same exact scheme, value, and
+qualifier; other attachments stay in place:
+
+```{code-variants} remove-identifier
+```
+
+## Lookup is exact
+
+A scheme is not a namespace prefix, values are compared
 byte-for-byte, and a lookup may return several objects because an external
 system can reuse a value. Treat the result as candidates for the integration to
 interpret, not as proof of identity.
