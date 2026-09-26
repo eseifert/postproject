@@ -1,29 +1,31 @@
-"""Normalize Doxygen 1.16 constructor XML for Breathe compatibility."""
+"""Normalize Doxygen constexpr XML for Breathe compatibility."""
 
 from __future__ import annotations
 
 import argparse
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
+_LEADING_CONSTEXPR = re.compile(r"^\s*constexpr\b\s*")
+
+
 def normalize_file(path: Path) -> bool:
-    """Remove the duplicated constructor type emitted by Doxygen 1.16."""
+    """Remove redundant constexpr text already represented by Doxygen metadata."""
     tree = ET.parse(path)
     changed = False
+
     for member in tree.findall(".//memberdef[@kind='function'][@constexpr='yes']"):
         type_node = member.find("type")
-        name = member.findtext("name")
-        definition = member.findtext("definition")
-        if (
-            type_node is not None
-            and type_node.text == "constexpr"
-            and name
-            and definition
-            and definition.endswith(f"::{name}")
-        ):
-            type_node.text = ""
+        if type_node is None or type_node.text is None:
+            continue
+
+        normalized = _LEADING_CONSTEXPR.sub("", type_node.text, count=1)
+        if normalized != type_node.text:
+            type_node.text = normalized
             changed = True
+
     if changed:
         tree.write(path, encoding="utf-8", xml_declaration=True)
     return changed
